@@ -60,7 +60,7 @@ function applicationBinding({ workspaceRoot, origin, entryPath }) {
  * Static deliveries continue to use their own isolated file server. */
 export function registerNativeWebDelivery(ctx, runtime, config = {}) {
   if (typeof engineWebDeliveries !== 'function' || typeof relativeDeliveryPath !== 'function') return;
-  const binding = applicationBinding(config);
+  const defaultBinding = applicationBinding(config);
   const previews = new Map();
   const lifetime = new AbortController();
   ctx.effect(() => async () => {
@@ -89,7 +89,8 @@ export function registerNativeWebDelivery(ctx, runtime, config = {}) {
         if (target.type !== NATIVE_ENGINE_EVENT || target.ignorable !== true || typeof root !== 'string' || !isAbsolute(root)
           || event?.schema !== ENGINE_EVENT_SCHEMA || event.kind !== 'run.terminal' || event.title !== 'completed')
           return new Response(null, { status: 404, headers });
-        const application = binding && resolve(root) === binding.root && await realpath(root) === await realpath(binding.root)
+        const binding = applicationBinding(runtime.applicationPreview?.(root) ?? {}) ?? defaultBinding;
+        const application = binding && await realpath(root) === await realpath(binding.root)
           && event.deliverables?.some(item => item.path === binding.path && ['file', 'web'].includes(item.kind))
           ? binding : null;
         if (mode === 'summary' || mode === 'image')

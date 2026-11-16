@@ -40,71 +40,10 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unrestricted met
 
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
 
-test('Native cancellation waits for its durable ending and returns it so DSH can close the turn', async () => {
-  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
-  const ending = { reason: { kind: 'aborted', reason: { kind: 'user' } } };
-  let settled = false;
-  bridge.setNativeTurnExecutor(async ({ signal }) => {
-    started.resolve(); await drained.promise; assert.equal(signal.aborted, true); return ending;
-  });
-  const pending = bridge.executeNativeTurn({ signal: caller.signal });
-  void pending.then(() => { settled = true; }, () => { settled = true; });
-  await started.promise; caller.abort({ kind: 'user' });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(settled, false); assert.equal(bridge.diagnostics().requests, 1);
-  drained.resolve(); assert.deepEqual(await pending, ending);
-  assert.equal(bridge.diagnostics().requests, 0); bridge.close();
-});
-
-for (const retirement of ['host', 'registration']) test(`Native ${retirement} retirement cannot return a late canceled ending`, async () => {
-  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
-  const retire = bridge.setNativeTurnExecutor(async () => {
-    started.resolve(); await drained.promise; return { reason: { kind: 'aborted', reason: { kind: 'user' } } };
-  });
-  const pending = bridge.executeNativeTurn({ signal: caller.signal });
-  await started.promise; caller.abort({ kind: 'user' });
-  if (retirement === 'host') bridge.close(); else retire();
-  // Caller cancellation and owner retirement can supply the rejection cause;
-  // neither is permission to return the late worker's canceled ending.
-  const retiredCode = retirement === 'host' ? 'STUDIO_RUNTIME_BRIDGE_CLOSED' : 'STUDIO_RUNTIME_REGISTRATION_RETIRED';
-  drained.resolve(); await assert.rejects(pending, error => error === caller.signal.reason || error?.code === retiredCode);
-  assert.equal(bridge.diagnostics().requests, 0); bridge.close();
-});
-
-test('Native cancellation rejects a late successful result instead of accepting unacknowledged cancellation', async () => {
-  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
-  bridge.setNativeTurnExecutor(async () => { started.resolve(); await drained.promise; return { reason: { kind: 'completed' } }; });
-  const pending = bridge.executeNativeTurn({ signal: caller.signal });
-  await started.promise; caller.abort(Error('User canceled'));
-  drained.resolve(); await assert.rejects(pending, /User canceled/); bridge.close();
-});
-
-test('Native turn retirement waits for the worker to drain and rejects late completion', async () => {
-  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred();
-  let workerSignal, settled = false;
-  bridge.setNativeTurnExecutor(async ({ signal }) => {
-    workerSignal = signal; started.resolve(); await drained.promise;
-    return { reason: { kind: 'completed' } };
-  });
-  const pending = bridge.executeNativeTurn({ signal: new AbortController().signal });
-  void pending.then(() => { settled = true; }, () => { settled = true; });
-  await started.promise; bridge.close();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(workerSignal.aborted, true);
-  assert.equal(workerSignal.reason.kind, 'disposed'); assert.equal(settled, false);
-  assert.equal(bridge.diagnostics().requests, 1);
-  drained.resolve(); await assert.rejects(pending, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
-  assert.equal(bridge.diagnostics().requests, 0);
-});
-
-test('retiring old Native registrations cannot remove their replacements', async () => {
+test('the production bridge exposes no in-process Harness execution entry', () => {
   const bridge = createRuntimeBridge();
-  const oldTurn = bridge.setNativeTurnExecutor(async () => 'old');
-  const oldTools = bridge.setNativeToolsFactory(() => 'old-tools');
-  bridge.setNativeTurnExecutor(async () => 'new'); bridge.setNativeToolsFactory(() => 'new-tools');
-  oldTurn(); oldTools();
-  assert.equal(await bridge.executeNativeTurn({}), 'new');
-  assert.equal(bridge.createNativeTools({}), 'new-tools');
+  for (const key of ['setNativeTurnExecutor', 'executeNativeTurn', 'setNativeToolsFactory', 'createNativeTools'])
+    assert.equal(Object.hasOwn(bridge, key), false, key);
   bridge.close();
 });
 
@@ -180,22 +119,10 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} maps legacy snip
   disposers.reverse().forEach(dispose => dispose?.()); bridge.close();
 });
 
-test('a Harness preset claims the whole turn and rejects model-step fallback', async () => {
-  const bridge = createRuntimeBridge(), listeners = new Map(), disposers = [];
-  const nativeTools = {};
-  bridge.setNativeToolsFactory(() => nativeTools);
-  bridge.setNativeTurnExecutor(async payload => {
-    assert.equal(payload.binding.nativeTools, nativeTools);
-    assert.equal(payload.binding.agentRevision, 7);
-    return { reason: { kind: 'completed' } };
-  });
-  const ctx = { get: () => bridge, tools: { schemas: () => [] },
-    effect: install => disposers.push(install()), on: (name, listener) => listeners.set(name, listener) };
-  applyPreset(ctx, { agentId: 'native', agentRevision: 7, runtime: 'harness', local: true, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
-  assert.deepEqual(await listeners.get('agent/execute-turn')({}), { reason: { kind: 'completed' } });
-  await assert.rejects(listeners.get('agent/request')({}, async () => assert.fail('Cannot delegate the Native loop')),
-    { code: 'STUDIO_NATIVE_WHOLE_TURN_REQUIRED' });
-  disposers.reverse().forEach(dispose => dispose?.()); bridge.close();
+test('retired in-process presets fail closed without mounting a turn executor', () => {
+  const ctx = { on: () => assert.fail('retired preset registered an event') };
+  for (const config of [{ runtime: 'harness' }, { runtime: 'native-engine', nativeEngineContract: 'agentkit.native-dsh-turn/v1' }])
+    assert.throws(() => applyPreset(ctx, { agentId: 'native', local: true, ...config }), { code: 'STUDIO_LEGACY_HARNESS_RETIRED' });
 });
 
 test('older registration and route cleanup cannot withdraw their replacements', async () => {
@@ -394,36 +321,30 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed
   bridge.close();
 });
 
-test('one Native preset binds each live Agent scope separately for prompt, turn and recovery', async () => {
-  const { bindNativeSessionWorkspace } = await import('../src/providers/native-session-workspace.mjs');
+test('one Native preset routes host tools and receipts to the committed workspace', async t => {
+  const { createWorkspaceRoutedBuiltins } = await import('../src/providers/workspace-routed-builtins.mjs');
   const { mkdtempSync, mkdirSync, rmSync, realpathSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'native-preset-sessions-'));
-  const bridge = createRuntimeBridge(), listeners = new Map(), disposers = [], calls = [];
-  const oneRoot = join(root, 'one'), twoRoot = join(root, 'two'); mkdirSync(oneRoot); mkdirSync(twoRoot);
-  let secondDirectory = twoRoot;
-  const first = { session: { id: 'one' } }, second = { session: { id: 'two' } }, same = { session: { id: 'same' } };
-  for (const agent of [first, second, same]) agent.ctx = { get: key => key === 'workingDirectory'
-    ? { get: () => agent === second ? secondDirectory : oneRoot } : undefined, effect: install => disposers.push(install()) };
-  bridge.setNativeToolsFactory(({ ctx, agent }) => {
-    calls.push(agent); assert.equal(ctx, agent.ctx);
-    return { ...bindNativeSessionWorkspace({ ctx, agent, fallbackRoot: root }), close() {} };
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const first = join(root, 'first'), second = join(root, 'second');
+  mkdirSync(first); mkdirSync(second);
+  const closed = [];
+  const bindings = createWorkspaceRoutedBuiltins({
+    defaultRoot: first,
+    resolveHarnessWorkspace: cwd => [first, second].includes(cwd) ? { workspaceRoot: cwd } : undefined,
+    create: cwd => ({ definitions: [], execute: () => cwd, observeA2aReceipt: () => cwd, close: () => closed.push(cwd) }),
   });
-  bridge.setNativeTurnExecutor(async ({ agent, binding }) => {
-    assert.equal(binding.nativeTools.assertWorkspace(agent), true); return binding.nativeTools.workspaceRoot;
-  });
-  const ctx = { get: () => bridge, tools: { schemas: () => [] },
-    effect: install => disposers.push(install()), on: (name, listener) => listeners.set(name, listener) };
-  applyPreset(ctx, { agentId: 'shared', agentRevision: 1, runtime: 'harness', local: true, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
-  try {
-    for (const agent of [first, second, same]) await listeners.get('agent/created')({ agent });
-    assert.deepEqual(await Promise.all([first, second, same].map(agent => listeners.get('agent/execute-turn')({ agent }))), [oneRoot, twoRoot, oneRoot]);
-    const bindings = await Promise.all([first, second, same].map(agent => listeners.get('agentkit/native-recovery-binding')({ agent })));
-    assert.notEqual(bindings[0].nativeTools, bindings[1].nativeTools); assert.notEqual(bindings[0].nativeTools, bindings[2].nativeTools);
-    await listeners.get('system-prompt/assemble')({}, { agent: second }, async () => {});
-    assert.deepEqual(calls, [first, second, same]);
-    secondDirectory = oneRoot;
-    await assert.rejects(listeners.get('agent/execute-turn')({ agent: second }), { code: 'studio_native_session_workspace_changed' });
-    assert.equal(await listeners.get('agent/execute-turn')({ agent: first }), oneRoot);
-  } finally { for (const dispose of disposers.reverse()) await dispose?.(); bridge.close(); rmSync(root, { recursive: true, force: true }); }
+  const exec = cwd => ({ agent: { session: { id: 'same-id', header: { cwd } } } });
+  assert.equal(bindings.execute('browser_inspect_workspace', {}, exec(second)), second);
+  assert.equal(bindings.execute('browser_inspect_workspace', {}, exec(first)), first);
+  assert.equal(bindings.observeA2aReceipt({ sessionId: 'same-id' }, second), second);
+  assert.throws(() => bindings.execute('browser_inspect_workspace', {}, exec(root)), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+  const closing = bindings.close();
+  assert.equal(bindings.close(), closing);
+  assert.throws(() => bindings.execute('browser_inspect_workspace', {}, exec(second)), { code: 'NATIVE_ENGINE_TOOLS_CLOSED' });
+  await closing;
+  await bindings.close();
+  assert.deepEqual(closed, [first, second]);
 });

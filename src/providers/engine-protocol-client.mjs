@@ -60,8 +60,8 @@ export function connectEngine({ input, output, onApproveTool, onCallTool, hostNa
       services: { approvals: typeof onApproveTool === 'function', tools: typeof onCallTool === 'function' } }),
     startRun: params => call('run/start', params),
     status: runId => call('run/status', { runId }),
-    events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor) =>
-      call('run/events', { runId, cursor, waitMs, thinkingCursor, toolDraftCursor }),
+    events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor, textCursor) =>
+      call('run/events', { runId, cursor, waitMs, thinkingCursor, toolDraftCursor, textCursor }),
     resume: runId => call('run/resume', { runId }),
     cancel: runId => call('run/cancel', { runId }),
     guide: (runId, inputId, text) => call('run/guide', { runId, inputId, text }),

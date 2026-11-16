@@ -59,6 +59,23 @@ jobs:
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           echo "GITLEAKS_BIN=$RUNNER_TEMP/gitleaks/gitleaks" >> "$GITHUB_ENV"
       - run: bash ci/run-public-gate.sh
+  native-engine-integration:
+    name: native-engine-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - name: Verify service approvals and acceptance with the locked npm Harness
+        run: node --test tests/native-engine-runtime.test.mjs tests/native-host-approval.test.mjs
   patched-host:
     name: patched-dsh-host
     runs-on: ${{ matrix.os }}
@@ -156,6 +173,9 @@ jobs:
       - name: Verify the real frozen Host MCP turn
         timeout-minutes: 12
         run: node scripts/verify-studio-frozen-host.mjs .artifacts/frozen-host.json
+      - name: Verify packed Studio switches independent workspace services
+        timeout-minutes: 3
+        run: node scripts/verify-independent-workspace-host.mjs ".artifacts/kingsoftcloud-agentkit-studio-$(node -p "require('./package.json').version").tgz"
       - name: Verify actual Native turn ownership, approvals and process recovery
         timeout-minutes: 8
         shell: bash

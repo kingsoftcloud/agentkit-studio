@@ -21,7 +21,9 @@ test('Harness admissions and actual Build archives use only the independent Nati
   await assert.rejects(reopened.build({ ...input, executionEngine: { ...buildExecutionEngine(spec), engine: 'retired-engine' } }), { code: 'BUILD_ENGINE_BINDING_CHANGED' });
   for (const env of [{}, { AGENTKIT_STUDIO_NATIVE_HARNESS: '' }, { AGENTKIT_STUDIO_NATIVE_HARNESS: native }]) {
     const registered = [], admission = new DshPresetAdmission({ nativeEngineContract: nativeHarnessHostContract(env), getAgent: async () => ({ metadata: { id: input.agentId, local: true, revision: 1 }, spec }), registry: { register: async value => { registered.push(value); return () => {}; } } });
-    try { await admission.ensure(input.agentId); assert.equal(registered[0].plugins.find(plugin => plugin.id === 'studio-runtime').config.nativeEngineContract, native); }
+    try { await admission.ensure(input.agentId); const config = registered[0].plugins.find(plugin => plugin.id === 'studio-runtime').config;
+      assert.equal(config.runtime, 'native-engine');
+      assert.equal(config.nativeEngineContract, undefined); }
     finally { await admission.dispose(); }
   }
   for (const value of ['legacy', 'future/v2', 'false', false, null]) assert.throws(() => nativeHarnessHostContract({ AGENTKIT_STUDIO_NATIVE_HARNESS: value }), /Unsupported Native Harness engine contract/);

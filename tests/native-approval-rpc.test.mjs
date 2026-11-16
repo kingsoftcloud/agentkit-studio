@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 
 test('Studio Native approval RPC exposes a scoped status and decision operation', async () => {
   const calls = [];

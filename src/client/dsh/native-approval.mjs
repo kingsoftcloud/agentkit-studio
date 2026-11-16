@@ -1,4 +1,5 @@
 import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
+import { HARNESS_SERVICE_PRESET_SUFFIX } from '../../harness-service-preset.mjs';
 
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256;
 
@@ -26,12 +27,14 @@ export function createNativeApprovalPanel({
   return function NativeApprovalPanel({ agentId: initialAgentId, sessionId, useSessions, requestApprovalDecision }) {
     const session = useSessions?.(state => state?.byId?.[sessionId]);
     const presetId = session?.projectionValues?.agentPreset;
+    const independent = typeof presetId === 'string' && presetId.endsWith(HARNESS_SERVICE_PRESET_SUFFIX);
     const [agentId, setAgentId] = useState(initialAgentId || '');
     const [status, setStatus] = useState(null), [error, setError] = useState('');
     const [busy, setBusy] = useState(''), [dialog, setDialog] = useState(null), [acknowledged, setAcknowledged] = useState(false);
 
     useEffect(() => {
       let active = true;
+      if (independent) { setAgentId(''); return () => { active = false; }; }
       if (initialAgentId) { setAgentId(initialAgentId); return () => { active = false; }; }
       setAgentId('');
       if (!sessionId) return () => { active = false; };
@@ -41,12 +44,12 @@ export function createNativeApprovalPanel({
         if (active && id) setAgentId(id);
       })().catch(() => {});
       return () => { active = false; };
-    }, [hostRemote, initialAgentId, presetId, sessionId]);
+    }, [hostRemote, independent, initialAgentId, presetId, sessionId]);
 
     useEffect(() => {
       let active = true;
       setStatus(null); setError(''); setDialog(null); setAcknowledged(false);
-      if (!agentId || !sessionId) return () => { active = false; };
+      if (independent || !agentId || !sessionId) return () => { active = false; };
       const load = async () => {
         try {
           const value = readSnapshot(await hostRemote.nativeApprovalStatus({ agentId, sessionId }), agentId, sessionId);
@@ -56,7 +59,7 @@ export function createNativeApprovalPanel({
       void load();
       const timer = setInterval(load, 1500);
       return () => { active = false; clearInterval(timer); };
-    }, [agentId, hostRemote, sessionId]);
+    }, [agentId, hostRemote, independent, sessionId]);
 
     useEffect(() => {
       if (dialog && !status?.pending?.some(item => item.requestId === dialog.requestId)) {

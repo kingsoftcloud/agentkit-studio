@@ -175,7 +175,14 @@ test('the renderer embeds the engine view in a sandboxed iframe and relays the r
     await tab.evaluate(() => window.retry());
     await frame.getByText('模型正在重试…').waitFor();
     await tab.evaluate(() => window.fail());
-    await frame.getByRole('alert').getByText('模型网关拒绝了请求（HTTP 400），未自动重试。').waitFor();
+    const failure = frame.locator('details.harness-turn-error');
+    await failure.waitFor();
+    assert.equal(await failure.getAttribute('open'), null, 'terminal failure starts as a collapsed summary');
+    assert.equal(await frame.getByRole('alert').count(), 0, 'a terminal failure does not add a bright alert banner');
+    const reason = failure.getByText('模型网关拒绝了请求（HTTP 400），未自动重试。', { exact: true });
+    assert.equal(await reason.isVisible(), false, 'the complete reason is available on demand');
+    await failure.locator('summary').click();
+    await reason.waitFor();
     assert.equal(await frame.getByTestId('model-retry').count(), 0);
     assert.deepEqual(errors, []);
   });

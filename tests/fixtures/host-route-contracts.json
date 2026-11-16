@@ -218,7 +218,7 @@
           [
             "agent-fixture",
             {
-              "preferService": true,
+              "cwd": "[undefined]",
               "requestedPresetId": "[undefined]",
               "agent": {
                 "metadata": {

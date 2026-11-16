@@ -31,8 +31,6 @@ export function createRuntimeBridge() {
   let generation = 0;
   let adapter;
   let executor;
-  let nativeTurnExecutor;
-  let nativeToolsFactory;
   let builtinToolsFactory;
   const assertOpen = () => { if (lifetime.signal.aborted) throw unavailable(); };
 
@@ -40,16 +38,12 @@ export function createRuntimeBridge() {
     assertOpen();
     const record = { value, controller: new AbortController() };
     if (slot === 'adapter') adapter = record;
-    else if (slot === 'native-turn') nativeTurnExecutor = record;
-    else if (slot === 'native-tools') nativeToolsFactory = record;
     else if (slot === 'builtin-tools') builtinToolsFactory = record;
     else executor = record;
     return () => {
       record.controller.abort(disposed('STUDIO_RUNTIME_REGISTRATION_RETIRED'));
       if (slot === 'adapter' && adapter === record) adapter = undefined;
       if (slot === 'executor' && executor === record) executor = undefined;
-      if (slot === 'native-turn' && nativeTurnExecutor === record) nativeTurnExecutor = undefined;
-      if (slot === 'native-tools' && nativeToolsFactory === record) nativeToolsFactory = undefined;
       if (slot === 'builtin-tools' && builtinToolsFactory === record) builtinToolsFactory = undefined;
     };
   }
@@ -72,19 +66,6 @@ export function createRuntimeBridge() {
       if (typeof value !== 'function') throw new TypeError('Runtime tool executor must be a function');
       return register('executor', value);
     },
-    setNativeTurnExecutor(value) {
-      if (typeof value !== 'function') throw new TypeError('Native turn executor must be a function');
-      return register('native-turn', value);
-    },
-    setNativeToolsFactory(value) {
-      if (typeof value !== 'function') throw new TypeError('Native tools factory must be a function');
-      return register('native-tools', value);
-    },
-    createNativeTools(input) {
-      assertOpen();
-      if (!nativeToolsFactory) throw unavailable('STUDIO_NATIVE_TOOLS_FACTORY_UNAVAILABLE');
-      return nativeToolsFactory.value(input);
-    },
     setBuiltinToolsFactory(value) {
       if (typeof value !== 'function') throw new TypeError('Builtin tools factory must be a function');
       return register('builtin-tools', value);
@@ -96,26 +77,6 @@ export function createRuntimeBridge() {
       return registration.value({ ...input,
         signal: AbortSignal.any([lifetime.signal, registration.controller.signal]),
         isClosed: () => lifetime.signal.aborted || registration.controller.signal.aborted });
-    },
-    async executeNativeTurn(input) {
-      assertOpen();
-      const registration = nativeTurnExecutor;
-      if (!registration) throw unavailable('STUDIO_NATIVE_TURN_EXECUTOR_UNAVAILABLE');
-      const task = request(input, registration);
-      try {
-        task.signal.throwIfAborted();
-        // The Native worker owns cancellation and durable receipts. DSH must
-        // not begin another turn until that worker has stopped driving effects.
-        const result = await registration.value({ ...input, signal: task.signal });
-        // A canceled Native worker returns only after committing its ending.
-        // Preserve that acknowledgment so DSH can close the external turn.
-        // Throwing it away leaves a canceled Run with an open Session owner.
-        // Host/registration retirement still fences every late completion.
-        const settledCancellation = input.signal?.aborted && !lifetime.signal.aborted
-          && !registration.controller.signal.aborted && result?.reason?.kind === 'aborted';
-        if (!settledCancellation) task.signal.throwIfAborted();
-        return result;
-      } finally { task.finish(); }
     },
     createRouteScope() {
       assertOpen();
@@ -180,8 +141,6 @@ export function createRuntimeBridge() {
       lifetime.abort(disposed());
       adapter = undefined;
       executor = undefined;
-      nativeTurnExecutor = undefined;
-      nativeToolsFactory = undefined;
       builtinToolsFactory = undefined;
       routes.clear();
       nativeContextSources.close();

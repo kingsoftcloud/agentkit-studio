@@ -312,3 +312,24 @@ test('a Native engine service owns model selection at the Studio entry point', a
     model: 'local:native-agent', studioRuntime: 'native-engine', sessionId: 'native-service-session' }));
   assertContinuousBlocks(chunks, [[0, 'text', 'Harness service response']]);
 });
+
+test('Native body fragments enter the live Session presentation without contaminating the final reply', async t => {
+  const bridge = createRuntimeBridge(); t.after(() => bridge.close());
+  const stored = [], sessionId = 'body-preview-session';
+  const requestId = 'a'.repeat(64), cursor = '00000000-0000-0000-0000-000000000000:5';
+  const agent = { session: { id: sessionId, header: { cwd: '/tmp/native-body-fixture' },
+    append: (type, data, options) => stored.push({ type, data, ...options }) } };
+  bridge.bindRoute(sessionId, { agentId: 'native-preview', runtime: 'native-engine', local: true, agent });
+  const adapter = createDshRuntimeAdapter({ bridge, nativeEngineRuntime: { usesService: true, async *stream() {
+    yield { type: 'engine-event', runId: 'original', view: null,
+      event: { schema: 'agentkit.engine-event/v1', seq: 1, kind: 'effect.prepared', category: 'model', title: 'request', requestId } };
+    yield { type: 'engine-text', runId: 'original', requestId, cursor, offset: 0, delta: 'draft' };
+    yield { type: 'text', text: 'Only committed answer.' };
+  } } });
+  const chunks = await Array.fromAsync(adapter.stream({ ...prompt, sessionId }));
+  assertContinuousBlocks(chunks, [[0, 'text', 'Only committed answer.']]);
+  assert.deepEqual(stored.find(event => event.type === 'agentkit/native-engine-text'), {
+    type: 'agentkit/native-engine-text', ignorable: true,
+    data: { runId: 'original', requestId, cursor, offset: 0, delta: 'draft' },
+  });
+});

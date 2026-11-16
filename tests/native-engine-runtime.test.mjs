@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createNativeEngineRuntime, resolveEngineCommand } from '../src/providers/native-engine-runtime.mjs';
+import { nativeEngineVerification } from '../src/providers/native-engine-verification.mjs';
 
 const installedEngine = fileURLToPath(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
 const engineCommand = process.env.AGENTKIT_ENGINE_COMMAND ?? process.execPath;
@@ -32,6 +33,7 @@ function fixture(script) {
     req.on('end', async () => {
       const parsed = JSON.parse(body);
       requests.push(parsed);
+      if (handle.stream) { await handle.stream(parsed, res); return; }
       const frames = handle.respond ? await handle.respond(parsed) : script[Math.min(requests.length - 1, script.length - 1)];
       if (!Array.isArray(frames)) {
         res.writeHead(frames.status, { 'content-type': 'application/json', ...frames.headers });
@@ -43,19 +45,40 @@ function fixture(script) {
       res.end('data: [DONE]\n\n');
     });
   });
-  const handle = { requests, respond: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
+  const handle = { requests, respond: null, stream: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
   return new Promise(done => server.listen(0, '127.0.0.1', () => done(Object.assign(handle, { url: `http://127.0.0.1:${server.address().port}/v1` }))));
 }
-async function setup(t, script) {
+async function setup(t, script, extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'studio-engine-')), cwd = join(dir, 'workspace');
   mkdirSync(cwd);
   const model = await fixture(script);
   t.after(async () => { await model.close(); rmSync(dir, { recursive: true, force: true }); });
-  const runtime = createNativeEngineRuntime({ stateRoot: join(dir, 'state'), env: { PATH: process.env.PATH, HOME: dir, AGENTKIT_ENGINE_COMMAND: engineCommand, AGENTKIT_ENGINE_ARGS: engineArgs } });
+  const runtime = createNativeEngineRuntime({ stateRoot: join(dir, 'state'), env: { PATH: process.env.PATH, HOME: dir, AGENTKIT_ENGINE_COMMAND: engineCommand, AGENTKIT_ENGINE_ARGS: engineArgs, ...extraEnv } });
   return { runtime, model, cwd, options: { input: 'Create out.txt with a greeting.', systemPrompt: 'You are the Studio release agent.', model: 'fixture-model',
     modelProvider: { baseUrl: model.url, apiKey: 'studio-fixture-key' }, cwd, sessionId: 'session-1', turnId: '1' } };
 }
 const collect = async stream => { const chunks = []; for await (const chunk of stream) chunks.push(chunk); return chunks; };
+
+test('Studio forwards the configured search binding to its independent engine process', async t => {
+  let searches = 0;
+  const search = createServer((req, res) => {
+    searches++;
+    assert.equal(req.headers.authorization, 'Bearer separate-search-fixture');
+    assert.equal(new URL(req.url, 'http://localhost').searchParams.get('q'), 'Studio search fixture');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ results: [{ title: 'Native search result', url: 'https://example.com/studio-search', snippet: 'Verified Studio search.' }] }));
+  });
+  await new Promise(resolve => search.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { search.closeAllConnections(); search.close(resolve); }));
+  const f = await setup(t, [toolCall('search', 'web_search', { query: 'Studio search fixture' }), final('Search complete.')], {
+    AGENTKIT_ENGINE_WEB_SEARCH_PROVIDER: 'http', AGENTKIT_ENGINE_WEB_SEARCH_BASE_URL: 'http://127.0.0.1:' + search.address().port,
+    AGENTKIT_ENGINE_WEB_SEARCH_API_KEY: 'separate-search-fixture',
+  });
+  const chunks = await collect(f.runtime.stream({ ...f.options, input: 'Search for Studio search fixture.', sandbox: 'workspace-write' }));
+  assert.equal(searches, 1);
+  assert.match(JSON.stringify(f.model.requests.at(-1)), /Verified Studio search/);
+  assert.doesNotMatch(JSON.stringify({ chunks, requests: f.model.requests }), /separate-search-fixture/);
+});
 
 test('Studio sends an interjection to the original Run before the retry and commits it once', { timeout: 15000 }, async t => {
   const f = await setup(t, []);
@@ -312,6 +335,77 @@ test('only a negotiated image-capable engine receives current-turn image input',
   assert.doesNotMatch(JSON.stringify(chunks), /data:image/);
 });
 
+test('Workspace Write auto-allows scoped writes and read-only commands, but prompts for a shell mutation', {
+}, async t => {
+  const f = await setup(t, [
+    toolCall('write', 'write_workspace_file', { path: 'out.txt', content: 'fixture' }),
+    toolCall('read', 'run_command', { command: 'cat out.txt' }),
+    toolCall('shell', 'run_command', { command: 'printf changed > side.txt' }),
+    toolCall('blocked', 'run_command', { command: 'rm -r scratch' }),
+    final('Done.'),
+  ]);
+  const runtime = await serviceRuntime(t, f);
+  const approvals = [];
+  const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write',
+    requestApproval: async request => { approvals.push(request.toolName); return 'allowed-once'; } }));
+  assert.deepEqual(approvals, ['native/run_command']);
+  assert.equal(readFileSync(join(f.cwd, 'out.txt'), 'utf8'), 'fixture');
+  assert.equal(readFileSync(join(f.cwd, 'side.txt'), 'utf8'), 'changed');
+  const blocked = chunks.find(chunk => chunk.event?.kind === 'tool.completed' && chunk.event?.callId === 'blocked')?.event;
+  assert.equal(blocked.result.error_type, 'command_policy_blocked');
+  assert.equal(blocked.result.executed, false);
+  assert.match(blocked.result.finding.detail, /blocked by the command policy/);
+  assert.equal(chunks.some(chunk => chunk.event?.kind === 'approval.requested' && chunk.event?.callId === 'blocked'), false);
+});
+
+test('Studio verifies only an explicit acceptance command on the delivered workspace revision', {
+}, async t => {
+  for (const stale of [false, true]) {
+    const f = await setup(t, [
+      toolCall('write', 'write_workspace_file', { path: 'out.txt', content: 'fixture' }),
+      toolCall('test', 'run_command', { command: 'test -f out.txt' }),
+      ...(stale ? [toolCall('late', 'write_workspace_file', { path: 'late.txt', content: 'unverified change' })] : []),
+      final('Done.'),
+    ]);
+    const runtime = await serviceRuntime(t, f);
+    const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write',
+      requestPolicyApproval: async () => 'allowed-once',
+      input: 'Create out.txt.\n验收命令：`test -f out.txt`' }));
+    const terminal = chunks.find(chunk => chunk.event?.kind === 'run.terminal')?.event;
+    assert.equal(terminal?.status, stale ? 'blocked' : 'verified', JSON.stringify(terminal));
+    assert.equal(terminal?.reason, stale ? 'required_acceptance_blocked' : 'required_acceptance_verified');
+  }
+});
+
+test('acceptance ignores unrelated success and rejects failed or stale matching receipts', () => {
+  const objective = 'Create out.txt.\nAcceptance command: `node test.mjs`';
+  const verifier = nativeEngineVerification({ objective, runId: 'fixture' });
+  assert.equal(nativeEngineVerification({ objective: 'Run node test.mjs', runId: 'fixture' }), null);
+  const receipt = { eventId: 'receipt', status: 'ok', call: { name: 'run_command', arguments: { command: 'node test.mjs' } },
+    content: { status: 'completed', evidence_incomplete: false, exit_code: 0 },
+    workspaceChangeObservation: { status: 'captured', revision: 'current' } };
+  const check = calls => verifier.verify({ contract: verifier.definition.contract, definition: verifier.definition,
+    runId: 'fixture', goal: objective, workspaceRevision: 'current', operationKey: 'verify', inputDigest: 'input', evidence: { calls } });
+  assert.equal(check([receipt]).status, 'passed');
+  assert.equal(check([{ ...receipt, content: { ...receipt.content, exit_code: 1 } }, receipt]).status, 'failed');
+  assert.equal(check([{ ...receipt, workspaceChangeObservation: { status: 'captured', revision: 'previous' } }]).status, 'blocked');
+  assert.equal(check([{ ...receipt, call: { ...receipt.call, arguments: { command: 'true' } } }]).status, 'blocked');
+});
+
+async function serviceRuntime(t, f, { images = false } = {}) {
+  const createEngineService = await createTestService();
+  const token = 'fixture-studio-service-approval-token';
+  const service = createEngineService({ token, startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
+    model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY', images },
+    scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, env: { MODEL_KEY: 'fixture-key' } });
+  t.after(() => service.close());
+  await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+  return createNativeEngineRuntime({ stateRoot: join(f.cwd, '..', 'studio-state'), env: {
+    AGENTKIT_ENGINE_SERVICE_URL: 'http://127.0.0.1:' + service.server.address().port,
+    AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.cwd, AGENTKIT_ENGINE_SERVICE_MODEL: 'fixture-model',
+  } });
+}
+
 test('reconnecting an active Run refuses a replacement service that lacks its tool policy', async () => {
   const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
   const contract = 'agentkit.native-agent-policy/v1';
@@ -514,4 +608,138 @@ test('an uncertain bound A2A Send pauses the independent Run without a model ret
   assert.equal(f.model.requests.length, 1);
   assert.ok(chunks.some(chunk => chunk.type === 'engine-event' && chunk.event?.status === 'uncertain')
     || chunks.some(chunk => chunk.type === 'text' && /effect_outcome_unknown|任务已暂停/.test(chunk.text)));
+});
+
+test('two workspace bindings isolate writes, model traffic and Run history even with identical Session and Run IDs', async t => {
+  const createEngineService = await createTestService();
+  const projects = await Promise.all(['Alpha', 'Beta'].map(async (label, i) => {
+    const project = await setup(t, [
+      toolCall('same-call', 'write_workspace_file', { path: 'out.txt', content: label + '\n' }),
+      final(label + ' complete.'),
+      final(label + ' resumed.'),
+    ]);
+    const tokenEnv = 'TEST_ENGINE_TOKEN_' + i, token = 'test-isolated-harness-token-' + i;
+    const service = createEngineService({ token, startup: {
+      workspace: project.cwd, stateDir: join(project.cwd, '..', 'isolated-engine'),
+      model: { name: label, baseUrl: project.model.url, apiKeyEnv: 'TEST_MODEL_KEY' },
+      scope: { tenantId: 'local', workspaceId: label, userId: 'user', agentId: 'agent' },
+    }, env: { TEST_MODEL_KEY: 'fixture-key' } });
+    t.after(() => service.close());
+    await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+    return { ...project, label, token, binding: { workspace: project.cwd, tokenEnv, model: label,
+      endpoint: 'http://127.0.0.1:' + service.server.address().port } };
+  }));
+  const [alpha, beta] = projects, stateRoot = join(alpha.cwd, '..', 'studio-shared-state');
+  const env = { AGENTKIT_ENGINE_SERVICE_WORKSPACES: JSON.stringify(projects.map(project => project.binding)),
+    ...Object.fromEntries(projects.map(project => [project.binding.tokenEnv, project.token])) };
+  const open = () => createNativeEngineRuntime({ stateRoot, env, resolveCommand: () => assert.fail('HTTP must never fall back to a process') });
+  const runtime = open();
+  assert.deepEqual(runtime.serviceModels, ['Alpha', 'Beta']);
+  assert.equal(runtime.serviceWorkspace(undefined), undefined);
+  const turn = (runtime, project, turnId, input = 'Write out.txt') =>
+    collect(runtime.stream({ cwd: project.cwd, input, sessionId: 'same-session', turnId, sandbox: 'danger-full-access' }));
+  const first = await turn(runtime, alpha, '1');
+  assert.equal(beta.model.requests.length, 0);
+  assert.equal(existsSync(join(beta.cwd, 'out.txt')), false);
+  const second = await turn(runtime, beta, '1');
+  const terminal = chunks => chunks.findLast(chunk => chunk.event?.kind === 'run.terminal');
+  assert.equal(terminal(first).runId, terminal(second).runId);
+  assert.equal(first.findLast(chunk => chunk.type === 'text').text, 'Alpha complete.');
+  assert.equal(second.findLast(chunk => chunk.type === 'text').text, 'Beta complete.');
+  const restartedStudio = open();
+  const result = await turn(restartedStudio, alpha, '2', 'Continue the original session.');
+  assert.equal(result.findLast(chunk => chunk.type === 'text').text, 'Alpha resumed.');
+  assert.match(JSON.stringify(alpha.model.requests[2].messages), /Alpha complete/);
+  assert.doesNotMatch(JSON.stringify(alpha.model.requests[2].messages), /Beta complete/);
+  assert.equal(beta.model.requests.length, 2);
+  for (const project of projects) {
+    assert.equal(runtime.serviceWorkspace(project.cwd).modelSelection.model, project.label);
+    assert.ok(project.model.requests.every(request => request.model === project.label));
+    assert.equal(readFileSync(join(project.cwd, 'out.txt'), 'utf8'), project.label + '\n');
+    assert.ok(await restartedStudio.readDeliveryEvidence({ cwd: project.cwd, sessionId: 'same-session', runId: terminal(first).runId }));
+  }
+  await assert.rejects(turn(runtime, { cwd: stateRoot }, '1'), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+  for (const duplicate of [
+    { ...beta.binding, workspace: alpha.cwd },
+    { ...beta.binding, endpoint: alpha.binding.endpoint + '/' },
+    { ...beta.binding, tokenEnv: alpha.binding.tokenEnv },
+  ]) {
+    assert.throws(() => createNativeEngineRuntime({ stateRoot, env: { ...env,
+      AGENTKIT_ENGINE_SERVICE_WORKSPACES: JSON.stringify([alpha.binding, duplicate]) } }), { code: 'NATIVE_ENGINE_CONFIG_INVALID' });
+  }
+});
+
+
+test('Native body previews reach Studio before completion and preserve exactly one final answer', { timeout: 15000,
+}, async t => {
+  const f = await setup(t, []);
+  const next = Promise.withResolvers(), finish = Promise.withResolvers();
+  t.after(() => { next.resolve(); finish.resolve(); });
+  let finished = false;
+  f.model.stream = async (request, response) => {
+    assert.equal(request.stream, true);
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    const send = delta => response.write(`data: ${JSON.stringify({ id: 'live-text', choices: [{ index: 0, delta }] })}\n\n`);
+    send({ role: 'assistant', content: 'First part. ' });
+    await next.promise;
+    send({ content: 'Second part.' });
+    await finish.promise;
+    finished = true;
+    response.end(`data: ${JSON.stringify({ id: 'live-text', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage })}\n\ndata: [DONE]\n\n`);
+  };
+  const runtime = await serviceRuntime(t, f), previews = [], finals = [];
+  for await (const chunk of runtime.stream({ ...f.options, signal: AbortSignal.timeout(12000) })) {
+    if (chunk.type === 'engine-text') {
+      assert.equal(finished, false, 'a terminal-only implementation would deadlock here');
+      previews.push(chunk);
+      if (chunk.delta === 'First part. ') next.resolve();
+      if (chunk.delta === 'Second part.') finish.resolve();
+    }
+    if (chunk.type === 'text') finals.push(chunk.text);
+  }
+  assert.deepEqual(previews.map(p => p.delta), ['First part. ', 'Second part.']);
+  assert.equal(previews[0].requestId, previews[1].requestId);
+  assert.notEqual(previews[0].cursor, previews[1].cursor);
+  assert.deepEqual(finals, ['First part. Second part.']);
+});
+
+
+test('Studio model capabilities come from the bound service and image inputs reach that exact model', async t => {
+  const { createHarnessServiceModelAdapter } = await import('../src/providers/native-engine-runtime.mjs');
+  const url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
+  for (const images of [false, true]) {
+    const f = await setup(t, [final('Image received.')]);
+    const runtime = await serviceRuntime(t, f, { images });
+    const adapter = createHarnessServiceModelAdapter(class {}, ['fixture-model'], model => runtime.serviceModelInfo(model));
+    assert.deepEqual((await adapter.resolveModel('Harness', 'fixture-model')).modalities, images ? ['text', 'image'] : ['text']);
+    const run = collect(runtime.stream({ ...f.options, inputImages: [{ type: 'image_url', image_url: { url } }] }));
+    if (!images) {
+      await assert.rejects(run, { code: 'NATIVE_ENGINE_IMAGE_UNAVAILABLE' });
+      assert.equal(f.model.requests.length, 0);
+    } else {
+      assert.equal((await run).findLast(chunk => chunk.type === 'text').text, 'Image received.');
+      assert.ok(f.model.requests.some(request => request.messages.some(message => Array.isArray(message.content)
+        && message.content.some(part => part.type === 'image_url' && part.image_url.url === url))));
+    }
+  }
+});
+
+test('a committed provider backoff explains the wait before any retry actually starts', { timeout: 15000,
+}, async t => {
+  const f = await setup(t, [{ status: 429, headers: { 'retry-after': '1' }, body: { error: { code: 'rate_limit' } } }, final('Recovered without resending.')]);
+  const runtime = await serviceRuntime(t, f), events = [], started = Date.now();
+  for await (const chunk of runtime.stream({ ...f.options, signal: AbortSignal.timeout(12000) })) {
+    if (chunk.type !== 'engine-event') continue;
+    events.push(chunk.event);
+    if (chunk.event.kind === 'model.retry_scheduled') {
+      assert.equal(f.model.requests.length, 1);
+      assert.equal(chunk.event.httpStatus, 429);
+      assert.ok(chunk.event.retryAt >= started + 900);
+      assert.equal(events.some(event => event.kind === 'effect.prepared' && event.retry === true), false);
+    }
+  }
+  const scheduled = events.findIndex(event => event.kind === 'model.retry_scheduled');
+  const retry = events.findIndex(event => event.kind === 'effect.prepared' && event.retry === true);
+  assert.ok(scheduled >= 0 && retry > scheduled);
+  assert.equal(f.model.requests.length, 2);
 });

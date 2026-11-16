@@ -1,9 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, lstatSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
-import { basename, join, resolve, sep } from 'node:path';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createRequire } from 'node:module';
-import { verifyNativePackageTree, NATIVE_PACKAGES } from './native-package-integrity.mjs';
+import { NATIVE_PACKAGES } from './native-package-integrity.mjs';
 import { dshPin } from './dsh-pin.mjs';
 const forbiddenPath = /\/Users\/|\/home\/[^/]+\/|file:\/\/\/Users\//;
 // Assembled so this guard does not match its own text.
@@ -34,21 +33,15 @@ try {
   for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'third-party/ZCode-LICENSE', 'dist/client.js',
     'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
     'scripts/native-package-pins.json', 'scripts/native-package-integrity.mjs', 'scripts/verify-native-dependencies.mjs',
-    'scripts/check-local-process-launcher.mjs', 'scripts/start-agent-bundle.mjs', 'scripts/start-agent-manifest.mjs', 'scripts/verify-agent-manifest.mjs'])
+    'scripts/start-agent-bundle.mjs', 'scripts/start-agent-manifest.mjs', 'scripts/verify-agent-manifest.mjs'])
     if (!files.has(file)) throw Error('Missing runtime entry: ' + file);
   for (const name of NATIVE_PACKAGES)
-    if (!/^\d+\.\d+\.\d+$/.test(metadata.dependencies?.[name]) || !metadata.bundledDependencies?.includes(name)) throw Error('Native registry dependency is not pinned and bundled: ' + name);
-  verifyNativePackageTree(root);
-  const consumer = createRequire(join(root, 'package.json'));
-  const adapter = createRequire(join(root, 'node_modules/@kingsoftcloud/agentkit-harness-node/package.json'));
-  if (consumer.resolve('@kingsoftcloud/agentkit-harness-core') !== adapter.resolve('@kingsoftcloud/agentkit-harness-core')) throw Error('Native adapters must use one installed Core identity');
-  if (!realpathSync(adapter.resolve('diff')).startsWith(realpathSync(root) + sep)) throw Error('Native diff must resolve from the package archive');
-  for (const target of ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64']) {
-    const file = `node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/${target}/launcher`;
-    const stat = lstatSync(join(root, file));if (!stat.isFile() || !(stat.mode & 0o111)) throw Error('Missing executable: ' + target);
-  }
+    if (!/^\d+\.\d+\.\d+$/.test(metadata.dependencies?.[name]) || metadata.bundledDependencies?.includes(name))
+      throw Error('Native library dependency must be installed from a pinned registry version: ' + name);
+  if (files.has('src/host/services/native-harness.mjs') || list.some(path => path.startsWith('package/node_modules/')))
+    throw Error('Studio archive contains the retired Harness entry or bundled dependencies');
   for (const path of list) {
-    if (path.endsWith('/') || path.startsWith('package/node_modules/') && !/^package\/node_modules\/@kingsoftcloud\/agentkit-harness-(?:core|node|ui)\//.test(path)) continue;
+    if (path.endsWith('/')) continue;
     const body = readFileSync(join(extracted, path), 'utf8');
     // The runtime image runs as `node`; mask exactly that fixed home before
     // scanning so a container constant is not mistaken for a developer path.

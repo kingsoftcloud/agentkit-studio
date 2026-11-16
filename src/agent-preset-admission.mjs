@@ -9,16 +9,14 @@ import { HARNESS_SERVICE_PRESET_SUFFIX } from './harness-service-preset.mjs';
  * declarations, so silently putting them in an empty preset would produce a
  * successful looking chat that runs the wrong composition. Those resource
  * bindings are routed through the Studio DSH provider bridge, which keeps the
- * native Session UI while delegating runtime work to Studio. The Native contract replaces each local Harness turn; DSH-native and Codex
+ * native Session UI while delegating runtime work to Studio. The independent engine owns local Harness turns; DSH-native and Codex
  * retain their own execution owners.
  */
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { selectedNativeBuildContract } from './build-engine.mjs';
-import { nativeChildRoleDeclarations } from './native-child-declarations.mjs';
 import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
 import { knowledgeBindings } from './knowledge-tools.mjs';
 import { legacyMemoryBindings } from './legacy-memory-tools.mjs';
-import { nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
 // A degraded preset is usable immediately, but the Host keeps the exact same
 // prompt: one transport blip must not remove an MCP/Skill binding for the rest
@@ -193,10 +191,10 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, strictResources = false, reprobeDelaysMs, localHarnessService, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, strictResources = false, reprobeDelaysMs, resolveHarnessWorkspace, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
     if (nativeEngineContract !== undefined && nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT) throw new TypeError('Unsupported Native Harness engine contract');
     this.nativeEngineContract = nativeEngineContract;
-    this.localHarnessService = localHarnessService;
+    this.resolveHarnessWorkspace = resolveHarnessWorkspace;
     this.assertHostCompatible = assertHostCompatible;
     // Strict deployments refuse to run a preset whose bound resources could not
     // be recovered; the default keeps the Agent conversational and only removes
@@ -294,7 +292,7 @@ export class DshPresetAdmission {
     // starts a runtime with degraded resources opts in, because that runtime
     // cannot start without its model route (RUNTIME_MODEL_UNAVAILABLE).
     requireModelSelection = false,
-    preferService = false,
+    cwd,
     requestedPresetId,
   } = {}) {
     this.assertHostCompatible?.();
@@ -330,21 +328,31 @@ export class DshPresetAdmission {
       eligibility.presetId = dshPresetId(eligibility.agentId, eligibility.revision, buildId);
       eligibility.mode = 'studio-bridge';
     }
-    const servicePresetId = eligibility.presetId + HARNESS_SERVICE_PRESET_SUFFIX;
-    const service = this.localHarnessService && eligibility.local && eligibility.runtime === 'harness'
-      && (requestedPresetId ? requestedPresetId === servicePresetId : preferService);
-    if (service) Object.assign(eligibility, { presetId: servicePresetId, runtime: 'native-engine', workspaceRoot: this.localHarnessService.workspaceRoot });
-    if (requestedPresetId && requestedPresetId !== eligibility.presetId)
+    const native = eligibility.local && ['harness', 'native-engine'].includes(eligibility.runtime);
+    if (native && eligibility.runtime === 'harness') selectedNativeBuildContract(agent, this.nativeEngineContract);
+    const route = native ? this.resolveHarnessWorkspace?.(cwd) : undefined;
+    if (native && this.resolveHarnessWorkspace && !route && (!allowUnavailableResources || requireModelSelection)) {
+      throw Object.assign(new Error('当前工作区没有绑定独立 Harness，请选择已配置的工作区。'), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+    }
+    if (native) {
+      const servicePresetId = eligibility.presetId + HARNESS_SERVICE_PRESET_SUFFIX;
+      // One preset owns the Agent definition. The committed Session directory owns routing.
+      Object.assign(eligibility, { runtime: 'native-engine', presetId: requestedPresetId || servicePresetId,
+        ...(route ? { workspaceRoot: route.workspaceRoot, serviceOwnedModel: true } : {}) });
+      if (![servicePresetId, servicePresetId.slice(0, -HARNESS_SERVICE_PRESET_SUFFIX.length)].includes(eligibility.presetId))
+        throw Object.assign(new Error('会话原有的 Agent 运行预设不可用'), { code: 'DSH_PRESET_ROUTE_UNAVAILABLE' });
+    } else if (requestedPresetId && requestedPresetId !== eligibility.presetId) {
       throw Object.assign(new Error('会话原有的 Agent 运行预设不可用'), { code: 'DSH_PRESET_ROUTE_UNAVAILABLE' });
+    }
     const modelSelection = requireModelSelection || !allowUnavailableResources
-      ? service ? this.localHarnessService.modelSelection : await this.getModelSelection?.(agent) : undefined;
+      ? route?.modelSelection ?? await this.getModelSelection?.(agent) : undefined;
     if (this.disposed) throw Object.assign(new Error('Agent preset admission is disposed'), { code: 'DSH_PRESET_REGISTRY_UNAVAILABLE' });
     const previous = this.registrations.get(eligibility.presetId);
     if (previous && (!previous.resourcesUnavailable || allowUnavailableResources)) return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
     const pending = this.pending.get(eligibility.presetId);
     if (pending) {
       await pending;
-      if (!allowUnavailableResources && this.registrations.get(eligibility.presetId)?.resourcesUnavailable) return this.ensure(agentId, { agent, preferService, requestedPresetId });
+      if (!allowUnavailableResources && this.registrations.get(eligibility.presetId)?.resourcesUnavailable) return this.ensure(agentId, { agent, cwd, requestedPresetId });
       return { ...eligibility, ...(modelSelection ? { modelSelection } : {}), reused: true };
     }
     const registration = this.register(agent, eligibility, buildId, { allowUnavailableResources });
@@ -356,8 +364,6 @@ export class DshPresetAdmission {
   }
 
   async register(agent, eligibility, buildId, { allowUnavailableResources = false } = {}) {
-    const nativeEngineContract = eligibility.local && eligibility.runtime === 'harness'
-      ? selectedNativeBuildContract(agent, this.nativeEngineContract) : undefined;
     const resourceAgent = eligibility.runtime === 'native-engine' && eligibility.local
       ? { ...agent, spec: { ...agent.spec, runtime: { ...agent.spec?.runtime, type: eligibility.runtime },
         bindings: harnessServiceHostBindings(agent.spec?.bindings) } } : agent;
@@ -371,8 +377,8 @@ export class DshPresetAdmission {
     // A Studio-owned Web binding replaces the standard preset's Web plugin;
     // duplicate names in the same scope fail admission. An DSH-native or Codex
     // preset without that binding retains its existing DSH Web environment.
-    const ownsWeb = eligibility.local && (eligibility.runtime === 'harness' && nativeEngineContract
-      || toolBindingRefs(agent).some(name => ['web_fetch', 'web_search'].includes(name)));
+    const ownsWeb = eligibility.local && (eligibility.runtime === 'native-engine'
+      || toolBindingRefs(resourceAgent).some(name => ['web_fetch', 'web_search'].includes(name)));
     const plugins = normalizePersonaRows(basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web'));
     let resourcesUnavailable = false;
     const unavailableResources = [];
@@ -430,8 +436,6 @@ export class DshPresetAdmission {
       const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function'
         ? await recoverResources(() => this.getSkillDefinitions(resourceAgent), 'skill')
         : [];
-      const boundToolPolicy = eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
-        ? nativeAgentPolicyFromSpec(agent.spec) : null;
       if (unavailableResources.length) {
         // The unavailable bindings are absent from the tool set; without this
         // note the model still believes it can call them and hallucinates.
@@ -468,20 +472,13 @@ export class DshPresetAdmission {
           ...(unavailableResources.length ? { unavailableResources: unavailableResources.map(item => ({ ...item })) } : {}),
           ...(this.strictResources ? { strictResources: true } : {}),
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
-          ...(eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
-            ? { nativeEngineContract } : {}),
-          ...(boundToolPolicy ? { boundToolPolicy: structuredClone(boundToolPolicy) } : {}),
           ...(!eligibility.local ? { cloudVersionId: agent.deployment?.versionId || 'initial' } : {}),
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(resourceAgent).length ? { toolBindings: toolBindingRefs(resourceAgent) } : {}),
           ...(toolContracts.length ? { toolContracts } : {}),
           ...(skillDefinitions.length ? { skillDefinitions } : {}),
-          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { skillSpaceIds: [...new Set((agent.spec.bindings?.plugins ?? [])
-            .filter(plugin => plugin.enabled !== false).map(plugin => plugin.config?.binding?.resource)
-            .filter(resource => resource?.kind === 'skill-space').map(resource => resource.id || resource.resourceId).filter(Boolean))] } : {}),
           ...(eligibility.local && agent.spec.bindings?.a2a?.length
             ? { a2aBindings: structuredClone(agent.spec.bindings.a2a) } : {}),
-          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { subAgents: nativeChildRoleDeclarations(agent.spec) } : {}),
         },
       });
     }

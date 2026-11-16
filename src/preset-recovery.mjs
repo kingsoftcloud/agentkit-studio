@@ -19,9 +19,6 @@ export async function restoreLocalPresets({store,build,admission,warn=console.wa
   for (const record of rows.values()) {
     try {
       await admission.ensure(record.metadata.id, { agent: record, allowUnavailableResources: true });
-      if (admission.localHarnessService && record.spec?.runtime?.type === 'harness') {
-        await admission.ensure(record.metadata.id, { agent: record, allowUnavailableResources: true, preferService: true });
-      }
     }
     catch(error) { warn(`[agentkit-studio] preset restore skipped (${record.metadata.id}:r${record.metadata.revision}):`,error?.message || error); }
   }

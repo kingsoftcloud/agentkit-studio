@@ -1,3 +1,4 @@
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 import test from 'node:test';
 
 import assert from 'node:assert/strict';
@@ -24,7 +25,7 @@ import { createAgentStore } from '../src/agent-store.mjs';
 
 import { createModelService } from '../src/model-service.mjs';
 
-import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
 
 import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
 
@@ -35,7 +36,6 @@ import { NATIVE_DSH_MANAGED_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harnes
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
 import { managedNativeOwnerProjection } from '../src/host/services/native-managed-execution.mjs';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -132,7 +132,7 @@ async function runManagedKernel({ binding, store, runId, sessionId, signal, turn
   return kernel.runUntilIdle(binding.scope, runId, { signal });
 }
 
-test('Studio C2: authenticated session injection is silent, ordered and consumed by the ordinary Native turn', async t => {
+test('Studio C2: session injection is silent, ordered and consumed by the ordinary Native turn', async t => {
   const h = await setup(t);
   h.agent.externalTurns = nativeOwnershipHost(h.session, h.events);
   const route = createSessionRoutes({ getNativeHost: async () => h.host });
@@ -182,7 +182,7 @@ test('Studio managed injection resolves only session ownership and routes data t
   assert.match(JSON.stringify(JSON.parse(h.requests[0].options.body).messages), /Managed source record/);
 });
 
-test('existing Studio recovery route reads and retries the original managed ledger, then prefers a newer ordinary turn', async t => {
+test('retired Host recovery fixture reads and retries the original managed ledger, then prefers a newer ordinary turn', async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const h = await setup(t, { respond: async () => { entered.resolve(); await finish.promise;
     return { choices: [{ index: 0, delta: { content: 'Managed done' }, finish_reason: 'stop' }] }; } });
@@ -252,7 +252,7 @@ test('existing Studio recovery route reads and retries the original managed ledg
     'opaque Native IDs use their persisted SDK delivery position rather than Number(turnId)');
 });
 
-test('existing product recovery route exposes grant-blocked queue and closes discarded work without starting an owner', async t => {
+test('retired Host recovery fixture exposes grant-blocked queue and closes discarded work without starting an owner', async t => {
   const h = await setup(t); h.agent.externalTurns = nativeOwnershipHost(h.session, h.events);
   const issuer = permitIssuer({ target: h.target });
   const runtime = createManagedNativeKernel({ directory: join(h.root, 'grant-receiver'), target: h.target,

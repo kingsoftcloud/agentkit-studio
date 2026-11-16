@@ -39,14 +39,20 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
     const buildId = String(options.buildId || '').trim();
     if (!value && options.workspaceFree !== true) return;
     try {
-      const admission = value ? await hostRemote.ensureDshPreset(value, buildId) : null;
+      const current = options.workspaceFree === true ? undefined
+        : Object.values(navCtx.sessions.list?.getSnapshot().byId ?? {}).find(session => session.retainedBy?.mainView > 0);
+      const cwd = options.cwd ?? current?.cwd;
+      const workspaceId = options.workspaceId ?? (options.cwd === undefined && current
+        ? navCtx.workspaces?.list.getSnapshot().items.find(workspace => workspace.sessionIds.includes(current.id))?.workspaceId : undefined);
+      const admission = value ? await hostRemote.ensureDshPreset(value, buildId, undefined, cwd) : null;
       if (!active()) return;
       // Mount the admitted persona once, as part of creating the session.
       const sessionOptions = admission ? { agentPreset: admission.presetId } : {};
-      if (admission?.workspaceRoot) sessionOptions.cwd = admission.workspaceRoot;
+      if (workspaceId) sessionOptions.workspaceId = workspaceId;
+      else if (cwd ?? admission?.workspaceRoot) sessionOptions.cwd = cwd ?? admission.workspaceRoot;
       const sessionId = await navCtx.sessions.create(sessionOptions);
       if (!active()) return;
-      const modelSelection = admission?.workspaceRoot
+      const modelSelection = admission?.serviceOwnedModel
         ? admission.modelSelection : options.modelSelection || admission?.modelSelection;
       if (modelSelection) {
         const result = await selectSessionModel(remote, { sessionId, ...modelSelection, saveDefault: false });

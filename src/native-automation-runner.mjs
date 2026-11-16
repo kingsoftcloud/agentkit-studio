@@ -52,7 +52,8 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (requireReplay) throw Object.assign(new Error('Original request history unavailable'), { code: 'RUNTIME_REQUEST_HISTORY_UNAVAILABLE', status: 409 });
     if (!existing) {
       const admission = await admit(agentId, buildId);
-      await controller.create({ sessionId, agentPreset: admission.presetId });
+      await controller.create({ sessionId, agentPreset: admission.presetId,
+        ...(admission.workspaceRoot ? { cwd: admission.workspaceRoot } : {}) });
       if (admission.modelSelection) await controller.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
     }
     if (model !== undefined && selectModel) {

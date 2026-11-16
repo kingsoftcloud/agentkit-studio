@@ -11,7 +11,7 @@ import {fixture,scope as baseScope,tool} from './fixtures/native-core.mjs';
 import {nativeOwnershipHost} from './fixtures/native-ownership-host.mjs';
 import {nativeRecoveryBinding} from '../src/providers/native-recovery-binding.mjs';
 import {createNativeResourceRetirement,validateNativeResourceRetirementRequest} from '../src/host/services/native-resource-retirement.mjs';
-import {createSessionRoutes} from '../src/host/routes/sessions.mjs';
+import {createSessionRoutes} from './fixtures/retired-session-routes.mjs';
 import {createNativeRecoveryState} from '../src/client/state/native-recovery.mjs';
 import {createNativeDshBrowserTools} from '../src/providers/native-dsh-browser.mjs';
 import {createHash} from 'node:crypto';

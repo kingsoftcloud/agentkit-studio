@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DshPresetAdmission, dshPresetId } from '../src/agent-preset-admission.mjs';
+import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
 
 const RECORD = Object.freeze({
   metadata: { id: 'demo/reprobe', name: 'Reprobe Agent', revision: 7, local: true },
@@ -41,8 +41,7 @@ test('a degraded preset is reprobed after 30s and the placeholder is replaced on
       return [];
     },
   });
-  await admission.ensure(RECORD.metadata.id, { agent: RECORD, allowUnavailableResources: true });
-  const presetId = dshPresetId(RECORD.metadata.id, RECORD.metadata.revision);
+  const { presetId } = await admission.ensure(RECORD.metadata.id, { agent: RECORD, allowUnavailableResources: true });
   assert.equal(registered.length, 1);
   assert.equal(runtimeConfig(registered[0]).resourcesUnavailable, true);
   assert.equal(admission.reprobeTimers.size, 1);

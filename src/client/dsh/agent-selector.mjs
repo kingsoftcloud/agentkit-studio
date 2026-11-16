@@ -114,11 +114,7 @@ export function createAgentSelector({
       }
       setBusy(true);
       try {
-        const admission = await hostRemote.ensureDshPreset(value);
-        if (admission.workspaceRoot && session?.cwd !== admission.workspaceRoot) {
-          setNotice('该 Agent 已绑定独立 Harness 工作区，请从 Agent 页面新建会话');
-          return;
-        }
+        const admission = await hostRemote.ensureDshPreset(value, '', undefined, session?.cwd ?? null);
         const selectedPreset = await studioRemote.agentPresets.select(sessionId, admission.presetId);
         // The public DSH Remote returns {ok,value}; direct registry
         // adapters return the selected preset id. Accept both contracts.

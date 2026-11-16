@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
-import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';

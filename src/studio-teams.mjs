@@ -248,7 +248,6 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
       agent,
       allowUnavailableResources: recovery,
       requireModelSelection,
-      preferService: !recovery,
       ...(role.agentPreset ? { requestedPresetId: role.agentPreset } : {}),
     });
     if (admission?.presetId) {
