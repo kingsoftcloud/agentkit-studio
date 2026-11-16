@@ -144,6 +144,8 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
         }
         // One composition shared with the Native path so the two runtimes cannot
         // drift apart; Codex labels its own source and forwards the call id.
+        // `runId` is intentionally absent: this scope has no DSH Run, and a
+        // correlation id is never fabricated from the invocation id.
         return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal,
           invocation: nativeMcpInvocation({ scope: { userId }, agent: { session: { id: sessionId } },
             agentId, callId, source: 'codex' }) });

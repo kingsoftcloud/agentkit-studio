@@ -196,9 +196,10 @@ for (const driftAt of ['pre-execute', 'around-dispatch']) test(`a bound third-pa
   assert.equal(denied, true); assert.equal(effects, 0);
 });
 
-/** Actual Native kernel + SQLite + production MCP adapter + local HTTP peer.
- * This is the real DSH Host path: only the model and the ToolRegistry policy
- * stage are controlled doubles, exactly like the authority tests above. */
+/** Native integration path: actual NativeKernel + SQLite + production MCP
+ * adapter + local HTTP peer. The model and the ToolRegistry policy stage are
+ * controlled doubles, and no DSH Host process is launched — a full Host launch
+ * under an isolated DSH_HOME stays a release gate, not a unit-test claim. */
 test('a real Native turn forwards the RunAgent business caller to the MCP server', async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-business-identity-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));

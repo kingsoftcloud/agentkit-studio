@@ -35,7 +35,7 @@ MCP 收到的调用身份字段含义如下：
 | `invocationId` | 关联 | **平台请求 ID** | 必定存在；未传 `InvocationId` 时是平台生成的 UUID |
 | `nativeSessionId` | 关联 | Runtime 内部 DSH 会话 ID | 必定存在 |
 | `agentId` | 关联 | 当前托管 Agent | 必定存在 |
-| `runId` / `callId` | 关联 | 本轮 Run 与本次 MCP 调用 | Native/DSH 路径两者都在；Codex 路径转发 `callId`，`runId` 由 Codex 运行时提供时才出现 |
+| `runId` / `callId` | 关联 | 本轮 Run 与本次 MCP 调用 | Native/DSH 路径两者都在；Codex 路径**只保证 `callId`**——Codex 工具处理器作用域内没有 DSH Run，因此 `runId` 有意不填，见下方「契约决定」 |
 | `businessUserId` | 业务归属 | **业务用户 ID** | 未传 `RunAgent.UserId` 则**不出现** |
 | `businessSessionId` | 业务归属 | **业务会话 ID** | 未传 `RunAgent.SessionId` 则**不出现**，绝不用平台会话兜底 |
 | `businessInvocationId` | 业务归属 | **业务请求 ID** | 未传 `InvocationId` 时等于平台请求 ID |
@@ -91,8 +91,9 @@ MCP 端因此可以这样判断：
    }
    ```
 
-   `_meta` 是 MCP 规范里给应用层预留的扩展位，键名按反向域名命名；未知键必须被忽略，因此旧
-   MCP Server 不受影响。
+   `_meta` 是 MCP 规范里给应用层预留的扩展位，键名按反向域名命名。**符合 MCP 扩展约定**
+   （忽略未知 `_meta` 键）的 Server 不受影响；自写严格请求校验、拒绝未知键的 Server 需要按
+   下面的兼容开关关闭该通道——身份通道默认开启，这一点必须由接入方确认。
 
 2. **HTTP Header（HTTP / SSE 网关可以在 MCP 应用层之前做鉴权与审计）**
 
@@ -190,9 +191,37 @@ async def call_tool(name: str, arguments: dict):
   转发；托管 Runtime 的平台主体仍只在可信 Header 中用于鉴权。若 MCP Server 还需要 KOP
   子账号的 `userUuid` / `accountId`，那是另一项平台身份透传需求，不能用业务 `UserId` 代替。
 
+## 契约决定
+
+这些是**有意**的取舍，改动前请先确认不是缺陷：
+
+- **Codex 路径没有 `runId`**：Codex 工具处理器作用域内只有 `sessionId` / `userId` / `agentId` /
+  `callId`，没有 DSH Run 标识。为了让「关联 ID 不得伪造」成立，`runId` 有意留空，而不是用
+  `invocationId` 冒充。需要 Codex 侧也有 `runId` 的接入方，应先在 Codex 运行时补出真实 Run。
+- **`businessSessionId` 不做兜底**：调用方不传 `RunAgent.SessionId` 时，该字段不出现。平台会话
+  不会被改写成业务会话，MCP 端因此能区分「调用方声明过」和「没有提供」。
+- **身份通道默认开启**：符合 MCP 扩展约定（忽略未知 `_meta`）的 Server 直接受益；自写严格校验
+  的 Server 需要显式关闭（见「安全约束」）。
+- **业务身份默认不强制**：只有设置 `AGENTKIT_MCP_BUSINESS_IDENTITY=require` 的部署才把
+  `UserId` + `SessionId` 变成必填，避免破坏已有 MCP Agent。
+
+## 验证边界
+
+| 层次 | 覆盖 | 证据 |
+| --- | --- | --- |
+| 单元 | 身份规范化、Header 清理、`_meta` 构造 | `tests/mcp-invocation-identity.test.mjs` |
+| 适配器 | 共享连接下的按请求注入、并发隔离 | `tests/local-resource-adapters.test.mjs` |
+| 托管入口 | 私有 sidecar 只能由 RunAgent 铸造、require 模式、审批恢复 | `tests/managed-runtime-approval.test.mjs` |
+| Native 集成 | 实际 `NativeKernel` + SQLite + 生产 MCP 适配器 + 本地 HTTP peer | `tests/native-mcp-dispatch-authority.test.mjs` |
+| **未覆盖** | **真实 DSH Host 进程（隔离 `DSH_HOME` 启动）** | 属发布门禁，不在单元测试内声明 |
+
+Native 集成用例里模型与 ToolRegistry 策略层是受控替身，也没有启动 DSH Host 进程；它证明的是
+「Native 运行时确实把 Host 绑定的身份送到了 MCP 线上」，不是「整机 Host 验收」。
+
 ## 回归
 
 ```sh
 node --test tests/mcp-invocation-identity.test.mjs
 node --test tests/native-mcp-dispatch-authority.test.mjs tests/local-resource-adapters.test.mjs
+node --test tests/managed-runtime-approval.test.mjs
 ```
