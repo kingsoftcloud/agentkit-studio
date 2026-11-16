@@ -79,10 +79,11 @@ test('resource-configured identity headers are stripped when the turn has none',
   // A resource may configure arbitrary MCP credentials; the Host identity
   // namespace is never one of them.
   const headers = new Headers({ authorization: 'Bearer resource-token', 'x-agentkit-user-id': 'forged',
-    'x-agentkit-business-user-id': 'forged-business', 'x-other': 'kept' });
+    'x-agentkit-business-user-id': 'forged-business', 'x-agentkit-future-field': 'forged-future', 'x-other': 'kept' });
   const next = applyMcpInvocationHeaders(headers, null);
   assert.equal(next.get('x-agentkit-user-id'), null);
   assert.equal(next.get('x-agentkit-business-user-id'), null);
+  assert.equal(next.get('x-agentkit-future-field'), null);
   assert.equal(next.get('authorization'), 'Bearer resource-token');
   assert.equal(next.get('x-other'), 'kept');
 });

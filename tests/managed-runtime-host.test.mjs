@@ -112,6 +112,14 @@ test('managed launch preserves an explicit command backend across the child Host
   assert.equal(plan.env.KSYUN_SECRET_KEY, undefined);
 });
 
+test('managed MCP identity controls reach the child Host boundary', async t => {
+  const f = await fixture(t);
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env,
+    AGENTKIT_MCP_BUSINESS_IDENTITY: 'require', AGENTKIT_MCP_INVOCATION_IDENTITY: '0' } });
+  assert.equal(plan.env.AGENTKIT_MCP_BUSINESS_IDENTITY, 'require');
+  assert.equal(plan.env.AGENTKIT_MCP_INVOCATION_IDENTITY, '0');
+});
+
 for (const runtime of ['dsh-native', 'harness', 'codex']) test(`${runtime} migrates its retained profile and refreshes image code without replacing native state`, async t => {
   const f = await fixture(t), declaration = parse(f.raw);
   declaration.framework = declaration.runtime.name = runtime;

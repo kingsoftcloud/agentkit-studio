@@ -213,28 +213,25 @@ async def call_tool(name: str, arguments: dict):
 | 适配器 | 共享连接下的按请求注入、并发隔离 | `tests/local-resource-adapters.test.mjs` |
 | 托管入口 | 私有 sidecar 只能由 RunAgent 铸造、require 模式、审批恢复 | `tests/managed-runtime-approval.test.mjs` |
 | Native 集成 | 实际 `NativeKernel` + SQLite + 生产 MCP 适配器 + 本地 HTTP peer | `tests/native-mcp-dispatch-authority.test.mjs` |
-| **未覆盖** | **真实 DSH Host 进程（隔离 `DSH_HOME` 启动）** | 属发布门禁，见下方「发布门禁」 |
+| 真实 DSH Host | 隔离 `DSH_HOME` 的真实 Host 进程、RunAgent 到 MCP 的完整链路 | `scripts/verify-managed-mcp-identity.mjs`，由 `managed-mcp-business-identity` CI 门禁运行 |
 
-Native 集成用例里模型与 ToolRegistry 策略层是受控替身，也没有启动 DSH Host 进程；它证明的是
-「Native 运行时确实把 Host 绑定的身份送到了 MCP 线上」，不是「整机 Host 验收」。
+Native 集成用例里模型与 ToolRegistry 策略层是受控替身；真实 Host 门禁再验证
+「RunAgent 经 engine 进程到达 MCP Server」的完整部署路径。
 
 ## 门禁结果
 
 本机 Node.js 26.3.0 低于 `.node-version` 基线（24.22.1；26.x 需 ≥ 26.12.1），`make check` 与
-真实 Host 验证在本地无法执行，因此全部门禁在 GitHub Actions 上跑：
+真实 Host 门禁在本地不执行；完整门禁在 GitHub Actions 上跑：
 
 | 门禁 | 环境 | 结果 |
 | --- | --- | --- |
 | `public-gate`（`make check` 全量套件） | ubuntu-24.04 / Node 24.22.1 / Playwright Chromium | **通过**：5431 项，5430 pass，0 fail，1 skipped |
 | `patched-dsh-host` | 真实 DSH Host，`DSH_HOME` 指向 runner 临时目录 | **通过**：真实 Node 退出 + JSONL 重开 + 进程恢复，5 个场景全 PASS |
 | `native-engine-integration` | ubuntu-24.04 | **通过** |
+| `managed-mcp-business-identity` | 真实 DSH Host + 隔离 `DSH_HOME` + 本地 MCP loopback | **通过**：业务字段、关联 ID、Header 与 MCP 凭证均断言 |
 
-CI 运行：<https://github.com/kingsoftcloud/agentkit-studio/actions/runs/43837904193>
-
-**仍未覆盖的部分必须明确**：`patched-dsh-host` 验证的是 Host 归属、审批与进程恢复，**没有**断言
-「`RunAgent` 一轮经真实 DSH Host 进程到达 MCP Server 并观察到业务身份」。该身份断言目前止于
-Native 集成层（`NativeKernel` + SQLite + 生产 MCP 适配器 + 本地 HTTP peer），不声称是整机 Host
-验收。若接入方要求这一条，需要单独补一个启动真实 Host 的身份用例。
+`patched-dsh-host` 继续验证 Host 归属、审批与进程恢复；`managed-mcp-business-identity` 专门断言
+「`RunAgent` 一轮经真实 DSH Host 进程到达 MCP Server 并观察到业务身份」。
 
 ## 回归
 
@@ -242,4 +239,6 @@ Native 集成层（`NativeKernel` + SQLite + 生产 MCP 适配器 + 本地 HTTP 
 node --test tests/mcp-invocation-identity.test.mjs
 node --test tests/native-mcp-dispatch-authority.test.mjs tests/local-resource-adapters.test.mjs
 node --test tests/managed-runtime-approval.test.mjs
+AGENTKIT_DSH_INSTALLATION=/path/to/pinned/built-dsh \
+  node scripts/verify-managed-mcp-identity.mjs --report .artifacts/managed-mcp-identity.json
 ```

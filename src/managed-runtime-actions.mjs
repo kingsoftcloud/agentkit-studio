@@ -70,7 +70,10 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
       let record = await registry.read(id);
       if (record) {
         if (record.owner !== owner.digest || record.nativeSessionId !== nativeId) throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
-        if (businessUserId && record.businessUserId && record.businessUserId !== businessUserId) throw runtimeError('RUNTIME_BUSINESS_SESSION_CONFLICT', 409);
+        if ((businessUserId && record.businessUserId && record.businessUserId !== businessUserId)
+          || (businessSessionId && record.businessSessionId && record.businessSessionId !== businessSessionId)) {
+          throw runtimeError('RUNTIME_BUSINESS_SESSION_CONFLICT', 409);
+        }
         if (record.phase === 'deleted' || record.phase === 'deleting' || retiring.has(nativeId)) throw runtimeError('RUNTIME_SESSION_UNAVAILABLE', 409);
         // The business session is attribution only: it is bound on the first
         // RunAgent that names it, and a later turn may omit it without

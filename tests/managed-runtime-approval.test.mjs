@@ -7,7 +7,9 @@ import { createManagedApprovalRegistry, hasManagedApprovalRun, requestManagedApp
 import { createManagedRuntimeActions } from '../src/managed-runtime-actions.mjs';
 import { managedRuntimeBootstrap } from '../src/managed-runtime-capabilities.mjs';
 import { startBuildRuntimeHttp } from '../src/build-runtime-http.mjs';
-import { currentBusinessInvocation } from '../src/providers/business-invocation-context.mjs';
+import { businessInvocationFor, currentBusinessInvocation } from '../src/providers/business-invocation-context.mjs';
+import { createManagedSessionRegistry } from '../src/managed-session-registry.mjs';
+import { createRuntimeResponsesContract } from '../src/runtime-responses-contract.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 import { createMcpLoopbackService } from './fixtures/mcp-loopback-service.mjs';
 import { nativeMcpInvocation } from '../src/providers/native-mcp-invocation.mjs';
@@ -192,7 +194,7 @@ async function httpFixture(t, { onRun, mcp = false, env } = {}) {
   const headers = user => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json',
     'x-agentengine-target-version-id': runtime.identity.versionId,
     'x-agentengine-manifest-sha256': runtime.identity.manifestSha256, ...ownerHeaders(user) });
-  return { server, approval, base, headers, stored,
+  return { server, approval, base, headers, stored, actions, root,
     action: (name, body, user = 'alice') => fetch(`${base}/agentengine/api/v1/${name}`,
       { method: 'POST', headers: headers(user), body: JSON.stringify({ AgentId: 'ar-managed', ...body }) }),
     runAgent: (body, user = 'alice') => fetch(`${base}/agentengine/api/v1/RunAgent`,
@@ -246,6 +248,38 @@ test('RunAgent binds business UserId and SessionId in private Runtime context', 
     InvocationId: 'business-run-2', ResponsesInput: 'another turn' });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).ReasonCode, 'RUNTIME_BUSINESS_SESSION_CONFLICT');
+});
+
+test('a failed RunAgent releases the engine Session business binding', async t => {
+  let nativeSessionId;
+  const api = await httpFixture(t, { onRun: async request => {
+    nativeSessionId = request.sessionId;
+    assert.equal(businessInvocationFor(nativeSessionId)?.userId, 'customer@example.com');
+    throw Object.assign(new Error('runner failed'), { code: 'RUNTIME_RUN_FAILED' });
+  } });
+  const response = await api.runAgent({ SessionId: 'failed-business-session', UserId: 'customer@example.com',
+    InvocationId: 'failed-business-run', ResponsesInput: 'fail' });
+  await response.text();
+  assert.equal(businessInvocationFor(nativeSessionId), null);
+});
+
+test('a conflicting business session does not partially bind durable identity', async t => {
+  const api = await httpFixture(t);
+  const responses = createRuntimeResponsesContract({ agentId: runtime.identity.agentId,
+    versionId: runtime.identity.versionId, definitionId: runtime.identity.manifestSha256,
+    token, model: 'model', models: ['model'] });
+  const signal = new AbortController().signal;
+  const headers = api.headers('alice');
+  const base = { input: 'hello', session_id: 'partial-session' };
+  await api.actions.parseResponses({ ...base, request_id: 'partial-first', __agentkit_business_session_id: 'old-session' },
+    headers, responses, signal, { runAgent: true });
+  await assert.rejects(api.actions.parseResponses({ ...base, request_id: 'partial-conflict',
+    __agentkit_business_user_id: 'new-user', __agentkit_business_session_id: 'new-session' },
+  headers, responses, signal, { runAgent: true }), { code: 'RUNTIME_BUSINESS_SESSION_CONFLICT' });
+  const registry = await createManagedSessionRegistry(api.root);
+  const record = await registry.read('partial-session');
+  assert.equal(record.businessUserId, undefined);
+  assert.equal(record.businessSessionId, 'old-session');
 });
 
 test('a deployment can require business UserId and SessionId for MCP bindings', async t => {

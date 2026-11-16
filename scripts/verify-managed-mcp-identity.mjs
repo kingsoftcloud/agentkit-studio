@@ -8,7 +8,7 @@
  *  the identity has to survive a real Host process boundary, not just an
  *  in-process kernel.
  *
- *  Usage: AGENTKIT_DSH_INSTALLATION=<dir with node_modules/@deepseek-ai/dsh>
+ *  Usage: AGENTKIT_DSH_INSTALLATION=<built DSH source checkout at dsh-pin.json:commit>
  *         node scripts/verify-managed-mcp-identity.mjs [--report <path>]
  *
  *  Exits 1 with a recorded reason when the installation is absent, so a missing
@@ -16,21 +16,23 @@
  */
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { once } from 'node:events';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { promisify } from 'node:util';
 import { stringify } from 'yaml';
 import { prepareManagedRuntimeHost } from '../src/managed-runtime-host.mjs';
+import { dshPin } from './dsh-pin.mjs';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { values } = parseArgs({ options: { report: { type: 'string' } } });
 const installation = resolve(process.env.AGENTKIT_DSH_INSTALLATION || join(repository, '.ci-dsh'));
 const result = { gate: 'managed-mcp-business-identity', installation, passed: false };
 const started = Date.now();
+const execute = promisify(execFile);
 
 const fail = (code, detail) => Object.assign(new Error(detail || code), { code });
 const freePort = () => new Promise(done => {
@@ -97,6 +99,14 @@ function mcpServer() {
 /** Assemble the layout `inspectRuntimeInstallation` expects from a built
  *  monorepo checkout, so the gate runs against real published bytes. */
 async function assembleInstallation(root) {
+  let actualCommit;
+  try {
+    actualCommit = (await execute('git', ['-C', installation, 'rev-parse', 'HEAD'], { encoding: 'utf8' })).stdout.trim();
+  } catch (error) {
+    throw fail('DSH_INSTALLATION_NOT_CHECKOUT', `DSH installation must be a Git checkout: ${error.message}`);
+  }
+  if (actualCommit !== dshPin.commit) throw fail('DSH_INSTALLATION_PIN_MISMATCH',
+    `DSH checkout ${actualCommit} does not match pinned commit ${dshPin.commit}`);
   const modules = join(root, 'installation', 'node_modules');
   await mkdir(join(modules, '@deepseek-ai'), { recursive: true });
   await mkdir(join(modules, '@kingsoftcloud'), { recursive: true });
@@ -107,8 +117,8 @@ async function assembleInstallation(root) {
   await symlink(cli, join(modules, '@deepseek-ai/dsh'), 'dir').catch(error => {
     if (error.code !== 'EEXIST') throw error;
   });
-  // A symlinked package fails the installation digest, which only accepts real
-  // files. Materialize the published surface instead of linking the checkout.
+  // The Host installation follows the checked-out Studio package to calculate
+  // its digest; the temporary package layout keeps DSH and Studio independent.
   await symlink(repository, join(modules, '@kingsoftcloud/agentkit-studio'), 'dir').catch(error => {
     if (error.code !== 'EEXIST') throw error;
   });
@@ -193,10 +203,20 @@ try {
   const meta = call.meta['io.agentkit.studio/invocation'];
   result.observed = { meta, headers: Object.fromEntries(Object.entries(call.headers)
     .filter(([name]) => name.startsWith('x-agentkit-') || name === 'authorization')) };
+  if (meta.source !== 'run-agent') throw fail('MCP_SOURCE_MISSING', JSON.stringify(meta));
+  if (!meta.sessionId || !meta.nativeSessionId || meta.nativeSessionId !== meta.sessionId)
+    throw fail('MCP_SESSION_ID_MISSING', JSON.stringify(meta));
+  if (meta.invocationId !== 'request-1001' || meta.businessInvocationId !== 'request-1001')
+    throw fail('MCP_INVOCATION_ID_MISSING', JSON.stringify(meta));
   if (meta.businessUserId !== 'customer@example.com') throw fail('BUSINESS_USER_MISSING', JSON.stringify(meta));
   if (meta.businessSessionId !== 'order-session-42') throw fail('BUSINESS_SESSION_MISSING', JSON.stringify(meta));
+  if (call.headers['x-agentkit-invocation-source'] !== 'run-agent') throw fail('SOURCE_HEADER_MISSING');
+  if (call.headers['x-agentkit-session-id'] !== meta.sessionId) throw fail('SESSION_HEADER_MISSING');
   if (call.headers['x-agentkit-business-user-id'] !== 'customer@example.com') throw fail('BUSINESS_USER_HEADER_MISSING');
   if (call.headers['x-agentkit-business-session-id'] !== 'order-session-42') throw fail('BUSINESS_SESSION_HEADER_MISSING');
+  if (call.headers['x-agentkit-invocation-id'] !== 'request-1001'
+    || call.headers['x-agentkit-business-invocation-id'] !== 'request-1001') throw fail('INVOCATION_HEADER_MISSING');
+  if (call.headers.authorization !== 'Bearer fixture-mcp-token') throw fail('MCP_AUTHORIZATION_MUTATED');
   result.passed = true;
 } catch (error) {
   result.failure = { code: error.code || 'MANAGED_MCP_IDENTITY_VERIFICATION_FAILED', message: error.message };
@@ -207,9 +227,11 @@ try {
   await model?.close().catch(() => {});
   await mcp?.close().catch(() => {});
   if (result.workspace) await rm(result.workspace, { recursive: true, force: true }).catch(() => {});
-  const reportPath = resolve(values.report || join(repository, '.artifacts/managed-mcp-identity.json'));
-  await mkdir(dirname(reportPath), { recursive: true });
-  await writeFile(reportPath, JSON.stringify(result, null, 2) + '\n');
+  if (values.report) {
+    const reportPath = resolve(values.report);
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath, JSON.stringify(result, null, 2) + '\n');
+  }
   console.log(JSON.stringify(result));
 }
 

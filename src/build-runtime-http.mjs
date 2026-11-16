@@ -270,8 +270,16 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       // request, which does not inherit this async context. Bind the turn's
       // business identity to its Session for exactly the duration of the run.
       const releaseBusinessBinding = bindBusinessInvocation(sessionId, input.businessInvocation);
-      const result = withResourceContext ? await withResourceContext({ headers: req.headers, subjectDigest: input.principalDigest, signal: abort.signal }, invokeWithBusinessIdentity) : await invokeWithBusinessIdentity();
-      releaseBusinessBinding();
+      let result;
+      try {
+        result = withResourceContext
+          ? await withResourceContext({ headers: req.headers, subjectDigest: input.principalDigest, signal: abort.signal }, invokeWithBusinessIdentity)
+          : await invokeWithBusinessIdentity();
+      } finally {
+        // The engine may fail or be cancelled before the runner resolves. The
+        // Session registry must never outlive this turn in either case.
+        releaseBusinessBinding();
+      }
       if (abort.signal.aborted) throw abort.signal.reason;
       await platformActions?.flushRun(input);
       abort.signal.throwIfAborted();

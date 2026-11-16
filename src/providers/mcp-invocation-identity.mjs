@@ -82,7 +82,9 @@ export function mcpInvocationMeta(identity) {
  * forged identity when the live turn has none. */
 export function applyMcpInvocationHeaders(headers, identity) {
   const next = new Headers(headers instanceof Headers ? headers : headers || undefined);
-  for (const header of Object.values(FIELD_HEADERS)) next.delete(header);
+  for (const header of [...next.keys()]) {
+    if (header.toLowerCase().startsWith('x-agentkit-')) next.delete(header);
+  }
   for (const [field, header] of Object.entries(FIELD_HEADERS)) {
     if (identity?.[field]) next.set(header, identity[field]);
   }
