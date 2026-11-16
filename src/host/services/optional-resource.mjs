@@ -4,10 +4,11 @@
  */
 export function optionalResourceAdapter(promise) {
   return Promise.resolve(promise).catch(error => {
+    const causeCode = String(error?.code || 'RESOURCE_INIT_FAILED');
     const fail = async () => {
-      throw Object.assign(new Error('Studio resource service is unavailable'), {
+      throw Object.assign(new Error(`Studio resource service is unavailable (${causeCode})`), {
         code: 'RESOURCE_SERVICE_UNAVAILABLE', status: 503,
-        details: { causeCode: String(error?.code || 'RESOURCE_INIT_FAILED') },
+        details: { causeCode },
       });
     };
     return Object.freeze({
