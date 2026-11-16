@@ -201,14 +201,41 @@ test('a stale answer cannot replace a remote question that changed during presen
 });
 
 for (const approval of [false, true]) test(`${approval ? 'approval' : 'input'} permission wait retains the original absolute deadline`, async t => {
-  const f = await setup(t, { approval, timeout: 1 }); let pending;
-  const command = await f.wait(host(() => approval ? { action: 'reject' } : submit(), () => new Promise(resolve => { pending = resolve; })));
+  const f = await setup(t, { approval, timeout: 15 });
+  const deadlineAt = f.record().deadlineAt, remaining = 10000;
+  let now = deadlineAt - remaining, presented = false, timerInstalled = false;
+  const operationDeadline = new AbortController(), realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const permissionStarted = Promise.withResolvers(), permission = Promise.withResolvers();
+  // Let the real HTTP/SQLite fixture establish its question before driving time.
+  // Expire the operation timer only after the durable answer reaches permission.
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(AbortSignal, 'timeout', ms => {
+    if (!presented || ms !== remaining) return realTimeout(ms);
+    timerInstalled = true;
+    return operationDeadline.signal;
+  });
+  const waiting = f.wait(host(() => {
+    presented = true;
+    return approval ? { action: 'reject' } : submit();
+  }, () => {
+    permissionStarted.resolve();
+    return permission.promise;
+  }), realTimeout(5000));
+  await Promise.race([permissionStarted.promise, waiting.then(() => assert.fail('permission wait did not start'))]);
+  const before = Object.values(f.record().managed.questions.entries)[0];
+  assert.equal(before.status, approval ? 'rejected' : 'submitted');
+  assert.equal(before.stage, 'awaiting_permission');
+  assert.equal(timerInstalled, true, 'permission uses the remaining original deadline');
+  now = deadlineAt;
+  operationDeadline.abort(new DOMException('Original deadline expired', 'TimeoutError'));
+  const command = await waiting;
+  assert.equal(f.record().deadlineAt, deadlineAt);
   assert.equal(f.record().managed.questionOutcome.errorCode, 'A2A_OVERALL_TIMEOUT');
   const entry = Object.values(f.record().managed.questions.entries)[0];
   assert.equal(entry.status, approval ? 'rejected' : 'submitted'); assert.equal(entry.stage, 'expired');
   assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
   assert.equal(f.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
-  pending('allow'); await delay(30);
+  permission.resolve('allow'); await delay(30);
   assert.equal(Object.values(f.record().controls ?? {}).length, 0, 'late permission cannot admit an expired effect');
   assert.equal((await f.resume(command)).phase, 'completed');
 });
