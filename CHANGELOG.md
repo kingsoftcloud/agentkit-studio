@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Star Harness 使用 Studio 随包发布的固定摘要校验运行时及其依赖，通过校验后再启动。插件只接管已绑定的工作区。
+
 - 流式 Action（`RunAgent` 等 SSE 接口）不再把「HTTP 200 + JSON 错误信封」当成事件流：网关在流式接口上返回 `{ Code, RequestId, Error }`（例如 `Code: 409` 运行时就绪）或非 `text/event-stream` 的响应时，客户端按真实状态码与 `requestId` 抛出 `AgentEngineError`（429 → `SERVER_RATE_LIMITED`，信封错误 → `SERVER_ACTION_FAILED`，其余 → `SERVER_INVALID_RESPONSE`），界面显示真实原因而不是 SSE 解析失败或卡住；未带 content-type 的响应保持原有行为，KOP inner-account 403 回退不变。
 
 - 修复经 magpie 等严格网关时的 `400 Invalid assistant message: content or tool_calls must be set`：Responses 线只接受「带文本的 assistant 消息」或「带工具调用」的轮次，而重放的 `reasoning` 项会在模型上一轮没有产出文本与工具调用时形成只有推理的轮次。代理现在把这种轮次的 `reasoning` 项整体丢弃（有文本或工具调用的轮次保持原样，推理连续性不变），并顺手丢弃既无文本也无工具调用的空 assistant 轮次；两者都只在网关拒绝后重试一次。此前「去掉 `content: null` 再重试」的修复对这类请求是无效的（重试体同样被拒）。同一条链路上还会出现 `400 Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`（历史里只剩工具回执、对应调用已被裁掉）：代理现在同样在发送前丢弃孤立回执，回执与调用按 `call_id` 顺序配对。

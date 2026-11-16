@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, lstatSync, existsSync, readdirSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync, mkdtempSync, rmSync, lstatSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -13,6 +13,8 @@ import { NATIVE_PACKAGES } from './native-package-integrity.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const product = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const lock = parse(readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8'));
+const pinsPath = join(root, 'scripts/native-package-pins.json');
+const previous = existsSync(pinsPath) ? JSON.parse(readFileSync(pinsPath, 'utf8')) : undefined;
 const temporary = mkdtempSync(join(tmpdir(), 'native-registry-pins-'));
 const pins = { schemaVersion: 'agentkit.native-registry-pins/v2', packages: {}, dependencyPackages: {} };
 const loaded = new Map();
@@ -33,10 +35,15 @@ async function releaseEvidence(name, version) {
   if (integrity !== release.dist.integrity || integrity !== expectedIntegrity) throw Error(`Registry/lock integrity mismatch: ${key}`);
   const area = mkdtempSync(join(temporary, 'release-')), archive = join(area, 'package.tgz');writeFileSync(archive, bytes);
   const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split(/\r?\n/);
-  if (entries.some(path => !path.startsWith('package/') || path.includes('\\') || path.split('/').includes('..'))) throw Error('Unsafe archive path');
+  if (entries.some(path => path !== 'package' && (!path.startsWith('package/') || path.includes('\\') || path.split('/').includes('..'))))
+    throw Error(`Unsafe archive path: ${key}`);
   const types = execFileSync('tar', ['-tvzf', archive], { encoding: 'utf8' }).trim().split(/\r?\n/);
-  if (types.some(line => !['-', 'd'].includes(line[0]))) throw Error('Archive contains a link or special file');
+  if (types.length !== entries.length || types.some(line => !['-', 'd'].includes(line[0])))
+    throw Error(`Archive contains a link or special file: ${key}`);
   execFileSync('tar', ['-xzf', archive, '-C', area]);
+  // Some registry archives give directory entries file-like modes (0644).
+  const directories = entries.filter((_, index) => types[index][0] === 'd').sort((a, b) => a.length - b.length);
+  for (const path of directories) chmodSync(join(area, path), 0o700);
   const metadata = JSON.parse(readFileSync(join(area, 'package/package.json'), 'utf8'));
   if (metadata.name !== name || metadata.version !== version) throw Error('Archive package identity mismatch');
   const files = {};
@@ -63,6 +70,32 @@ async function installedDependencies(directory, evidence) {
     await installedDependencies(path, evidence);
   }
 }
+async function runtimeDependencies(directory, seen, versions) {
+  directory = realpathSync(directory);
+  if (seen.has(directory)) return;
+  seen.add(directory);
+  const require = createRequire(join(directory, 'package.json'));
+  const metadata = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+  for (const [name, requirement] of Object.entries(metadata.dependencies ?? {})) {
+    const path = require.resolve.paths(name)?.map(base => join(base, name)).find(existsSync);
+    if (!path) throw Error(`Runtime dependency is missing: ${name}`);
+    const installed = JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'));
+    if (installed.name !== name) throw Error(`Runtime dependency identity mismatch: ${name}`);
+    if (!NATIVE_PACKAGES.includes(name)) {
+      const prior = versions.get(name);
+      const exact = requirement === installed.version;
+      if (prior && prior.version !== installed.version && prior.exact === exact)
+        throw Error(`Runtime dependency versions conflict: ${name}`);
+      // The isolated runtime shares the exact AJV selected by Harness Core
+      // with ajv-formats, which can use any compatible AJV 8 release.
+      if (prior?.exact && !exact && prior.version !== installed.version) continue;
+      if (!prior || exact) versions.set(name, { version: installed.version, exact });
+      const key = `${name}@${installed.version}`;
+      pins.dependencyPackages[key] = await releaseEvidence(name, installed.version);
+    }
+    await runtimeDependencies(path, seen, versions);
+  }
+}
 try {
   const require = createRequire(join(root, 'package.json'));
   for (const name of NATIVE_PACKAGES) {
@@ -71,6 +104,25 @@ try {
     let directory = dirname(require.resolve(name));while (!existsSync(join(directory, 'package.json'))) directory = dirname(directory);
     await installedDependencies(directory, evidence);
   }
-  writeFileSync(join(root, 'scripts/native-package-pins.json'), JSON.stringify(pins, null, 2) + '\n');
-  console.log('Pinned exact registry archives, own files and separately installed dependency files against the reviewed lockfile.');
-} finally { rmSync(temporary, { recursive: true, force: true }); }
+  const runtime = NATIVE_PACKAGES[1];
+  let runtimeDirectory = dirname(require.resolve(runtime));
+  while (!existsSync(join(runtimeDirectory, 'package.json'))) runtimeDirectory = dirname(runtimeDirectory);
+  const versions = new Map();
+  await runtimeDependencies(runtimeDirectory, new Set(), versions);
+  pins.runtimeDependencies = Object.fromEntries([...versions].sort().map(([name, { version }]) => [name, version]));
+  const previousVersion = previous?.packages?.[runtime]?.version;
+  if (previousVersion && previousVersion !== pins.packages[runtime].version) {
+    pins.previousRuntime = { version: previousVersion,
+      packages: Object.fromEntries(NATIVE_PACKAGES.slice(0, 2).map(name => [name, previous.packages[name]])),
+      dependencies: previous.runtimeDependencies ?? pins.runtimeDependencies };
+  } else if (previous?.previousRuntime) pins.previousRuntime = previous.previousRuntime;
+  for (const [name, version] of Object.entries(pins.previousRuntime?.dependencies ?? {})) {
+    const key = `${name}@${version}`;
+    if (!pins.dependencyPackages[key]) {
+      if (!previous?.dependencyPackages?.[key]) throw Error(`Previous runtime dependency has no reviewed pin: ${key}`);
+      pins.dependencyPackages[key] = previous.dependencyPackages[key];
+    }
+  }
+  writeFileSync(pinsPath, JSON.stringify(pins, null, 2) + '\n');
+  console.log('Pinned registry archives and executable dependencies against the reviewed lockfile.');
+} finally { rmSync(temporary, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }

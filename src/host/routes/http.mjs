@@ -58,7 +58,14 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, server
           const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const endpoint = String(message?.method || '');
           signal.throwIfAborted();
-          const result = await dispatch(endpoint, message?.payload, signal);
+          let result;
+          if (endpoint.startsWith('star-harness/') && admission.peer?.principal?.kind !== 'owner') {
+            result = endpoint === 'star-harness/status'
+              ? { ok: true, value: { supported: false, canCreate: false } }
+              : { ok: false, error: { code: 'STAR_HARNESS_OWNER_REQUIRED', message: '此操作需要 Studio 宿主所有者权限。', details: { status: 403 } } };
+          } else {
+            result = await dispatch(endpoint, message?.payload, signal);
+          }
           if (response.destroyed) return;
           response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
           response.end(JSON.stringify({ type: 'server-response', rpcId: String(message?.rpcId || ''), result }));

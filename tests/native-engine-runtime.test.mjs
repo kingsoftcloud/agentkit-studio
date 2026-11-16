@@ -2,7 +2,7 @@
 // against a local model fixture. Studio code under test imports no engine module.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -742,4 +742,86 @@ test('a committed provider backoff explains the wait before any retry actually s
   const retry = events.findIndex(event => event.kind === 'effect.prepared' && event.retry === true);
   assert.ok(scheduled >= 0 && retry > scheduled);
   assert.equal(f.model.requests.length, 2);
+});
+
+test('Studio-installed Star Harness binds two isolated workers and retains Run history after a Host restart', { timeout: 30000 }, async t => {
+  const { createStarHarnessManager } = await import('../src/host/services/star-harness.mjs');
+  const projects = await Promise.all(['Alpha', 'Beta'].map(async label => {
+    const project = await setup(t, [
+      toolCall('same-call', 'write_workspace_file', { path: 'out.txt', content: label + '\n' }),
+      final(label + ' complete.'),
+      final(label + ' continued.'),
+    ]);
+    return { ...project, label };
+  }));
+  const [alpha, beta] = projects;
+  const unbound = await setup(t, [final('Unbound still works.')]);
+  const root = join(alpha.cwd, '..', 'manager');
+  const release = fileURLToPath(new URL('../..', pathToFileURL(installedEngine)));
+  const { version } = JSON.parse(readFileSync(join(release, 'package.json'), 'utf8'));
+  const open = () => createStarHarnessManager({
+    root, env: { PATH: process.env.PATH }, externalRoutes: new Map(), bundledVersion: version,
+    releases: { entry: async () => release, install: async () => release, latest: async () => version },
+    settings: async () => ({ modelProfiles: projects.map(project => ({ id: project.label })) }),
+    profile: async id => {
+      const project = projects.find(item => item.label === id);
+      return { id, modelName: id, baseUrl: project.model.url, apiKey: 'fixture-only' };
+    },
+  });
+  const runtime = starHarness => createNativeEngineRuntime({ stateRoot: join(root, 'studio'),
+    env: {}, starHarness, resolveCommand: () => assert.fail('must route to workspace HTTP service') });
+  let manager = open();
+  try {
+    assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
+    await manager.install(version);
+    await assert.rejects(manager.setEnabled(true), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+    for (const project of projects) await manager.bind(project.cwd, project.label);
+    assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
+    await manager.setEnabled(true);
+    assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: true });
+    assert.deepEqual(runtime(manager).serviceModels, ['Alpha', 'Beta']);
+    const mixedRuntime = createNativeEngineRuntime({ stateRoot: join(root, 'mixed'),
+      env: { PATH: process.env.PATH, AGENTKIT_ENGINE_COMMAND: engineCommand, AGENTKIT_ENGINE_ARGS: engineArgs }, starHarness: manager });
+    assert.equal(mixedRuntime.usesServiceFor(alpha.cwd), true);
+    assert.equal(mixedRuntime.usesServiceFor(unbound.cwd), false);
+    assert.equal(mixedRuntime.requiresServiceWorkspace, false);
+    const local = await collect(mixedRuntime.stream({ ...unbound.options, input: 'Reply with the fixture text.' }));
+    assert.equal(local.findLast(chunk => chunk.type === 'text').text, 'Unbound still works.');
+    assert.equal(unbound.model.requests.length, 1);
+    assert.equal(alpha.model.requests.length + beta.model.requests.length, 0);
+    const lease = await manager.acquire(runtime(manager).serviceWorkspace(alpha.cwd).workspaceRoot);
+    try {
+      assert.throws(() => manager.setEnabled(false), { code: 'STAR_HARNESS_BUSY' });
+      assert.equal((await fetch(lease.connection.endpoint + '/v1/sessions/secret/rpc', {
+        method: 'POST', body: '{}',
+      })).status, 401);
+    } finally { lease.release(); }
+    const turn = async (project, turnId) => collect(runtime(manager).stream({
+      cwd: project.cwd, input: turnId === '1' ? 'Write out.txt.' : 'Continue.',
+      sessionId: 'same-session', turnId, sandbox: 'danger-full-access', signal: AbortSignal.timeout(10000),
+    }));
+    const first = await turn(alpha, '1');
+    assert.equal(beta.model.requests.length, 0);
+    await turn(beta, '1');
+    for (const project of projects) assert.equal(readFileSync(join(project.cwd, 'out.txt'), 'utf8'), project.label + '\n');
+    const runId = first.findLast(chunk => chunk.event?.kind === 'run.terminal').runId;
+    await manager.close();
+    manager = open();
+    assert.equal((await manager.status({ includeWorkspaces: false })).canCreate, true);
+    assert.ok(await runtime(manager).readDeliveryEvidence({ cwd: alpha.cwd, sessionId: 'same-session', runId }));
+    const next = await turn(alpha, '2');
+    assert.equal(next.findLast(chunk => chunk.type === 'text').text, 'Alpha continued.');
+    assert.match(JSON.stringify(alpha.model.requests.at(-1).messages), /Alpha complete/);
+    assert.doesNotMatch(JSON.stringify(alpha.model.requests.at(-1).messages), /Beta complete/);
+    const alphaRoot = runtime(manager).serviceWorkspace(alpha.cwd).workspaceRoot;
+    const relocated = alpha.cwd + '-relocated';
+    renameSync(alpha.cwd, relocated);
+    try {
+      const status = await manager.status();
+      assert.equal(status.workspaces.find(item => item.workspace === alphaRoot).missing, true);
+      await assert.rejects(manager.acquire(alphaRoot), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+      await manager.setEnabled(false);
+    } finally { renameSync(relocated, alpha.cwd); }
+    assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
+  } finally { await manager.close(); }
 });

@@ -58,6 +58,20 @@ test('control RPC retains request identity, envelope and EOF cancellation semant
   assert.equal(host.calls[0][2].aborted, false, 'normal request EOF and response completion are not cancellation');
 });
 
+test('Star Harness management dispatches for owners only and hides workspace status from other peers', async t => {
+  const host = await harness(t, { admit: () => ({ peer: { principal: { kind: 'member' } } }) });
+  const send = async (target, method, payload) =>
+    (await (await target.request('/agentkit', JSON.stringify({ method, payload, rpcId: 'star' }))).json()).result;
+  assert.deepEqual(await send(host, 'star-harness/status', {}), { ok: true, value: { supported: false, canCreate: false } });
+  for (const operation of ['install', 'enable', 'bind', 'unbind'])
+    assert.equal((await send(host, 'star-harness/' + operation, {})).error.code, 'STAR_HARNESS_OWNER_REQUIRED');
+  assert.equal(host.calls.length, 0);
+  const owner = await harness(t, { admit: () => ({ peer: { principal: { kind: 'owner' } } }) });
+  for (const operation of ['status', 'install', 'enable', 'bind', 'unbind'])
+    assert.equal((await send(owner, 'star-harness/' + operation, {})).ok, true);
+  assert.equal(owner.calls.length, 5);
+});
+
 for (const reason of ['disconnect', 'scope-unload']) {
   test(`pending control RPC cancels on ${reason} after request EOF`, { timeout: 5000 }, async t => {
     const { promise: started, resolve: start } = Promise.withResolvers();

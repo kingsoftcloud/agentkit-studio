@@ -43,20 +43,20 @@ test('overview empty/loading and error states keep recovery and credential warni
 });
 
 test('runtime catalog renders disabled Star Harness and existing Codex availability as rows', () => {
-  const Page = createRuntimeCatalogPage({ ui: ui(['ready', [{ runtimeType: 'harness' }, { runtimeType: 'codex' }, { runtimeType: 'dsh-native' }], false, '']), hostRemote: {}, window: {} });
+  const Page = createRuntimeCatalogPage({ ui: ui(['ready', [{ runtimeType: 'harness' }, { runtimeType: 'codex' }, { runtimeType: 'dsh-native' }], false, false, '']), hostRemote: {}, window: {} });
   const rows = nodes(Page({})).filter(node => node.props.className === 'studio-row studio-runtime-row');
   assert.equal(rows.length, 3);
   assert.equal(rows[0].props['aria-disabled'], true);
-  assert.equal(rows[0].props.title, '该能力暂未开放');
-  assert.match(text(rows[0]), /未开放/);
+  assert.equal(rows[0].props.title, '在插件页安装并启用 Star Harness');
+  assert.match(text(rows[0]), /未启用/);
   assert.doesNotMatch(text(rows[0]), /可选/);
   assert.match(text(rows[1]), /Provider 未注册/);
-  assert.equal(nodes(rows[0]).some(node => node.type === 'button'), false);
+  assert.ok(nodes(rows[0]).some(node => node.type === 'button' && text(node) === '打开插件中心'));
 });
 
 test('runtime catalog empty and failed reads keep existing recovery', () => {
   for (const [status, title] of [['ready', '没有可用运行目标'], ['error', '运行目标不可用']]) {
-    const Page = createRuntimeCatalogPage({ ui: ui([status, [], false, 'Catalog offline']), hostRemote: {}, window: {} });
+    const Page = createRuntimeCatalogPage({ ui: ui([status, [], false, false, 'Catalog offline']), hostRemote: {}, window: {} });
     const empty = nodes(Page({})).find(node => node.type === 'EmptyState');
     assert.equal(empty.props.title, title);
     if (status === 'error') assert.equal(empty.props.detail, 'Catalog offline');

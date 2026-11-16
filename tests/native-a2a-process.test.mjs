@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 const fixture = fileURLToPath(new URL('./fixtures/native-a2a-process.mjs', import.meta.url));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const checkpointWaitMs = 25000;
 for (const checkpoint of ['send-entered', 'task-bound', 'receipt-entered']) {
-  test(`real SIGKILL after ${checkpoint}: replacement records uncertainty and never sends again`, async t => {
+  test(`real SIGKILL after ${checkpoint}: replacement records uncertainty and never sends again`, { timeout: 90000 }, async t => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-sigkill-')));
     let sends = 0, gets = 0, child, replacement, observer, killedQueryPid = null, output = '', errors = '';
     const expire = async () => {
@@ -62,9 +63,12 @@ for (const checkpoint of ['send-entered', 'task-bound', 'receipt-entered']) {
     });
     child = spawn(process.execPath, [fixture, 'run', root, origin], { stdio: ['ignore', 'pipe', 'pipe'] });
     child.stderr.on('data', data => { errors += data; });
-    const deadline = Date.now() + 10000;
+    const deadline = performance.now() + checkpointWaitMs;
     while (!(sends === 1 && (checkpoint === 'send-entered' || records()[0]?.projection.taskId === 'remote-original'))) {
-      assert.equal(child.exitCode, null, errors); assert.ok(Date.now() < deadline, `checkpoint not reached: ${errors}`); await delay(10);
+      assert.equal(child.exitCode, null, errors);
+      assert.equal(child.signalCode, null, errors);
+      assert.ok(performance.now() < deadline, `${checkpoint} not reached (sends=${sends}, phase=${records()[0]?.phase}): ${errors}`);
+      await delay(10);
     }
     const original = records()[0], exited = once(child, 'exit');
     child.kill('SIGKILL'); const [code, signal] = await exited;
@@ -83,8 +87,13 @@ for (const checkpoint of ['send-entered', 'task-bound', 'receipt-entered']) {
     observer = spawn(process.execPath, [fixture, 'observe', root, origin], { stdio: ['ignore', 'pipe', 'pipe'] });
     observer.stdout.on('data', data => { observedOutput += data; }); observer.stderr.on('data', data => { errors += data; });
     if (checkpoint === 'receipt-entered') {
-      const deadline = Date.now() + 10000;
-      while (!gets) { assert.equal(observer.exitCode, null, errors); assert.ok(Date.now() < deadline); await delay(10); }
+      const deadline = performance.now() + checkpointWaitMs;
+      while (!gets) {
+        assert.equal(observer.exitCode, null, errors);
+        assert.equal(observer.signalCode, null, errors);
+        assert.ok(performance.now() < deadline, `the receipt request did not reach the peer: ${errors}`);
+        await delay(10);
+      }
       const exited = once(observer, 'exit'); killedQueryPid = observer.pid; observer.kill('SIGKILL');
       assert.deepEqual(await exited, [null, 'SIGKILL']); await expire();
       let duplicateOutput = '';

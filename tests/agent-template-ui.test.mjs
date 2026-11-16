@@ -47,8 +47,8 @@ test('runtime radios skip the unavailable Star Harness with arrow keys and canno
   const native = radios.find(node => node.props['data-runtime'] === 'dsh-native');
   const harness = radios.find(node => node.props['data-runtime'] === 'harness');
   assert.equal(harness.props.disabled, true);
-  assert.equal(harness.props.title, '该能力暂未开放');
-  assert.match(JSON.stringify(harness.children), /未开放/);
+  assert.equal(harness.props.title, '在插件页安装并启用 Star Harness');
+  assert.match(JSON.stringify(harness.children), /未启用/);
   harness.props.onClick();
   assert.equal(form.render().find(node => node.props['data-runtime'] === 'dsh-native').props['aria-checked'], true);
   let focused = false;

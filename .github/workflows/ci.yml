@@ -75,7 +75,7 @@ jobs:
           node-version-file: .node-version
       - run: pnpm install --frozen-lockfile
       - name: Verify service approvals and acceptance with the locked npm Harness
-        run: node --test tests/native-engine-runtime.test.mjs tests/native-host-approval.test.mjs
+        run: node --test tests/native-engine-runtime.test.mjs tests/native-host-approval.test.mjs tests/star-harness-release.test.mjs
   patched-host:
     name: patched-dsh-host
     runs-on: ${{ matrix.os }}

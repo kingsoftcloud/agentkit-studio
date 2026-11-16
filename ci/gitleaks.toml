@@ -3,7 +3,7 @@ title = "AgentKit Studio secret gate"
 [extend]
 useDefault = true
 
-# No file, commit, fingerprint or real-secret exemptions. These exact values
+# No blanket file, commit, fingerprint or real-secret exemptions. These exact values
 # are public synthetic redaction fixtures or a JavaScript variable reference,
 # not credentials. Other values, even in the same file, remain scanned.
 [[allowlists]]
@@ -12,4 +12,20 @@ targetRules = ["generic-api-key"]
 regexTarget = "secret"
 regexes = [
   '''^(?:abc123def456|sk-xyz987ghi|private-skills-e2b-key|fixed\.KS3_SECRET_KEY)$''',
+]
+
+# The listed values are SHA-256 digests of public release files whose names
+# include token or api. Scope the exception to these exact digests and file.
+[[allowlists]]
+description = "Verified public npm file digests in the native package pins"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(?:^|/)scripts/native-package-pins\.json$''']
+regexTarget = "secret"
+regexes = [
+  '''^8fb8fdda477cd7382477ffda92c2bb7d9f7ef583b1aa531eb6b2dc2f0a206c10$''',
+  '''^294877dbb8f11cfd790b93488dc3baa8be5f5390204e471cb5d486f984981fbb$''',
+  '''^52dac9efba3a637771818d633a5cf1df30c7913d05ff23235150c88319ea035a$''',
+  '''^5a1b7c22df9ba9c601dd562de42ab8e8aac945313d79c3e593666e463c2206b4$''',
+  '''^12e589bbfc994957d0f8b18efb451ad173af6a36b54772cfb6f87ae31c3aeca3$''',
 ]

@@ -621,7 +621,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           const cwd = toolAgent?.session?.header?.cwd;
           if (toolAgent && !cwd) throw Object.assign(new Error('DSH 会话未提供 Codex 工作目录，请重新选择工作区'), { code: 'CODEX_WORKSPACE_UNAVAILABLE' });
           const selection = { provider: options.provider, model: options.studioSelectedModel || options.studioCodexModel || options.model };
-          const serviceOwnsModel = runtime === 'native-engine' && processRuntime?.usesService === true;
+          const serviceOwnsModel = runtime === 'native-engine' && (
+            processRuntime?.requiresServiceWorkspace || (processRuntime?.usesServiceFor?.(cwd) ?? processRuntime?.usesService) === true);
           const selected = serviceOwnsModel ? {} : options.provider && options.provider !== CODEX_PROVIDER
             ? await (typeof resolveCodexModel === 'function' ? resolveCodexModel(selection) : Promise.reject(Object.assign(new Error('此模型提供商未配置 Codex 接口，请在模型设置中检查配置。'), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' })))
             : { model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? selection.model : undefined) };

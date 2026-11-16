@@ -72,12 +72,12 @@ function sessionToolPolicy(policy, sandbox) {
 /** DSH selects a model route before invoking the agent loop. This adapter
  * supplies that route's metadata. The authenticated loop waterfall owns execution. */
 export function createHarnessServiceModelAdapter(AdapterBase, models, describeModel) {
-  const catalog = new Set(typeof models === 'string' ? [models] : models);
+  const catalog = () => new Set(typeof models === 'function' ? models() : typeof models === 'string' ? [models] : models);
   return new class extends AdapterBase {
     providerInfo(provider) { return { id: provider, name: 'Harness' }; }
-    async listModels(provider) { return Promise.all([...catalog].map(model => this.resolveModel(provider, model))); }
+    async listModels(provider) { return Promise.all([...catalog()].map(model => this.resolveModel(provider, model))); }
     async resolveModel(provider, model) {
-      if (!catalog.has(model)) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
+      if (!catalog().has(model)) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
       const capabilities = await describeModel?.(model);
       return { provider, id: model, name: model, modalities: capabilities?.images ? ['text', 'image'] : ['text'] };
     }
@@ -100,19 +100,28 @@ export function resolveEngineCommand(env = process.env) {
   throw failure('NATIVE_ENGINE_UNAVAILABLE', '请设置 AGENTKIT_ENGINE_COMMAND 指向独立安装的 Harness 可执行文件。');
 }
 
-export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnEngine = defaultSpawnEngine, resolveCommand = resolveEngineCommand, viewService } = {}) {
+export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnEngine = defaultSpawnEngine, resolveCommand = resolveEngineCommand, viewService, externalRoutes, starHarness } = {}) {
   if (!text(stateRoot)) throw failure('NATIVE_ENGINE_CONFIG_INVALID', 'Native 引擎缺少状态目录。');
   const views = createEngineViewStore(stateRoot);
-  const routes = engineServiceWorkspaces(env);
-  const routeFor = cwd => routes.get(canonicalEngineWorkspace(cwd));
-  const singleRoute = routes.size === 1 ? routes.values().next().value : undefined;
+  const routes = externalRoutes ?? engineServiceWorkspaces(env);
+  const serviceRoutes = () => [...routes.values(), ...(starHarness?.routes ?? [])];
+  const routeFor = cwd => {
+    const root = canonicalEngineWorkspace(cwd);
+    return root && (routes.get(root) ?? starHarness?.route(root));
+  };
+  const onlyRoute = () => {
+    const candidates = serviceRoutes();
+    return candidates.length === 1 ? candidates[0] : undefined;
+  };
   const viewFetch = viewService?.endpoint && engineServiceFetch(viewService.endpoint, viewService.caFile);
   const modelCapabilities = new Map();
   return {
-    usesService: routes.size > 0,
-    serviceCatalogWorkspace: routes.keys().next().value,
+    get usesService() { return serviceRoutes().length > 0; },
+    get requiresServiceWorkspace() { return routes.size > 0; },
+    usesServiceFor(cwd) { return Boolean(routeFor(cwd)); },
+    get serviceCatalogWorkspace() { return serviceRoutes()[0]?.workspaceRoot; },
     applicationPreviewAvailable: [...routes.values()].some(route => route.preview),
-    serviceModels: [...new Set([...routes.values()].map(route => route.modelSelection.model))],
+    get serviceModels() { return [...new Set(serviceRoutes().map(route => route.modelSelection.model))]; },
     async serviceModelInfo(model) {
       if (!modelCapabilities.has(model)) {
         const request = Promise.all([...routes.values()].filter(route => route.modelSelection.model === model).map(async route => {
@@ -125,10 +134,11 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         modelCapabilities.set(model, request);
         request.catch(() => modelCapabilities.delete(model));
       }
-      return modelCapabilities.get(model);
+      const external = await modelCapabilities.get(model);
+      return { images: external.images || starHarness?.modelInfo(model).images === true };
     },
     serviceWorkspace(cwd) {
-      const route = cwd === undefined ? singleRoute : routeFor(cwd);
+      const route = cwd === undefined ? onlyRoute() : routeFor(cwd);
       return route && { workspaceRoot: route.workspaceRoot, modelSelection: { ...route.modelSelection } };
     },
     applicationPreview: cwd => routeFor(cwd)?.preview,
@@ -136,26 +146,30 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const route = routeFor(cwd);
       if (!route) return null;
       signal?.throwIfAborted();
-      const engine = connectEngineService({ endpoint: route.endpoint, token: route.token,
-        sessionId: createHash('sha256').update(sessionId).digest('hex'), runId, observeOnly: true, fetchImpl: route.fetchImpl });
-      const abort = () => void engine.close().catch(() => {});
-      signal?.addEventListener('abort', abort, { once: true });
-      try { return (await engine.status(runId, { deliveryPresentation: true })).deliveryEvidence ?? null; }
-      finally { signal?.removeEventListener('abort', abort); await engine.close(); }
+      const lease = route.managed ? await starHarness.acquire(route.workspaceRoot) : null;
+      try {
+        const connection = lease?.connection ?? route;
+        const engine = connectEngineService({ endpoint: connection.endpoint, token: connection.token,
+          sessionId: createHash('sha256').update(sessionId).digest('hex'), runId, observeOnly: true, fetchImpl: connection.fetchImpl });
+        const abort = () => void engine.close().catch(() => {});
+        signal?.addEventListener('abort', abort, { once: true });
+        try { signal?.throwIfAborted(); return (await engine.status(runId, { deliveryPresentation: true })).deliveryEvidence ?? null; }
+        finally { signal?.removeEventListener('abort', abort); await engine.close(); }
+      } finally { lease?.release(); }
     },
     async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
       const workspaceRoot = canonicalEngineWorkspace(cwd);
-      const service = routes.get(workspaceRoot);
-      const serviceEndpoint = service?.endpoint;
-      if (!workspaceRoot || routes.size && !service)
+      const route = routeFor(workspaceRoot);
+      const useService = Boolean(route);
+      if (!workspaceRoot || routes.size && !route)
         throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '该会话的工作区没有绑定到配置的 Harness 服务。');
-      if (!serviceEndpoint && (!text(model) || !text(modelProvider?.baseUrl))) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '所选模型缺少可用的接口地址，请检查模型设置。');
+      if (!useService && (!text(model) || !text(modelProvider?.baseUrl))) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '所选模型缺少可用的接口地址，请检查模型设置。');
       const session = text(sessionId) ? sessionId : 'studio-session';
       const stateDir = join(stateRoot, createHash('sha256').update(JSON.stringify([workspaceRoot, session])).digest('hex').slice(0, 32));
       mkdirSync(stateDir, { recursive: true });
-      const { command, args } = serviceEndpoint ? {} : resolveCommand(env);
+      const { command, args } = useService ? {} : resolveCommand(env);
       const allowed = Object.fromEntries(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'USER', 'LOGNAME', 'SHELL', 'SystemRoot', 'TEMP', 'TMP']
         .filter(name => env[name] !== undefined).map(name => [name, env[name]]));
       // A spawned independent engine reads its own search binding. HTTP
@@ -167,12 +181,12 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       // permission mode decides: workspace-write and full access allow, anything else denies.
       const interactive = typeof requestApproval === 'function';
       const standing = ['workspace-write', 'danger-full-access'].includes(sandbox) ? 'allow' : 'deny';
-      const policy = serviceEndpoint ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
+      const policy = useService ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
-      const onApproveTool = !interactive && !serviceEndpoint ? undefined : async request => {
-        if (serviceEndpoint && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
+      const onApproveTool = !interactive && !useService ? undefined : async request => {
+        if (useService && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
           && !request.requiresUserApproval && !request.childRunId) return 'allow';
-        const requiresApproval = request.requiresUserApproval === true || serviceEndpoint && sandbox === 'workspace-write'
+        const requiresApproval = request.requiresUserApproval === true || useService && sandbox === 'workspace-write'
           && (request.childRunId || ['run_command', 'stop_command', 'delete_workspace_file', 'rewind_workspace_files'].includes(request.tool));
         const responder = interactive ? requestApproval : requiresApproval ? requestPolicyApproval : null;
         const explain = requiresApproval && !request.childRunId;
@@ -201,25 +215,29 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       };
       let diagnostics = '';
       const runId = `studio-${createHash('sha256').update(`${session}\n${text(turnId) ? turnId : randomUUID()}\n${objective}`).digest('hex').slice(0, 32)}`;
-      const verification = serviceEndpoint ? nativeEngineVerification({ objective, runId }) : null;
+      const verification = useService ? nativeEngineVerification({ objective, runId }) : null;
       const onReadToolReceipt = nativeHostReceiptHandler && ((request, receiptSignal) => {
         if (request?.runId !== runId) return {};
         return nativeHostReceiptHandler({ ...request, name: hostTools.originalName(request.name),
           signal: signal ? AbortSignal.any([signal, receiptSignal]) : receiptSignal });
       });
-      const engine = serviceEndpoint ? connectEngineService({ endpoint: serviceEndpoint,
-        token: service.token, sessionId: createHash('sha256').update(session).digest('hex'),
-        runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify, requiredToolPolicy: policy?.contract,
-        requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: service.fetchImpl }) : spawnEngine({ command, args: [...args, '--workspace', workspaceRoot, '--state-dir', stateDir, '--session', session, '--approval', standing],
-        env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
-          AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
-          ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
-          ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),
-          ...(env.KSADK_MODEL_COMPAT_RULE ? { AGENTKIT_ENGINE_MODEL_COMPAT_RULE: env.KSADK_MODEL_COMPAT_RULE } : {}) },
-        onApproveTool, onCallTool, hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
-      let cancellation;
+      signal?.throwIfAborted();
+      const lease = route?.managed ? await starHarness.acquire(workspaceRoot) : null;
+      const service = lease?.connection ?? route;
+      let engine, cancellation;
       const abort = () => { cancellation ??= engine.cancel(runId).catch(() => {}); };
       try {
+        signal?.throwIfAborted();
+        engine = useService ? connectEngineService({ endpoint: service.endpoint,
+          token: service.token, sessionId: createHash('sha256').update(session).digest('hex'),
+          runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify, requiredToolPolicy: policy?.contract,
+          requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: service.fetchImpl }) : spawnEngine({ command, args: [...args, '--workspace', workspaceRoot, '--state-dir', stateDir, '--session', session, '--approval', standing],
+          env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
+            AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
+            ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
+            ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),
+            ...(env.KSADK_MODEL_COMPAT_RULE ? { AGENTKIT_ENGINE_MODEL_COMPAT_RULE: env.KSADK_MODEL_COMPAT_RULE } : {}) },
+          onApproveTool, onCallTool, hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
         let hello;
         try { hello = await engine.initialize(); }
         catch (error) {
@@ -245,19 +263,19 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             .map(tool => [tool.name, policy.rules[hostTools.originalName(tool.name)]])),
         } };
         // The remote start can be committed before its response reaches Studio.
-        if (serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
+        if (useService) signal?.addEventListener('abort', abort, { once: true });
         const started = await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
           ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}),
           ...(verification ? { hostVerification: verification.definition } : {}),
           ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
-        if (!serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
+        if (!useService) signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();
         // A remote Run retains its original view after an engine upgrade.
         let view = null;
         const offered = started && Object.hasOwn(started, 'view') ? started.view : hello.capabilities?.ui;
         if (offered?.contract === ENGINE_VIEW_CONTRACT && SHA256.test(String(offered.sha256))) {
           if (views.has(offered.sha256)) view = offered.sha256;
-          else { try { view = views.save(await engine.view(serviceEndpoint ? offered.sha256 : undefined)); } catch { view = null; } }
+          else { try { view = views.save(await engine.view(useService ? offered.sha256 : undefined)); } catch { view = null; } }
         }
         yield { type: 'engine', engine: { version: hello.engine?.version ?? null, preset: hello.engine?.preset ?? null, protocol: hello.protocolVersion }, view };
         let finalText = null, rest;
@@ -335,8 +353,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         signal?.removeEventListener('abort', abort);
         // The turn's abort stops event polling immediately. Let its separate
         // best-effort cancel reach the service before closing the connection.
-        if (serviceEndpoint && cancellation) await Promise.race([cancellation, sleep(1000, undefined, { ref: false })]);
-        await engine.close().catch(() => {});
+        if (useService && cancellation) await Promise.race([cancellation, sleep(1000, undefined, { ref: false })]);
+        try { await engine?.close().catch(() => {}); }
+        finally { lease?.release(); }
       }
     },
     view: sha256 => views.read(sha256),
@@ -344,6 +363,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       if (!SHA256.test(sha256)) return null;
       const cached = views.read(sha256);
       if (cached !== null) return cached;
+      const singleRoute = routes.size === 1 ? routes.values().next().value : undefined;
       let html = singleRoute
         ? await fetchEngineServiceView(singleRoute.endpoint, singleRoute.token, sha256, singleRoute.fetchImpl) : null;
       if (html === null && viewFetch && (viewService.endpoint !== singleRoute?.endpoint

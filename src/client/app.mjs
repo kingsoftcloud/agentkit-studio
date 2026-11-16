@@ -24,6 +24,7 @@ import { createResourceDialogs } from "./components/resource-dialogs.mjs";
 import { createResourcePages } from "./pages/resources.mjs";
 import { createDshPluginPages } from "./pages/dsh-plugins.mjs";
 import { createCodexPluginPages } from "./pages/codex-plugins.mjs";
+import { createStarHarnessPage } from "./pages/star-harness.mjs";
 import { createDeliveryPages } from "./pages/delivery.mjs";
 import { DEPLOYMENT_LABELS } from "./state/deployment.mjs";
 import { createScheduleDelivery } from "./components/schedule-delivery.mjs";
@@ -72,7 +73,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.NativeAuthoringButton = NativeAuthoringButton;
   const PlatformResourcePicker = createPlatformResourcePicker({ ui, hostRemote, window });
   ui.PlatformResourcePicker = PlatformResourcePicker;
-  const AgentCreatePage = createAgentForm({ ui, hostRemote });
+  const AgentCreatePage = createAgentForm({ ui, hostRemote, window });
   ui.AgentCreatePage = AgentCreatePage;
   const AgentEditPage = createAgentEdit({ ui, hostRemote });
   ui.AgentEditPage = AgentEditPage;
@@ -91,6 +92,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createResourcePages({ ui, hostRemote, actions, window }));
   Object.assign(ui, createDshPluginPages({ ui, hostRemote }));
   Object.assign(ui, createCodexPluginPages({ ui, hostRemote }));
+  ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window });
   Object.assign(ui, createDeliveryPages({ ui, hostRemote, actions, window, document }));
   Object.assign(ui, createScheduleDelivery({ ui, hostRemote }));
   Object.assign(ui, createAutomationPage({ ui, hostRemote, actions, window, document }));

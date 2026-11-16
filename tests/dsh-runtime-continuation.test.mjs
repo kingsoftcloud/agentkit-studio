@@ -313,6 +313,29 @@ test('a Native engine service owns model selection at the Studio entry point', a
   assertContinuousBlocks(chunks, [[0, 'text', 'Harness service response']]);
 });
 
+test('an unbound workspace uses its own model even while a managed Harness is enabled', async t => {
+  const bridge = createRuntimeBridge();
+  t.after(() => bridge.close());
+  const cwd = '/tmp/native-unbound-fixture';
+  const sessionId = 'native-unbound-session';
+  bridge.bindRoute(sessionId, { agentId: 'native-local', runtime: 'native-engine', local: true,
+    agent: { session: { id: sessionId, header: { cwd } } } });
+  const modelProvider = { baseUrl: 'http://127.0.0.1:1/v1' };
+  const adapter = createDshRuntimeAdapter({ bridge,
+    resolveCodexModel: async () => ({ model: 'local-model', modelProvider }),
+    nativeEngineRuntime: { usesService: true, requiresServiceWorkspace: false,
+      usesServiceFor: workspace => { assert.equal(workspace, cwd); return false; },
+      async *stream(options) {
+        assert.equal(options.model, 'local-model');
+        assert.deepEqual(options.modelProvider, modelProvider);
+        yield { type: 'text', text: 'Local Native response' };
+      },
+    },
+  });
+  const chunks = await Array.fromAsync(adapter.stream({ ...prompt, provider: 'studio-gateway', sessionId }));
+  assertContinuousBlocks(chunks, [[0, 'text', 'Local Native response']]);
+});
+
 test('Native body fragments enter the live Session presentation without contaminating the final reply', async t => {
   const bridge = createRuntimeBridge(); t.after(() => bridge.close());
   const stored = [], sessionId = 'body-preview-session';

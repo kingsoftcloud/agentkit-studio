@@ -14,7 +14,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, NativeApprovalPanel, CodexPluginMarketItem, DshPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, NativeApprovalPanel, CodexPluginMarketItem, StarHarnessItem, DshPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote });
@@ -51,6 +51,9 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agentkit-codex-plugin-market', order: 90, label: 'Codex 插件',
   }, props => h(CodexPluginMarketItem, props)));
+  ctx.slots.inject('plugins.item', () => ctx.slots.register({
+    name: 'plugins.item', id: 'agentkit-star-harness', order: 91, label: 'Star Harness',
+  }, props => h(StarHarnessItem, props)));
   ctx.effect(() => {
     const open = () => ctx.layout?.selectPanel?.('plugins');
     window.addEventListener('agentkit-studio:open-plugin-center', open);

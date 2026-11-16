@@ -36,7 +36,9 @@ function setup(t, extra = {}, instrumentPage) {
     assert.equal(intent.value.request.agentId, options.agentId);
     for (const key of ['scope', 'runId', 'turnId', 'executionFence', 'taskChainId']) assert.equal(Object.hasOwn(intent.value.request, key), false);
     let browser;
-    try { browser = await chromium.launch({ executablePath: executable, headless: true }); }
+    // Use the same owned process teardown as the tool. Plain Playwright close
+    // can wait on a helper's inherited pipe after Chromium exits on macOS.
+    try { browser = await launchOwnedInspectionBrowser(chromium, executable); }
     catch (error) { t.diagnostic('Chromium launch failed: ' + redactDiagnosticText(error.message, 8192)); throw error; }
     live.push(browser);
     const contexts = new Set(), closeBrowser = browser.close.bind(browser);
@@ -87,10 +89,10 @@ for (const recovered of [true, false]) test(`static browser screenshot timeout $
   assert.deepEqual(await h.invoke(args, h.exec(args), h.create()), result);
   assert.equal(h.launches, 1);
   if (recovered) {
-    assert.equal(result.status, 'ok');
+    assert.equal(result.status, 'ok', canonical(result));
     assert.match(result.content.body_text_preview, /count:1/);
   } else {
-    assert.equal(result.status, 'error');
+    assert.equal(result.status, 'error', canonical(result));
     assert.equal(result.content.error_type, 'browser_evidence_failed');
     assert.equal(result.content.stage, 'screenshot');
     assert.equal(result.content.cause, 'timeout');
@@ -195,11 +197,16 @@ for (const cause of ['cancel', 'retire', 'timeout']) test(`actual page ${cause} 
   const h = setup(t), controller = new AbortController(), args = { path: '.', wait_ms: 30000 };
   const screenshot = join(h.options.workspaceRoot, 'proof.png'); writeFileSync(screenshot, 'original'); args.screenshot_path = 'proof.png';
   let entered; const navigation = new Promise(resolve => { entered = resolve; }); h.onNavigated(entered);
-  const exec = h.exec(args, { signal: cause === 'timeout' ? AbortSignal.timeout(2000) : controller.signal });
+  const exec = h.exec(args, { signal: controller.signal });
   const pending = h.invoke(args, exec);
   await Promise.race([navigation, pending.then(result => assert.fail('inspection ended before actual navigation: ' + canonical(result)))]);
   checkpoint('actual navigation observed');
-  if (cause === 'retire') void h.port.close(); else if (cause === 'cancel') controller.abort();
+  if (cause === 'retire') void h.port.close();
+  else if (cause === 'timeout') {
+    // Browser startup is outside the timeout-after-navigation scenario.
+    const deadline = AbortSignal.timeout(10);
+    deadline.addEventListener('abort', () => controller.abort(deadline.reason), { once: true });
+  } else controller.abort();
   checkpoint(`interruption submitted, caller.aborted=${exec.signal.aborted}`);
   const result = await pending; assert.equal(result.status, 'uncertain', canonical(result)); assert.equal(h.launches, 1);
   checkpoint('original call settled');

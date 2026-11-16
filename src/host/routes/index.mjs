@@ -8,6 +8,7 @@ import { createModelRoutes } from './models.mjs';
 import { createAgentRoutes } from './agents.mjs';
 import { createSkillRoutes } from './skills.mjs';
 import { createPluginRoutes } from './plugins.mjs';
+import { createStarHarnessRoutes } from './star-harness.mjs';
 import { createSessionRoutes } from './sessions.mjs';
 import { createScheduleRoutes } from './schedules.mjs';
 import { createTraceRoutes } from './traces.mjs';
@@ -35,6 +36,7 @@ export function createStudioRoutes(ctx, services) {
     agents: createAgentRoutes(deps),
     skills: createSkillRoutes(deps),
     plugins: createPluginRoutes(deps),
+    'star-harness': createStarHarnessRoutes(deps.starHarness),
     sessions: createSessionRoutes(deps),
     schedules: createScheduleRoutes(deps),
     traces: createTraceRoutes(deps),
