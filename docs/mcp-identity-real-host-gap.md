@@ -115,6 +115,24 @@ AGENTKIT_DSH_INSTALLATION="$PWD/.ci-dsh" node scripts/verify-managed-mcp-identit
 
 当前实际：`{"failure":{"code":"MCP_IDENTITY_NOT_FORWARDED"},...}`
 
+## CI 接入的阻塞点（未完成）
+
+把这条门禁接进 GitHub Actions 时撞到两个仓库门禁与 CI 布局的冲突，**不是业务代码问题**：
+
+1. `actions/checkout` 只允许检出到 `$GITHUB_WORKSPACE` **之内**，所以 DSH 只能放在 `.ci-dsh`。
+2. 而 `runtime-host-installation.mjs` 的 `packageDigest()` 用 `lstat` 遍历 Studio 包，
+   **拒绝任何非普通文件**。仓库内的 `.ci-dsh` 含有 workspace 符号链接，digest 直接失败
+   （`BUNDLE_HOST_INSTALLATION_INCOMPLETE`）。
+3. 反过来把 Studio 包复制成真实目录也走不通：复制后的包不在 workspace 里，依赖无法解析
+   （`failed to read overlay`）。
+
+所以当前状态是：**脚本可在本机/自建环境运行并通过，CI 接入待解决上述布局冲突**。
+建议的后续做法（任一）：
+
+- 让 `packageDigest()` 跳过以 `.` 开头的顶层目录（`.ci-dsh` / `.git` / `.agents`），或
+- 让 CI 作业在一个**独立的临时 workspace** 里跑（例如 `actions/checkout` 到另一个 job 的
+  workspace，再把 Studio 包与 DSH 放在同一父目录下）。
+
 ## 门禁价值
 
 这条用例证明：**Native 集成层的通过不能替代真实 Host 验收**。它抓到了一个单元测试
