@@ -16,9 +16,13 @@ import { bindPresetRegistry } from '../preset-registry-binding.mjs';
 import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
 import { alignProfileProductPlugin } from './profile-plugin-alignment.mjs';
+import { applyDefaultBundles } from './default-bundles.mjs';
+import { createPluginMarketIndexSource } from '../plugin-market.mjs';
+import dshPin from '../../dsh-pin.json' with { type: 'json' };
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
 import { registerControlPlaneRoutes } from './routes/http.mjs';
+import { registerPluginMarketIndexRoute } from './routes/plugin-market-index.mjs';
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
@@ -186,6 +190,35 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     studioSchedulerPromise, studioObservabilityPromise, studioEvaluationPromise,
     studioChannelsPromise, cloudSchedulesPromise, authoringRemoteFactory, deployments,
   } = services;
+
+  // Default bundles: a desktop profile keeps the official plugin index and
+  // Computer Use switched on. Managed and portable runtimes pin their own
+  // profile bundles, so they are left untouched; everything runs after a short
+  // delay because a first-run install must never delay Host readiness.
+  if (!managedRuntime && !portableRuntime) {
+    const indexSource = createPluginMarketIndexSource({ getService: name => ctx.get(name) });
+    ctx.inject(['pluginManager'], pluginCtx => {
+      const timer = setTimeout(() => {
+        void applyDefaultBundles({
+          manager: pluginCtx.get('pluginManager'), storeDir: studioStoreDir, version: dshPin.version,
+          env: runtimeEnv, log: message => console.log(message),
+        }).then(result => {
+          if (!result.applied) return;
+          // With the index bundle enabled the profile still needs a source to
+          // show; the official market has no built-in one, so seed the bundled
+          // community index when the user configured none. Enabling a bundle can
+          // need a restart, in which case the next start seeds it.
+          return indexSource.ensureIndexSource().then(seeded => {
+            if (seeded.seeded) console.log(`[studio] added bundled plugin index source ${seeded.url}`);
+            else if (seeded.reason !== 'already-configured') console.log(`[studio] plugin index source not seeded: ${seeded.reason}`);
+          });
+        }).catch(error => {
+          console.warn('[studio] default bundle alignment skipped', { message: error instanceof Error ? error.message : String(error) });
+        });
+      }, 3000);
+      timer.unref?.();
+    });
+  }
 
   // Generic cloud-control capability for independent DSH plugins. The Host
   // owns configuration, credentials, and AgentEngine clients; consumers only
@@ -636,6 +669,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   await registerControlPlaneRoutes(ctx, { ...services, models, dispatch });
+  // The official plugin market reads `format: 1` indexes over http(s); serve
+  // the bundled community index from this Host so the market is usable with
+  // no configuration and no third-party origin.
+  registerPluginMarketIndexRoute(ctx);
   // Prompt prediction is a Studio-owned auxiliary text request. It observes
   // native Session events but never enters the Session loop or mutates history.
   ctx.inject(['connection'], predictionCtx => {

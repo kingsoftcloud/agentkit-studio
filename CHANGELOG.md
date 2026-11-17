@@ -2,6 +2,10 @@
 
 ## 0.0.16 - 2026-11-17
 
+- Studio 默认启用两个官方 bundle：「自定义插件索引」与 Computer Use（`@deepseek-ai/dsh-cua-bundle`）。Host 首次以某个 DSH 版本启动时按 profile 对齐一次——随包安装的直接 `setBundleEnabled`，按需安装的先安装再启用；同一版本内不重复应用，用户关闭后不会被重新打开，`AGENTKIT_STUDIO_DEFAULT_BUNDLES=0` 可整体关闭。
+
+- 删除 Studio 自建的插件市场，插件市场交还 DSH 官方：移除「插件市场」`plugins.item` 行、发现插件 UI、`studio-plugins` 适配层、npm 搜索 + GitHub 搜索聚合（一次市场页从 16 个外部请求、最坏 24 s 降到「每个索引源 1 次 GET」）及 `plugins/dsh-*` 控制端点。市场现在是官方「插件」页的「已安装 / 发现」两个 tab，索引由 Host 的 `pluginMarket` 服务读取；Studio 只保留随包内置的社区插件索引（`pnpm build:plugin-index` 生成、`pnpm check:plugin-index` 在 CI 校验，Host 在 `/api/agentkit.plugin-market/index.json` 提供给官方读取器）并在 profile 没有索引源时添加为默认源。
+
 - Star Harness 使用 Studio 随包发布的固定摘要校验运行时及其依赖，通过校验后再启动。插件只接管已绑定的工作区。
 
 - 流式 Action（`RunAgent` 等 SSE 接口）不再把「HTTP 200 + JSON 错误信封」当成事件流：网关在流式接口上返回 `{ Code, RequestId, Error }`（例如 `Code: 409` 运行时就绪）或非 `text/event-stream` 的响应时，客户端按真实状态码与 `requestId` 抛出 `AgentEngineError`（429 → `SERVER_RATE_LIMITED`，信封错误 → `SERVER_ACTION_FAILED`，其余 → `SERVER_INVALID_RESPONSE`），界面显示真实原因而不是 SSE 解析失败或卡住；未带 content-type 的响应保持原有行为，KOP inner-account 403 回退不变。

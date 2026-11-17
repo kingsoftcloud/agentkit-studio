@@ -120,15 +120,6 @@ export function createCompatibilityMethods({ connection, window, directServer, b
         cancelAgentConversation: (agentId, sessionId, invocationId) => directServer()
             ? serverAction('CancelRun', { AgentId: agentId, SessionId: sessionId, InvocationId: invocationId })
             : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/conversation:cancel', { method: 'POST', body: JSON.stringify({ invocationId }) }),
-        installDshPlugin: (source, acceptHostPermissions = false) => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
-            method: 'POST', body: JSON.stringify({ source, acceptHostPermissions }),
-        }),
-        enableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-enable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':enable', { method: 'POST' }),
-        disableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-disable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':disable', { method: 'POST' }),
-        updateDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-update', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':update', {
-            method: 'POST', body: JSON.stringify({ acceptHostPermissions: true }),
-        }),
-        uninstallDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
         models: () => request('/api/v1/catalog/models'),
         credential: name => request('/api/v1/credentials/' + encodeURIComponent(name)),
         deleteCredential: name => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'DELETE' }),

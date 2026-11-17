@@ -49,7 +49,6 @@ export function createHostRouteFixture(mode = 'success') {
   const evaluation = service('evaluations', { listRuns: { items: [] }, getRun: {}, listTargets: { items: [] }, listEvalsets: { items: [] }, importEvalset: {}, createEvaluation: {} });
   const channels = service('channels', { getConnection: {}, updateConnection: {}, updateAgentConnection: {}, proxyAction: {} });
   const deployment = service('deployments', Object.fromEntries(['prepare', 'create', 'prepareUpdate', 'applyUpdate', 'list', 'get', 'refresh', 'repairAccess', 'reconcile', 'logs', 'remove'].map(name => [name, { result: name }])));
-  const dshPlugins = service('dshPlugins', { listDsh: { items: [] }, discoverDsh: { items: [], info: { npmTotal: 0, curated: 0 } }, refreshDshCatalog: {}, installDsh: {}, uninstallDsh: {}, setDshEnabled: {}, updateDsh: {} });
   const codexPlugins = service('codexPlugins', { listCodex: { items: [] }, inspectCodex: {}, installCodex: {}, uninstallCodex: {} });
   const exporter = {
     sessionLogExportDeps: () => ({ sessionPersistence: {} }),
@@ -73,7 +72,7 @@ export function createHostRouteFixture(mode = 'success') {
     cloudSchedulesPromise: Promise.resolve({ execute: method('cloudSchedules.execute', {}) }),
     deployments: async () => deployment, getAdmission: () => admission,
     listLocalBuildTargets: method('build.targets', [build]),
-    getDshPlugins: async () => dshPlugins, getCodexPlugins: async () => codexPlugins, getSessionLogExporter: async () => exporter,
+    getCodexPlugins: async () => codexPlugins, getSessionLogExporter: async () => exporter,
   };
   const payload = {
     agentId: 'agent-fixture', buildId: build.id, deploymentId: 'deployment-fixture', sessionId: 'session/fixture',
@@ -83,5 +82,5 @@ export function createHostRouteFixture(mode = 'success') {
     fileName: 'fixture.yaml', content: 'cases: []', scanPaths: ['fixture'], candidateId: 'candidate', inspectionToken: 'inspection', path: 'README.md', overwrite: true,
     profileId: 'fixture', limit: 10, query: 'fixture', kind: 'tool', action: 'FixtureAction', payload: { fixture: true }, patch: { prompt: 'fixture' }, scope: 'local',
   };
-  return { deps, ctx, calls, payload, admission, exporter, dshPlugins, codexPlugins };
+  return { deps, ctx, calls, payload, admission, exporter, codexPlugins };
 }

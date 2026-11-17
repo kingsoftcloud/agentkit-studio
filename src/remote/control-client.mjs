@@ -447,25 +447,9 @@ export function createProductClient(connection, { window = globalThis.window } =
         updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { agentId, taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
         deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
         runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/run', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
-        dshPlugins: () => (bridgeAvailable()
-            ? studioBridgeOperation('plugins/dsh-list', {})
-            : request('/api/v1/plugin-ecosystems/dsh/plugins')).then(dshPluginMarketList),
-        refreshDshPluginIndex: () => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-index-refresh', {}) : request('/api/v1/plugin-ecosystems/dsh/catalog:refresh', { method: 'POST' }),
-        discoverDshPlugins: (options = {}) => bridgeAvailable()
-            ? studioBridgeOperation('plugins/dsh-discover', { force: options?.force === true })
-            : request('/api/v1/plugin-ecosystems/dsh/discover' + (options?.force ? '?force=true' : '')),
         // Lifecycle calls must live on the base product client: the DSH plugin
         // surface mounts this object directly (no compatibility extension), so
         // compatibility-methods-only keys would be missing at runtime.
-        installDshPlugin: (source, acceptHostPermissions = false) => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
-            method: 'POST', body: JSON.stringify({ source, acceptHostPermissions }),
-        }),
-        enableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-enable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':enable', { method: 'POST' }),
-        disableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-disable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':disable', { method: 'POST' }),
-        updateDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-update', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':update', {
-            method: 'POST', body: JSON.stringify({ acceptHostPermissions: true }),
-        }),
-        uninstallDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
         starHarnessStatus: (options = {}, signal) => studioBridgeOperation('star-harness/status', options, signal),
         installStarHarness: version => studioBridgeOperation('star-harness/install', { version }),
         enableStarHarness: enabled => studioBridgeOperation('star-harness/enable', { enabled }),

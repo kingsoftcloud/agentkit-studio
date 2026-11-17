@@ -22,7 +22,6 @@ import { createDomainPage } from "./pages/domain.mjs";
 import { createResourceDialog } from "./components/resource-dialog.mjs";
 import { createResourceDialogs } from "./components/resource-dialogs.mjs";
 import { createResourcePages } from "./pages/resources.mjs";
-import { createDshPluginPages } from "./pages/dsh-plugins.mjs";
 import { createCodexPluginPages } from "./pages/codex-plugins.mjs";
 import { createStarHarnessPage } from "./pages/star-harness.mjs";
 import { createDeliveryPages } from "./pages/delivery.mjs";
@@ -90,7 +89,6 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.DomainPage = createDomainPage({ ui });
   Object.assign(ui, createResourceDialogs({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createResourcePages({ ui, hostRemote, actions, window }));
-  Object.assign(ui, createDshPluginPages({ ui, hostRemote }));
   Object.assign(ui, createCodexPluginPages({ ui, hostRemote }));
   ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window });
   Object.assign(ui, createDeliveryPages({ ui, hostRemote, actions, window, document }));

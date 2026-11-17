@@ -18,7 +18,7 @@ DSH 侧负责加载、依赖解析与生命周期；Studio 侧只负责让它在
 | `keywords` | 市场靠它检索 | `dsh-plugin` |
 
 <Callout type="warn" title="包名不是随便起的">
-  `id` 与 `installSpec` 都要匹配 `src/dsh-plugin-catalog.mjs:21` 的
+  `id` 与 `installSpec` 都要匹配 DSH 索引规范的 npm 包名校验
   `^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9.^~<>=*+-]+)?$`。
   大小写、下划线以外的符号都会让条目被**静默丢弃**——市场不会报错，只是看不到你。
 </Callout>
@@ -91,13 +91,13 @@ export async function apply(ctx) {
 
 | 渠道 | 机制 | 来源 |
 | --- | --- | --- |
-| npm 检索 | 包 `keywords` 含 `dsh-plugin` | `src/dsh-plugin-discovery.mjs:22` |
-| GitHub 检索 | 仓库 `topic: dsh-plugin` | `src/dsh-plugin-discovery.mjs:24` |
-| 内置目录 / 远程索引 | 提 PR 到 `DSH_CURATED_PLUGINS`，或由运维配置 `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | `src/dsh-plugin-catalog.mjs:112` |
+| 内置社区索引 | 包 `keywords` 含 `dsh-plugin`，且进入随包索引（按下载量取前 80 个） | `assets/plugin-market/index.json` |
+| 自己的索引源 | 发布一份 `format: 1` 静态 JSON，在「发现」页添加该 URL | `src/plugin-market.mjs` |
+| 默认启用 | Studio 默认启用的 bundle 清单（仅限第一方） | `src/host/default-bundles.mjs` |
 
-内置目录只有**第一方**条目能声明 `expectedEntries` / `service` / `readinessNote`。
-第三方插件走 npm 或 GitHub 检索，市场会显示「Host 已加载该插件；Studio 没有它的能力探针」。
-源码：`src/studio-plugins.mjs:100-104`。
+精选清单只有**第一方**条目能声明 `expectedEntries` / `service` / `readinessNote`。
+第三方插件由索引描述，市场会显示「Host 已加载该插件；Studio 没有它的能力探针」。
+源码：`src/host/default-bundles.mjs`、`src/plugin-market.mjs`。
 
 ## 发布前自检
 
@@ -180,7 +180,7 @@ const client = await cloud.getClient();      // AgentEngine 客户端
 | `failed` | 加载失败或探针失败 | 看 `note` 里的具体方法名 |
 | `not-configured` | 未配置能力验证清单 | 无 |
 
-源码：`src/studio-plugins.mjs:96-115`。
+源码：`src/host/default-bundles.mjs`、`src/plugin-market.mjs`。
 
 ## 常见错误
 
@@ -195,4 +195,4 @@ const client = await cloud.getClient();      // AgentEngine 客户端
 
 ## 相关
 
-远程索引字段与示例见[插件市场](./plugin-market.mdx)，能力协商细节见 [Host 兼容性](./host-compatibility.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。
+索引字段与示例见[插件市场](./plugin-market.mdx)，能力协商细节见 [Host 兼容性](./host-compatibility.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。
