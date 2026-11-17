@@ -1,6 +1,6 @@
 ---
 title: Plugin market
-description: How Studio consumes DSH's official plugin index (format 1): index sources, request model, the bundled community index, and the install path.
+description: How Studio consumes DSH's official plugin index (format 1) — index sources, request model, the bundled community index, and the install path.
 ---
 
 The plugin market is **DSH's official plugin index**: a static `format: 1` JSON document listing installable bundles with their title, icon, author, versions, `engines.dsh` compatibility range and install source. Studio no longer aggregates anything at request time — it reads the Host's `pluginMarket` service and, when the profile configures no index source at all, adds the community index bundled with the product as the default source.
