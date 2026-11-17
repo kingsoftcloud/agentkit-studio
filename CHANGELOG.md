@@ -1,10 +1,26 @@
 # Changelog
 
-## 0.0.16 - 2026-11-17
+## 0.0.17 - 2026-11-17
+
+### 修复：恢复 0.0.16 丢失的功能
+
+- 模型与凭证设置的「请求预算与请求头」回到界面：按模型配置最大输出 Token、上下文窗口、请求超时（毫秒）与自定义请求头（可增删的键值行）。请求头随「读取模型」的目录读取一起发送（配置的 `Authorization` 优先于凭证生成的 Bearer），名称按 RFC 7230 token 校验、值拒绝换行等控制字符，空行与重复名称在保存时丢弃；预算必须是大于 0 的整数，留空沿用网关默认值。字段随 `modelProfiles` 持久化，`config.yaml` 与导出的运行包往返都保留。
+- 恢复经 magpie 等严格网关的 `400 Invalid assistant message: content or tool_calls must be set` 与 `400 Messages with role 'tool' must be a response to a preceding message with 'tool_calls'` 修复：发送前丢弃只有推理的轮次、既无文本也无工具调用的空 assistant 轮次，以及孤立的工具回执（回执与调用按 `call_id` 配对），两者都只在网关拒绝后重试一次。
+- 流式 Action（`RunAgent` 等 SSE 接口）恢复按真实状态码抛 `AgentEngineError`：网关返回 `{ Code, RequestId, Error }` 信封或非 `text/event-stream` 响应时（429 → `SERVER_RATE_LIMITED`，信封错误 → `SERVER_ACTION_FAILED`，其余 → `SERVER_INVALID_RESPONSE`），不再显示为 SSE 解析失败或卡住。
+- 恢复共享的请求头校验契约（`HEADER_NAME` / `HEADER_VALUE` / `HEADER_LIMITS` / `headerEntryProblem` / `requestHeaders`）与 `modelRuntimeOptions` 的 `headers` 投影；`config.yaml` 层同样校验（64 条上限、大小写去重、空表删除字段）。
+- 以上功能由 #176 引入、被 #177（文档站）在 rebase 时整片回滚；本次从 #175 逐字恢复 10 个源文件与 6 个测试文件（108 个用例）。
+
+### 功能
 
 - Studio 默认启用两个官方 bundle：「自定义插件索引」与 Computer Use（`@deepseek-ai/dsh-cua-bundle`）。Host 首次以某个 DSH 版本启动时按 profile 对齐一次——随包安装的直接 `setBundleEnabled`，按需安装的先安装再启用；同一版本内不重复应用，用户关闭后不会被重新打开，`AGENTKIT_STUDIO_DEFAULT_BUNDLES=0` 可整体关闭。
 
 - 删除 Studio 自建的插件市场，插件市场交还 DSH 官方：移除「插件市场」`plugins.item` 行、发现插件 UI、`studio-plugins` 适配层、npm 搜索 + GitHub 搜索聚合（一次市场页从 16 个外部请求、最坏 24 s 降到「每个索引源 1 次 GET」）及 `plugins/dsh-*` 控制端点。市场现在是官方「插件」页的「已安装 / 发现」两个 tab，索引由 Host 的 `pluginMarket` 服务读取；Studio 只保留随包内置的社区插件索引（`pnpm build:plugin-index` 生成、`pnpm check:plugin-index` 在 CI 校验，Host 在 `/api/agentkit.plugin-market/index.json` 提供给官方读取器）并在 profile 没有索引源时添加为默认源。
+
+### 已知问题
+
+- 桌面端自动更新在**有运行中任务**时，第一次安装可能被 Squirrel 的 ShipIt 以 `App Still Running Error` 放弃：ShipIt 只等约 3.4 秒，而「退出 AgentKit Studio？当前正在运行的任务将会中断」确认弹窗会吃掉这个窗口。**升级前先停掉运行中的任务**即可一次成功；第二次点击时更新包已在 `pending/` 缓存里，会直接安装完成。上游修复见 [Squirrel.Mac#339](https://github.com/Squirrel/Squirrel.Mac/pull/339)。
+
+## 0.0.16 - 2026-11-17
 
 - Star Harness 使用 Studio 随包发布的固定摘要校验运行时及其依赖，通过校验后再启动。插件只接管已绑定的工作区。
 
