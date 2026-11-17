@@ -7,10 +7,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import semver from 'semver';
 
 const INDEX_FILE = new URL('../assets/plugin-market/index.json', import.meta.url);
 const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/u;
+/** Exact SemVer, prerelease and build metadata included. */
+const SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+/** One whitespace-separated comparator of a range; `*` alone is the whole range. */
+const COMPARATOR = /^(?:[<>]=?|=|~>?|\^)?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+
+/** Ranges the bundled index may declare, without pulling in a dependency the package does not ship. */
+function isValidRange(range) {
+  const value = String(range ?? '').trim();
+  if (!value) return false;
+  if (value === '*') return true;
+  return value.split(/\s+/u).every(token => token === '||' || COMPARATOR.test(token));
+}
 
 const document = JSON.parse(await readFile(INDEX_FILE, 'utf8'));
 
@@ -29,13 +40,13 @@ test('every bundled plugin names a unique npm package with versions', () => {
     assert.ok(Array.isArray(plugin.versions) && plugin.versions.length > 0, `${plugin.name} has no versions`);
     const versions = new Set();
     for (const version of plugin.versions) {
-      assert.ok(semver.valid(version.version), `${plugin.name} has an invalid version: ${version.version}`);
+      assert.match(version.version, SEMVER, `${plugin.name} has an invalid version: ${version.version}`);
       assert.equal(versions.has(version.version), false, `${plugin.name} repeats ${version.version}`);
       versions.add(version.version);
       assert.equal(Number.isInteger(version.publishTimestamp), true, `${plugin.name}@${version.version} needs a publishTimestamp`);
       assert.ok(version.publishTimestamp > 0 && version.publishTimestamp < 1e11, `${plugin.name}@${version.version} publishTimestamp out of range`);
       assert.deepEqual(version.source, { type: 'npm' }, `${plugin.name}@${version.version} must install from npm`);
-      if (version.engines?.dsh !== undefined) assert.ok(semver.validRange(version.engines.dsh), `${plugin.name}@${version.version} has an invalid engines.dsh: ${version.engines.dsh}`);
+      if (version.engines?.dsh !== undefined) assert.ok(isValidRange(version.engines.dsh), `${plugin.name}@${version.version} has an invalid engines.dsh: ${version.engines.dsh}`);
     }
     if (plugin.metadata?.category !== undefined) {
       assert.ok(document.metadata?.categories?.[plugin.metadata.category], `${plugin.name} declares an undeclared category`);
