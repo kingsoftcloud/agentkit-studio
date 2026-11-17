@@ -129,6 +129,9 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
           userId: userId || 'studio-anonymous',
           sessionId,
           agentId,
+          memoryContract: record?.spec?.memory?.contract,
+          memoryDomain: record?.metadata?.local === true ? 'local' : 'cloud',
+          profileId: record?.metadata?.profileId || userId,
         })
         : null,
       toolHandler: async ({ name, arguments: args, callId, signal }) => {

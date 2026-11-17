@@ -60,8 +60,21 @@ export async function loadManagedRuntimeDefinition({ manifest, env = process.env
   // local Studio `spec.memory` projection must be materialized here: without it
   // every managed turn skipped recall/write defaults even though the memory
   // library was bound in the manifest.
+  let memoryContract;
+  if (env.AGENTENGINE_MEMORY_CONTRACT) {
+    try {
+      memoryContract = JSON.parse(env.AGENTENGINE_MEMORY_CONTRACT);
+    } catch { fail('MEMORY_BINDING_INVALID', '平台记忆契约不是有效 JSON'); }
+    if (!memoryContract || typeof memoryContract !== 'object' || Array.isArray(memoryContract)
+      || memoryContract.format !== 'agentengine.memory-contract/v1'
+      || !['v1', 'v2'].includes(memoryContract.partition_version)
+      || !['per-user', 'agent'].includes(memoryContract.subject_policy || 'per-user')) {
+      fail('MEMORY_BINDING_INVALID', '平台记忆契约无效');
+    }
+  }
   const memory = declaration.resources?.memory
-    ? { enabled: true, recall: { enabled: true }, write: { mode: 'candidate' } }
+    ? { enabled: true, recall: { enabled: true }, write: { mode: 'candidate' },
+      ...(memoryContract ? { contract: memoryContract } : {}) }
     : undefined;
   const agent = { metadata: { id: agentId, name: declaration.name, description: declaration.description || '', revision: 1, local: true, versionId },
     source: 'managed-runtime', managedRuntime: identity,

@@ -1,5 +1,6 @@
 /** Resource-only transport for a platform-owned Agent version. No AK/SK. */
 import { hostFetch } from './http-fetch.mjs';
+import { memoryPartitionV2 } from './memory-identity.mjs';
 
 const actions = new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'GetMCP']);
 const skillActions = new Set(['ListSkillsBySpaceId', 'GetSkillDownloadUrl', 'GetPremadeSkillDownloadUrl']);
@@ -26,6 +27,28 @@ class ManagedResourceError extends Error {
   }
 }
 const fail = (code, status = 0, details = {}) => { throw new ManagedResourceError(code, status, details); };
+
+function projectMemoryPartition(payload, permit, runtime) {
+  if (!permit || !payload || !['QueryMemorySdk', 'CreateMemorySdk'].includes(runtime?.action)) return payload;
+  // v1 callers and unit fixtures may carry an opaque in-process permit. Only
+  // inspect the signed wire shape when the value is recognizably a drp1
+  // permit; the resource Server remains the authority for all legacy/v1
+  // permits and for malformed values.
+  if (!/^drp1\.[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(permit)) return payload;
+  try {
+    const claims = JSON.parse(Buffer.from(permit.split('.')[1], 'base64url').toString('utf8'));
+    if (claims.partition_version !== 'v2' || claims.format !== 'agentengine.dsh-memory-permit/v2') return payload;
+    return {
+      ...payload,
+      AgentUserId: memoryPartitionV2({
+        collectionId: payload.MemoryCollectionId,
+        agentId: runtime.agentId,
+        scope: claims.resource_account_id,
+        subjectRef: claims.subject_ref,
+      }),
+    };
+  } catch { fail('MANAGED_RESOURCE_PERMIT_REQUIRED', 403); }
+}
 
 function retryPolicy(maxAttempts, retryDelaysMs) {
   const attempts = Number(maxAttempts);
@@ -136,6 +159,7 @@ export function createManagedResourceClient({
     const scopedSignal = resourcePermit ? getResourceSignal?.() : undefined;
     const cancelSignal = signal && scopedSignal ? AbortSignal.any([signal, scopedSignal]) : signal || scopedSignal;
     const retryable = !nonRetryableActions.has(action);
+    const requestPayload = projectMemoryPartition(payload, resourcePermit, { action, agentId });
     for (let attempt = 1; attempt <= policy.attempts; attempt++) {
       let response;
       try {
@@ -145,7 +169,7 @@ export function createManagedResourceClient({
             'X-AgentEngine-Manifest-Sha256': manifestSha256,
             ...(requestId ? { 'X-Ksc-Request-Id': requestId } : {}),
             ...(resourcePermit ? { 'X-AgentEngine-Resource-Permit': resourcePermit } : {}) },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(requestPayload),
           signal: cancelSignal ? AbortSignal.any([cancelSignal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
         });
       } catch {
