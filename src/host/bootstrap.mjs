@@ -17,7 +17,7 @@ import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
 import { alignProfileProductPlugin } from './profile-plugin-alignment.mjs';
 import { applyDefaultBundles } from './default-bundles.mjs';
-import dshPin from '../dsh-pin.json' with { type: 'json' };
+import dshPin from '../../dsh-pin.json' with { type: 'json' };
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
 import { registerControlPlaneRoutes } from './routes/http.mjs';
