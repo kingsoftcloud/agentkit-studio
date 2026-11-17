@@ -143,12 +143,9 @@ export function createDshPluginPages({
       setMessage('');
       setError('');
       try {
-        // Refresh both layers: the ecosystem catalog and the optional remote index.
-        if (typeof hostRemote.refreshDshPluginIndex === 'function') {
-          await hostRemote.refreshDshPluginIndex().catch(() => undefined);
-        }
+        // A forced discovery re-reads every index source and re-annotates install state.
         await load({ force: true });
-        setMessage('插件目录已刷新。');
+        setMessage('插件索引已刷新。');
       } catch (reason) {
         setError(reason?.message || '插件目录刷新失败');
       } finally {
@@ -232,9 +229,9 @@ export function createDshPluginPages({
     };
 
     const pill = (text, tone = 'neutral') => h(Pill, { tone }, text);
-    const sourceBadge = item => item?.source === 'github'
-      ? pill('GitHub', 'neutral')
-      : item?.source === 'npm' ? pill('npm', 'neutral') : pill('内置', 'neutral');
+    const sourceBadge = item => item?.source === 'index'
+      ? pill(item?.index?.title || '插件索引', 'neutral')
+      : item?.source === 'github' ? pill('GitHub', 'neutral') : item?.source === 'npm' ? pill('npm', 'neutral') : pill('内置', 'neutral');
 
     const iconSquare = item => {
       const icon = item?.icon;
@@ -378,6 +375,22 @@ export function createDshPluginPages({
     };
 
     const discoveryItems = discovery?.items || [];
+    // The official index service only exists while its experimental bundle is
+    // mounted; offer to enable it instead of showing an empty shelf.
+    const marketMissing = /PLUGIN_MARKET_UNAVAILABLE|索引服务未启用|索引源不可用|索引地址不可用/u.test(String(error || ''));
+    const enableOfficialMarket = async () => {
+      setBusy('market');
+      setError('');
+      try {
+        await hostRemote.installDshPlugin('@deepseek-ai/dsh-experimental-plugin-market-bundle', true);
+        setMessage('已启用官方插件索引，正在重新读取目录…');
+        await load({ force: true });
+      } catch (reason) {
+        setError(reason?.message || '启用官方插件索引失败');
+      } finally {
+        setBusy('');
+      }
+    };
     const selectedDiscovery = discoveryItems.find(item => idOf(item) === selectedId) || null;
     const selectedInstalled = items.find(item => idOf(item) === selectedId) || null;
     const selected = selectedDiscovery || selectedInstalled;
@@ -450,10 +463,17 @@ export function createDshPluginPages({
           }
         }, name))),
       h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.6 } },
-        `来自 npm 与 GitHub 的社区插件${remoteInfo ? ` · npm 收录 ${formatCount(remoteInfo.npmTotal) || remoteInfo.npmTotal || 0} 个 · 精选 ${remoteInfo.curated || 0} 个` : ''}${remoteInfo?.updatedAt ? ` · 目录更新于 ${formatDate(remoteInfo.updatedAt) || remoteInfo.updatedAt}` : ''}`),
-      remoteInfo?.stale ? h('p', { role: 'status', style: { margin: 0, color: BRAND.signal, fontSize: '11px' } }, '目录刷新失败，正在展示上一次成功获取的数据。') : null,
-      status === 'loading' ? h(EmptyState, { icon: '·', title: '正在发现社区插件', detail: '从 npm 与 GitHub 聚合插件目录，并读取本地安装状态。' }) : null,
-      status === 'error' ? h(EmptyState, { icon: '!', title: '插件目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => { void load({ force: true }); }, style: buttonStyle() }, '重新加载') }) : null,
+        `来自插件索引${remoteInfo ? ` · ${Number(remoteInfo.total) || discoveryItems.length} 个插件 · ${Array.isArray(remoteInfo.indexes) && remoteInfo.indexes.length ? `${remoteInfo.indexes.length} 个索引源` : '内置社区索引'}` : ''}${remoteInfo?.updatedAt ? ` · 更新于 ${formatDate(remoteInfo.updatedAt) || remoteInfo.updatedAt}` : ''}`),
+      remoteInfo?.stale ? h('p', { role: 'status', style: { margin: 0, color: BRAND.signal, fontSize: '11px' } }, '索引刷新失败，正在展示上一次成功获取的数据。') : null,
+      status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取插件索引', detail: '由官方插件索引服务提供目录，并读取本地安装状态。' }) : null,
+      status === 'error' ? h(EmptyState, {
+        icon: '!',
+        title: marketMissing ? '官方插件索引未启用' : '插件目录不可用',
+        detail: error,
+        action: marketMissing
+          ? h('button', { type: 'button', disabled: Boolean(busy), onClick: () => { void enableOfficialMarket(); }, style: buttonStyle() }, busy === 'market' ? '正在启用…' : '启用「自定义插件索引」')
+          : h('button', { type: 'button', onClick: () => { void load({ force: true }); }, style: buttonStyle() }, '重新加载')
+      }) : null,
       status === 'ready' && sortedDiscovery.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: '10px' } }, ...sortedDiscovery.map(discoveryCard)) : null,
       status === 'ready' && !sortedDiscovery.length ? h(EmptyState, { icon: '⌕', title: '没有匹配的插件', detail: discoveryItems.length ? '试试其他关键词，或清空搜索与分类筛选。' : '目录暂时为空，可以刷新目录或手动安装。' }) : null,
       status === 'ready' && sortedDiscovery.length ? h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px' } }, `共 ${sortedDiscovery.length} 个结果。`) : null);

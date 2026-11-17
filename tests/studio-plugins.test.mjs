@@ -139,28 +139,28 @@ test('official on-demand entries are missing until the exact host install target
   assert.deepEqual(calls, [[name + '@0.2.2-rc.1', { enabled: true, saveExact: true }]]);
 });
 
-test('DSH discovery decorates ecosystem rows with local install state and never reinstalls', async () => {
+test('official plugin index decorates ecosystem rows with local install state and never reinstalls', async () => {
   const calls = [];
   const manager = {
     listBundles: async () => [{ name: 'dsh-pet', installed: true, availability: 'installation', enabled: false, version: '0.3.0' }],
     installBundle: async (...args) => { calls.push(['install', ...args]); }
   };
-  const discovery = {
+  const pluginMarket = {
     discover: async options => {
       calls.push(['discover', options]);
       return {
         items: [
-          { id: 'dsh-pet', packageName: 'dsh-pet', displayName: 'dsh-pet', installSpec: 'dsh-pet', featured: true },
-          { id: 'dsh-mnemon', packageName: 'dsh-mnemon', displayName: 'dsh-mnemon', installSpec: 'dsh-mnemon' },
-          { id: 'github:acme/dsh-tool', packageName: '', repo: 'acme/dsh-tool', displayName: 'acme/dsh-tool', installSpec: 'github:acme/dsh-tool' }
+          { id: 'dsh-pet', packageName: 'dsh-pet', displayName: 'dsh-pet', installSpec: 'dsh-pet@0.3.0', featured: true, source: 'index' },
+          { id: 'dsh-mnemon', packageName: 'dsh-mnemon', displayName: 'dsh-mnemon', installSpec: 'dsh-mnemon@0.1.0', source: 'index' },
+          { id: 'github:acme/dsh-tool', packageName: '', repo: 'acme/dsh-tool', displayName: 'acme/dsh-tool', installSpec: 'git+https://github.com/acme/dsh-tool.git#abc', source: 'index' }
         ],
-        info: { npmTotal: 10522, curated: 26 }
+        info: { source: 'plugin-market', total: 3, indexes: [{ url: 'http://127.0.0.1/index.json' }] }
       };
     }
   };
-  const plugins = createStudioPlugins({ getService: name => name === 'pluginManager' ? manager : null, discovery });
+  const plugins = createStudioPlugins({ getService: name => name === 'pluginManager' ? manager : null, pluginMarket });
   const result = await plugins.discoverDsh({ force: true });
-  assert.equal(result.source, 'discovery');
+  assert.equal(result.source, 'plugin-market');
   assert.deepEqual(calls, [['discover', { force: true }]]);
   const pet = result.items.find(item => item.packageName === 'dsh-pet');
   assert.equal(pet.installed, true);

@@ -714,20 +714,6 @@
       ]
     },
     {
-      "endpoint": "plugins/dsh-index-refresh",
-      "mode": "success",
-      "result": {
-        "ok": true,
-        "value": {}
-      },
-      "calls": [
-        [
-          "dshPlugins.refreshDshCatalog",
-          []
-        ]
-      ]
-    },
-    {
       "endpoint": "plugins/dsh-discover",
       "mode": "success",
       "result": {
@@ -735,8 +721,8 @@
         "value": {
           "items": [],
           "info": {
-            "npmTotal": 0,
-            "curated": 0
+            "source": "plugin-market",
+            "total": 0
           }
         }
       },
@@ -2546,26 +2532,6 @@
       "calls": [
         [
           "dshPlugins.listDsh",
-          []
-        ]
-      ]
-    },
-    {
-      "endpoint": "plugins/dsh-index-refresh",
-      "mode": "backend-error",
-      "result": {
-        "ok": false,
-        "error": {
-          "code": "FIXTURE_BACKEND_FAILED",
-          "message": "fixture backend failure",
-          "details": {
-            "reason": "fixture"
-          }
-        }
-      },
-      "calls": [
-        [
-          "dshPlugins.refreshDshCatalog",
           []
         ]
       ]

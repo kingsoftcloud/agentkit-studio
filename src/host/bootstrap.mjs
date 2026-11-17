@@ -19,6 +19,7 @@ import { alignProfileProductPlugin } from './profile-plugin-alignment.mjs';
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
 import { registerControlPlaneRoutes } from './routes/http.mjs';
+import { registerPluginMarketIndexRoute } from './routes/plugin-market-index.mjs';
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
@@ -636,6 +637,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   await registerControlPlaneRoutes(ctx, { ...services, models, dispatch });
+  // The official plugin market reads `format: 1` indexes over http(s); serve
+  // the bundled community index from this Host so the market is usable with
+  // no configuration and no third-party origin.
+  registerPluginMarketIndexRoute(ctx);
   // Prompt prediction is a Studio-owned auxiliary text request. It observes
   // native Session events but never enters the Session loop or mutates history.
   ctx.inject(['connection'], predictionCtx => {

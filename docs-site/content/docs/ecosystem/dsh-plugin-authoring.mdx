@@ -91,13 +91,13 @@ export async function apply(ctx) {
 
 | 渠道 | 机制 | 来源 |
 | --- | --- | --- |
-| npm 检索 | 包 `keywords` 含 `dsh-plugin` | `src/dsh-plugin-discovery.mjs:22` |
-| GitHub 检索 | 仓库 `topic: dsh-plugin` | `src/dsh-plugin-discovery.mjs:24` |
-| 内置目录 / 远程索引 | 提 PR 到 `DSH_CURATED_PLUGINS`，或由运维配置 `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | `src/dsh-plugin-catalog.mjs:112` |
+| 内置社区索引 | 包 `keywords` 含 `dsh-plugin`，且进入随包索引（按下载量取前 80 个） | `assets/plugin-market/index.json` |
+| 自己的索引源 | 发布一份 `format: 1` 静态 JSON，在「发现」页添加该 URL | `src/plugin-market.mjs` |
+| 精选清单 | 提 PR 到 `DSH_CURATED_PLUGINS`（仅限第一方 bundle） | `src/dsh-plugin-catalog.mjs:15` |
 
-内置目录只有**第一方**条目能声明 `expectedEntries` / `service` / `readinessNote`。
-第三方插件走 npm 或 GitHub 检索，市场会显示「Host 已加载该插件；Studio 没有它的能力探针」。
-源码：`src/studio-plugins.mjs:100-104`。
+精选清单只有**第一方**条目能声明 `expectedEntries` / `service` / `readinessNote`。
+第三方插件由索引描述，市场会显示「Host 已加载该插件；Studio 没有它的能力探针」。
+源码：`src/studio-plugins.mjs:96-114`。
 
 ## 发布前自检
 
@@ -195,4 +195,4 @@ const client = await cloud.getClient();      // AgentEngine 客户端
 
 ## 相关
 
-远程索引字段与示例见[插件市场](./plugin-market.mdx)，能力协商细节见 [Host 兼容性](./host-compatibility.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。
+索引字段与示例见[插件市场](./plugin-market.mdx)，能力协商细节见 [Host 兼容性](./host-compatibility.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。

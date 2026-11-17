@@ -280,7 +280,8 @@ test('发现 tab 渲染社区插件，支持分类筛选与一键安装', async 
   assert.match(body, /dsh-whale-widget/);
   assert.match(body, /25\.4 万/);
   assert.match(body, /精选/);
-  assert.match(body, /npm 收录 1\.1 万/);
+  assert.match(body, /来自插件索引/);
+  assert.match(body, /2 个插件/);
 
   ui.find('button', '筛选分类：记忆与上下文').props.onClick();
   await ui.settle();
@@ -346,7 +347,7 @@ test('catalog.error 只提示不阻塞列表，刷新目录会强制重新发现
   await ui.settle();
   assert.deepEqual(discoverCalls, [false, true]);
   assert.equal(listCalls, 2);
-  assert.match(ui.text(ui.render()), /插件目录已刷新/);
+  assert.match(ui.text(ui.render()), /插件索引已刷新/);
   assert.match(ui.text(ui.render()), /目录插件/);
 });
 

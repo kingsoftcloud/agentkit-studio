@@ -49,7 +49,7 @@ test('product client exposes the DSH plugin lifecycle the market row calls', asy
   const calls = [];
   const connection = { rpc: { call: async (...args) => { calls.push(args); return { ok: true, value: { note: 'fixture' } }; } } };
   const client = createProductClient(connection, { window: { location: { origin: 'http://localhost', hash: '' } } });
-  for (const name of ['dshPlugins', 'refreshDshPluginIndex', 'installDshPlugin', 'enableDshPlugin', 'disableDshPlugin', 'updateDshPlugin', 'uninstallDshPlugin']) {
+  for (const name of ['dshPlugins', 'installDshPlugin', 'enableDshPlugin', 'disableDshPlugin', 'updateDshPlugin', 'uninstallDshPlugin']) {
     assert.equal(typeof client[name], 'function', `${name} must be defined on the product client`);
   }
   await client.enableDshPlugin('@deepseek-ai/dsh-experimental-agent-team-profile');

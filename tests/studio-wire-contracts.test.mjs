@@ -92,7 +92,7 @@ test('delivery-target query has an independent registered read-only contract', a
 test('DSH plugin market bridge endpoints are registered operations', async () => {
   const { STUDIO_OPERATION_IDS } = await import('../src/contracts/operations.mjs');
   const endpoints = [
-    'plugins/dsh-list', 'plugins/dsh-discover', 'plugins/dsh-index-refresh',
+    'plugins/dsh-list', 'plugins/dsh-discover',
     'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable',
     'plugins/dsh-disable', 'plugins/dsh-update'
   ];

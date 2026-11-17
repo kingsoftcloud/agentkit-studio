@@ -28,7 +28,7 @@ The market adds no sidebar entry and no second plugin center — it reuses the s
 <Callout type="info" title="The market is metadata only">
   Install, enable/disable, update, and uninstall are all executed by the official DSH plugin manager.
   The Studio market owns **discovery and presentation** — not profile writes, not compatibility decisions,
-  not runtime loading. Source: `src/dsh-plugin-catalog.mjs:5-8`, `src/dsh-plugin-discovery.mjs:9-12`.
+  not runtime loading. Source: `src/plugin-market.mjs:1-16`, `src/dsh-plugin-catalog.mjs:1-14`.
 </Callout>
 
 ## Three trust boundaries
@@ -37,11 +37,11 @@ The easiest way to get ecosystem work wrong is to blur who is allowed to decide 
 
 | Boundary | Who decides | What must not happen |
 | --- | --- | --- |
-| Catalog content | A remote index may describe *which plugins to offer and how to present them* | ❌ It must not declare `expectedEntries` / `service` / `readinessNote` — those probes stay built-in, otherwise a remote document could make the adapter call arbitrary Host services |
+| Catalog content | An index document may describe *which plugins to offer and how to present them* | ❌ It must not declare `expectedEntries` / `service` / `readinessNote` — those probes stay curated, otherwise a third-party document could make the adapter call arbitrary Host services |
 | Plugin installation | The official DSH plugin manager | ❌ The market must not write profiles or run installers itself |
 | Capability probes | The Host | ❌ A remote document must not assert "and it really loaded" |
 
-Source: `src/dsh-plugin-catalog.mjs:10-13`, `src/dsh-plugin-discovery.mjs:9-12`.
+Source: `src/dsh-plugin-catalog.mjs:9-13`, `src/plugin-market.mjs:22-40`.
 
 ## Versions and identity
 
@@ -64,7 +64,7 @@ The full four-dimensional matrix is in [version compatibility](../releases/compa
     Manifest fields, four capabilities, three contributions, and the pre-publish checklist.
   </Card>
   <Card title="Plugin market" href="/en/docs/ecosystem/plugin-market">
-    The complete remote index field table, a copy-paste example, and cache/degradation rules.
+    The `format: 1` field table, the bundled community index and how it is generated, the request model and the install path.
   </Card>
   <Card title="Expert templates" href="/en/docs/ecosystem/expert-templates">
     The team-template/v1 field table, role blueprint constraints, and validation error codes.
@@ -81,8 +81,8 @@ A few terms recur throughout this chapter; here is the single agreed spelling:
 | Term | Code / value | In one line |
 | --- | --- | --- |
 | Plugin market | `plugins.item` slot | One row on the official DSH Plugins page, responsible for **discovery** |
-| Built-in catalog | `DSH_CURATED_PLUGINS` | First-party rows that ship with the product and work offline |
-| Remote index | `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | An operator-provided HTTPS JSON that refreshes presentation and appends plugins |
+| Bundled community index | `assets/plugin-market/index.json` | A `format: 1` document that ships with the product and is served by the Host |
+| Index source | `indexes` on `pluginMarket` | Profile-scoped index URLs the Discover page can add and remove |
 | Capability probe | `expectedEntries` / `service` | Declarable only by built-in rows, used to verify "the Host really loaded it" |
 | Team template | `agentkit.studio.team-template/v1` | A multi-role definition with `kind: "team"` |
 | Compatibility contract | `requiredHostContract: 1` | An integer that increments when the capability surface changes |
@@ -92,13 +92,13 @@ A few terms recur throughout this chapter; here is the single agreed spelling:
 | Misconception | Reality |
 | --- | --- |
 | "Installing the plugin gives me everything the market lists" | The market lists **installable** packages; availability depends on whether the Host loaded them — see [readiness checks](./plugin-market.mdx#readiness-checks) |
-| "A remote index can override built-in entries" | It can refresh presentation fields and append new plugins; built-in probe fields are never overridden — see [merge semantics](./plugin-market.mdx#merge-semantics) |
+| "An index can declare anything" | An index declares presentation and installation facts only; Host capability probes stay in the curated list — see [Security and trust](./plugin-market.mdx#security-and-trust) |
 | "Codex plugins and DSH plugins are the same pipeline" | Two separate paths: `plugins/dsh-*` and `plugins/codex-*`, with different install targets |
 | "A team is just a list of agents" | A team is a `kind: "team"` template whose roles may only reference immutable templates, never plain agents |
 
 ## Next
 
-Start with [DSH plugin authoring](./dsh-plugin-authoring.mdx). If you only need a remote index, jump to
+Start with [DSH plugin authoring](./dsh-plugin-authoring.mdx). If you only need an index source, jump to
 [plugin market](./plugin-market.mdx); if you are shipping a team, go to [expert templates](./expert-templates.mdx).
 
 For Host version mismatches, read [host compatibility](./host-compatibility.mdx), then the [error codes](../reference/errors.mdx).

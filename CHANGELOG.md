@@ -2,6 +2,8 @@
 
 ## 0.0.16 - 2026-11-17
 
+- 插件市场改为直接消费 DSH 官方的插件索引机制（`format: 1` 静态索引 + Host 的 `pluginMarket` 服务），删除 Studio 自建的 npm 搜索 + GitHub 搜索聚合：一次市场页从 16 个外部请求（最坏 24 s）变成「每个索引源 1 次 GET」，搜索、筛选、排序与翻页全部在 Host 内存中完成。Studio 随包内置一份社区插件索引（由 `pnpm build:plugin-index` 从 npm 生成，`pnpm check:plugin-index` 在 CI 校验），由 Host 的 `/api/agentkit.plugin-market/index.json` 提供给官方读取器，并在 profile 没有索引源时自动添加；「自定义插件索引」实验性插件出现在精选清单里，未启用时市场给出明确的一键启用入口。
+
 - Star Harness 使用 Studio 随包发布的固定摘要校验运行时及其依赖，通过校验后再启动。插件只接管已绑定的工作区。
 
 - 流式 Action（`RunAgent` 等 SSE 接口）不再把「HTTP 200 + JSON 错误信封」当成事件流：网关在流式接口上返回 `{ Code, RequestId, Error }`（例如 `Code: 409` 运行时就绪）或非 `text/event-stream` 的响应时，客户端按真实状态码与 `requestId` 抛出 `AgentEngineError`（429 → `SERVER_RATE_LIMITED`，信封错误 → `SERVER_ACTION_FAILED`，其余 → `SERVER_INVALID_RESPONSE`），界面显示真实原因而不是 SSE 解析失败或卡住；未带 content-type 的响应保持原有行为，KOP inner-account 403 回退不变。

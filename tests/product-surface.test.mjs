@@ -297,7 +297,6 @@ test('operational pages keep the old Studio hierarchy without stacked duplicate 
 test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter', () => {
   assert.match(clientSource, /dshPlugins: \(\) => \(bridgeAvailable\(\)\s*\?\s*studioBridgeOperation\('plugins\/dsh-list'/);
   assert.match(clientSource, /function dshPluginMarketList/);
-  assert.match(clientSource, /refreshDshPluginIndex: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/dsh-index-refresh'/);
   assert.match(clientSource, /codexPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/codex-list'/);
   assert.match(clientSource, /installDshPlugin: /);
   assert.match(clientSource, /enableDshPlugin: /);

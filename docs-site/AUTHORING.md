@@ -245,7 +245,7 @@ API 字段名、枚举值、错误码**永远不翻译**。
 | `runtime-contract.mdx` | `src/runtime-contract.mjs` |
 | `templates.mdx` | `src/team-template-contract.mjs` |
 | `configuration.mdx` | `src/product.json` + `studio.plugin.json` + `dsh-pin.json` + `cordis.patch.yml` |
-| `plugin-catalog.mdx` | `src/dsh-plugin-catalog.mjs` + `src/dsh-plugin-index.mjs` |
+| `plugin-catalog.mdx` | `src/dsh-plugin-catalog.mjs` + `src/plugin-market.mjs` |
 
 生成器输出 `.generated.mdx` / `.generated.en.mdx`，由薄封装页 import 渲染。**如果你被分配到 reference 章，先和 Lead 确认生成器是否已就绪。**
 

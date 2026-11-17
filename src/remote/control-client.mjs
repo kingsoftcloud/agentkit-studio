@@ -450,7 +450,6 @@ export function createProductClient(connection, { window = globalThis.window } =
         dshPlugins: () => (bridgeAvailable()
             ? studioBridgeOperation('plugins/dsh-list', {})
             : request('/api/v1/plugin-ecosystems/dsh/plugins')).then(dshPluginMarketList),
-        refreshDshPluginIndex: () => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-index-refresh', {}) : request('/api/v1/plugin-ecosystems/dsh/catalog:refresh', { method: 'POST' }),
         discoverDshPlugins: (options = {}) => bridgeAvailable()
             ? studioBridgeOperation('plugins/dsh-discover', { force: options?.force === true })
             : request('/api/v1/plugin-ecosystems/dsh/discover' + (options?.force ? '?force=true' : '')),

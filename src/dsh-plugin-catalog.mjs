@@ -1,112 +1,16 @@
-/** Curated DSH plugin catalog shown by the Studio plugin market.
+/** First-party DSH bundles Studio curates for the plugin market.
  *
- * The built-in list ships with the product and stays available offline. An
- * operator can point `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` (or
- * `DSH_PLUGIN_INDEX_URL`) at an HTTPS JSON document to refresh the list
- * without a product release. Installation, profile writes, compatibility
- * checks, approvals and runtime loading stay owned by the official DSH plugin
- * manager; this module is metadata only.
+ * The market itself is the official plugin index: DSH's `pluginMarket` service
+ * reads `format: 1` documents (the bundled community index plus any source the
+ * user adds), and the official Discover tab renders them. This module owns only
+ * what the official format cannot express — the host-owned readiness probes
+ * (`expectedEntries` / `service` / `readinessNote`) and the default enablement
+ * of the three first-party bundles Studio verifies end to end.
  *
- * Trust boundary: a remote document may describe which plugins to offer and
- * how to present them. It may not declare host verification probes
- * (`expectedEntries`, `service`, `readinessNote`) — those stay host-owned so a
- * remote list cannot make the adapter call arbitrary host services.
+ * Trust boundary: a probe names a host service, so only rows in this file may
+ * declare one. Index documents cannot, and every remote document Studio reads
+ * is validated by DSH's own reader before it reaches this module.
  */
-
-export const DSH_PLUGIN_CATALOG_SCHEMA_VERSION = 1;
-export const DSH_PLUGIN_INDEX_ENV = 'AGENTKIT_STUDIO_DSH_PLUGIN_INDEX';
-export const DSH_PLUGIN_INDEX_ENV_ALIASES = Object.freeze([DSH_PLUGIN_INDEX_ENV, 'DSH_PLUGIN_INDEX_URL']);
-
-const MAX_ENTRIES = 500;
-const PACKAGE_SPEC = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9.^~<>=*+-]+)?$/;
-const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-
-export class DshPluginCatalogError extends Error {
-  constructor(code, message, details = {}) {
-    super(message);
-    this.name = 'DshPluginCatalogError';
-    this.code = code;
-    this.details = details;
-  }
-}
-
-function scalar(value) {
-  return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
-}
-
-function text(value, max) {
-  return scalar(value).replace(/\s+/g, ' ').trim().slice(0, max);
-}
-
-function textList(value, maxItems, maxLength) {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.map(item => text(item, maxLength)).filter(Boolean))].slice(0, maxItems);
-}
-
-function httpsUrl(value) {
-  const candidate = text(value, 400);
-  if (!candidate) return '';
-  try {
-    const url = new URL(candidate);
-    return url.protocol === 'https:' ? url.href : '';
-  } catch {
-    return '';
-  }
-}
-
-/** Short glyph or HTTPS image for the market row; remote lists cannot inline data. */
-function iconValue(value) {
-  const candidate = scalar(value).trim();
-  if (!candidate) return '';
-  if (candidate.length <= 8 && !/[\s<>]/.test(candidate)) return candidate;
-  return httpsUrl(candidate);
-}
-
-function normalizeService(service) {
-  if (!service || typeof service !== 'object' || Array.isArray(service)) return undefined;
-  const name = text(service.name, 64);
-  const methods = textList(service.methods, 16, 64).filter(method => IDENTIFIER.test(method));
-  if (!name || !IDENTIFIER.test(name) || !methods.length) return undefined;
-  const probe = text(service.probe, 64);
-  return { name, methods, ...(probe && IDENTIFIER.test(probe) ? { probe } : {}) };
-}
-
-function withoutEmpty(entry) {
-  return Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== '' && value !== undefined));
-}
-
-/** Normalize one catalog row. Invalid ids/specs are dropped instead of guessed. */
-export function normalizeCatalogEntry(raw, { source = 'builtin' } = {}) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const id = text(raw.id ?? raw.pluginId ?? raw.name, 120);
-  if (!id || !PACKAGE_SPEC.test(id)) return null;
-  const installSpec = text(raw.installSpec, 140) || id;
-  if (!PACKAGE_SPEC.test(installSpec)) return null;
-  const entry = {
-    id,
-    installSpec,
-    displayName: text(raw.displayName, 80) || id,
-    description: text(raw.description, 400),
-    category: text(raw.category, 24) || '其他',
-    tags: textList(raw.tags, 8, 24),
-    featured: raw.featured === true,
-    experimental: raw.experimental === true,
-    capabilities: textList(raw.capabilities, 12, 40),
-    homepage: httpsUrl(raw.homepage),
-    repository: httpsUrl(raw.repository),
-    author: text(raw.author, 60),
-    icon: iconValue(raw.icon),
-    origin: source,
-  };
-  if (source === 'builtin') {
-    entry.expectedEntries = textList(raw.expectedEntries, 12, 60);
-    entry.service = normalizeService(raw.service);
-    entry.readinessNote = text(raw.readinessNote, 200);
-    entry.defaultEnabled = raw.defaultEnabled === true;
-    entry.tags = entry.tags.length ? entry.tags : textList(raw.capabilities, 4, 24);
-  }
-  return withoutEmpty(entry);
-}
 
 /** First-party bundles Studio curates for the DSH plugin market. */
 export const DSH_CURATED_PLUGINS = Object.freeze([
@@ -155,6 +59,26 @@ export const DSH_CURATED_PLUGINS = Object.freeze([
     service: { name: 'permissionPresets', methods: ['current', 'registerAuto', 'set'] },
     readinessNote: 'Host 已加载 Auto Review 权限扩展；实际审查会增加一次模型调用。',
   },
+  {
+    // The official plugin index: one static `format: 1` document per source
+    // replaces Studio's former npm/GitHub aggregation. Closing the bundle
+    // removes the service, the Discover tab and the `plugin_market` tool
+    // together, which is why the market reports itself unavailable instead of
+    // showing an empty shelf.
+    id: '@deepseek-ai/dsh-experimental-plugin-market-bundle',
+    installSpec: '@deepseek-ai/dsh-experimental-plugin-market-bundle',
+    displayName: '自定义插件索引',
+    description: '在插件页添加「发现」标签页，从插件索引中浏览和安装插件；Studio 已内置社区索引源。',
+    category: '插件',
+    tags: ['插件市场', '索引', '发现'],
+    featured: true,
+    experimental: true,
+    defaultEnabled: false,
+    capabilities: ['插件索引读取', '模糊搜索与分页', '版本与兼容性', '一键安装'],
+    expectedEntries: ['plugin-market', 'ui-plugin-market'],
+    service: { name: 'pluginMarket', methods: ['listIndexes', 'search', 'setIndexes'], probe: 'listIndexes' },
+    readinessNote: 'Host 已加载官方插件索引服务；索引源属于当前 profile，可在「发现」页管理。',
+  },
 ]);
 
 const BUILTIN_BY_ID = new Map(DSH_CURATED_PLUGINS.map(item => [item.id, item]));
@@ -175,59 +99,4 @@ function cloneEntry(entry) {
 
 export function dshCuratedEntries() {
   return DSH_CURATED_PLUGINS.map(cloneEntry);
-}
-
-/** Parse a remote index document (`{ plugins: [...] }` or a bare array). */
-export function normalizeCatalogDocument(document) {
-  const payload = Array.isArray(document) ? { plugins: document } : document;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new DshPluginCatalogError('DSH_PLUGIN_CATALOG_INVALID', '插件索引必须是 JSON 对象或数组');
-  }
-  if (payload.schemaVersion !== undefined && payload.schemaVersion !== DSH_PLUGIN_CATALOG_SCHEMA_VERSION) {
-    throw new DshPluginCatalogError('DSH_PLUGIN_CATALOG_VERSION_UNSUPPORTED', '插件索引版本不受支持');
-  }
-  const rows = payload.plugins;
-  if (!Array.isArray(rows)) throw new DshPluginCatalogError('DSH_PLUGIN_CATALOG_INVALID', '插件索引缺少 plugins 数组');
-  if (rows.length > MAX_ENTRIES) throw new DshPluginCatalogError('DSH_PLUGIN_CATALOG_TOO_LARGE', '插件索引条目数超出上限');
-  const entries = [];
-  const seen = new Set();
-  let skipped = 0;
-  for (const row of rows) {
-    const entry = normalizeCatalogEntry(row, { source: 'remote' });
-    if (!entry || seen.has(entry.id)) { skipped += 1; continue; }
-    seen.add(entry.id);
-    entries.push(entry);
-  }
-  const updatedAt = text(payload.updatedAt, 40);
-  return { entries, updatedAt: Number.isNaN(Date.parse(updatedAt)) ? '' : updatedAt, skipped };
-}
-
-/** Built-in rows first; remote rows refresh copy and append new plugins. */
-export function mergeCatalogEntries(builtin = dshCuratedEntries(), remote = []) {
-  const merged = new Map();
-  for (const entry of builtin) merged.set(entry.id, cloneEntry(entry));
-  for (const entry of remote) {
-    const existing = merged.get(entry.id);
-    if (!existing) {
-      merged.set(entry.id, cloneEntry({ ...entry, origin: 'remote' }));
-      continue;
-    }
-    merged.set(entry.id, cloneEntry({
-      ...existing,
-      displayName: entry.displayName || existing.displayName,
-      description: entry.description || existing.description,
-      category: entry.category && entry.category !== '其他' ? entry.category : existing.category,
-      tags: entry.tags?.length ? entry.tags : existing.tags,
-      featured: entry.featured || existing.featured,
-      experimental: entry.experimental || existing.experimental,
-      capabilities: entry.capabilities?.length ? entry.capabilities : existing.capabilities,
-      homepage: entry.homepage || existing.homepage,
-      repository: entry.repository || existing.repository,
-      author: entry.author || existing.author,
-      icon: entry.icon || existing.icon,
-      installSpec: entry.installSpec || existing.installSpec,
-      origin: 'remote',
-    }));
-  }
-  return [...merged.values()];
 }

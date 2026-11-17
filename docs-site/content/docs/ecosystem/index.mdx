@@ -28,7 +28,7 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
 <Callout type="info" title="市场只做元数据">
   安装、启用/停用、更新、卸载全部由官方 DSH 插件管理器执行。Studio 的市场负责**发现与呈现**，
   不负责写入 profile、不做兼容性判定、不加载运行时。
-  源码：`src/dsh-plugin-catalog.mjs:5-8`、`src/dsh-plugin-discovery.mjs:9-12`。
+  源码：`src/plugin-market.mjs:1-16`、`src/dsh-plugin-catalog.mjs:1-14`。
 </Callout>
 
 ## 三个信任边界
@@ -37,11 +37,11 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
 
 | 边界 | 谁能决定 | 不能做的事 |
 | --- | --- | --- |
-| 目录内容 | 远程索引可以描述「提供哪些插件、怎么展示」 | ❌ 不能声明 `expectedEntries` / `service` / `readinessNote`——这些探针留在内置目录里，否则远程文档可以诱导适配器调用任意的 Host 服务 |
+| 目录内容 | 索引文档可以描述「提供哪些插件、怎么展示」 | ❌ 不能声明 `expectedEntries` / `service` / `readinessNote`——这些探针留在精选清单里，否则第三方文档可以诱导适配器调用任意的 Host 服务 |
 | 插件安装 | 官方 DSH 插件管理器 | ❌ 市场不能自己写 profile、不能自己执行安装 |
 | 能力探针 | Host 自己 | ❌ 远程文档不能声明「我确实加载成功了」 |
 
-源码：`src/dsh-plugin-catalog.mjs:10-13`、`src/dsh-plugin-discovery.mjs:9-12`。
+源码：`src/dsh-plugin-catalog.mjs:9-13`、`src/plugin-market.mjs:22-40`。
 
 ## 版本与身份
 
@@ -64,7 +64,7 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
     插件清单字段、4 个 capability、3 个 contribute，以及发布前的自检清单。
   </Card>
   <Card title="插件市场" href="/docs/ecosystem/plugin-market">
-    远程索引 JSON 的完整字段表、一个可复制的示例、缓存与降级规则。
+    官方索引 `format: 1` 的字段表、内置社区索引与生成方式、请求模型与安装路径。
   </Card>
   <Card title="专家模板" href="/docs/ecosystem/expert-templates">
     team-template/v1 的字段表、角色蓝图约束、校验失败的错误码对照。
@@ -81,8 +81,8 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
 | 术语 | 代码 / 值 | 一句话 |
 | --- | --- | --- |
 | 插件市场 | `plugins.item` 槽位 | DSH 官方插件页里的一行，负责**发现** |
-| 内置目录 | `DSH_CURATED_PLUGINS` | 随产品出厂的第一方条目，离线可用 |
-| 远程索引 | `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | 运维提供的 HTTPS JSON，刷新展示与追加插件 |
+| 内置社区索引 | `assets/plugin-market/index.json` | 随产品出厂的 `format: 1` 索引，由 Host 提供 |
+| 索引源 | `pluginMarket` 的 `indexes` | 属于当前 profile 的索引 URL，可在「发现」页增删 |
 | 能力探针 | `expectedEntries` / `service` | 只有内置条目能声明，用来验证「Host 真的加载了」 |
 | 专家团模板 | `agentkit.studio.team-template/v1` | `kind: "team"` 的多角色定义 |
 | 兼容契约 | `requiredHostContract: 1` | 能力面变更时递增的整数 |
@@ -92,13 +92,13 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
 | 误解 | 事实 |
 | --- | --- |
 | 「装好插件就有市场里的全部能力」 | 市场列出的是**可安装**的包；是否可用取决于 Host 是否加载成功，见[就绪校验](./plugin-market.mdx#就绪校验) |
-| 「远程索引可以覆盖内置条目」 | 只能刷新展示字段与新插件；内置条目的探针字段不会被覆盖，见[合并语义](./plugin-market.mdx#合并语义) |
+| 「索引能声明一切」 | 索引只声明展示与安装信息；Host 能力探针留在精选清单里，见[安全与信任](./plugin-market.mdx#安全与信任) |
 | 「Codex 插件和 DSH 插件是同一套」 | 两条独立链路：`plugins/dsh-*` 与 `plugins/codex-*`，安装目标也不同 |
 | 「专家团就是几个 Agent 的列表」 | 专家团是 `kind: "team"` 的独立模板，角色只能引用不可变模板，不能引用普通 Agent |
 
 ## 下一步
 
-从[DSH 插件作者指南](./dsh-plugin-authoring.mdx)开始。如果你只想配一个远程索引，直接去
+从[DSH 插件作者指南](./dsh-plugin-authoring.mdx)开始。如果你只想加一个索引源，直接去
 [插件市场](./plugin-market.mdx)；如果你要发布专家团，去[专家模板](./expert-templates.mdx)。
 
 Host 版本对不上的排查，先看[Host 兼容性](./host-compatibility.mdx)，再看[错误码](../reference/errors.mdx)。

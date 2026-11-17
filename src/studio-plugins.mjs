@@ -5,13 +5,13 @@
  * plugin Node half shares that context, so this adapter calls the services
  * directly — no profile file reads, no CLI forwarding.
  *
- * The market catalog is metadata only: the built-in curated list plus an
- * optional operator-provided remote index. Installation, profile writes,
- * compatibility checks, approvals and runtime loading stay owned by the
- * official DSH plugin manager.
+ * The market is the official plugin index: the Host's `pluginMarket` service
+ * reads `format: 1` documents (the bundled community index plus any source the
+ * user adds), so this adapter owns no aggregation of its own. Installation,
+ * profile writes, compatibility checks, approvals and runtime loading stay
+ * owned by the official DSH plugin manager.
  */
-import { createDshPluginDiscovery } from './dsh-plugin-discovery.mjs';
-import { createDshPluginIndex } from './dsh-plugin-index.mjs';
+import { createPluginMarket } from './plugin-market.mjs';
 import { dshCuratedEntries, dshCuratedPlugin } from './dsh-plugin-catalog.mjs';
 import dshPin from '../dsh-pin.json' with { type: 'json' };
 
@@ -117,8 +117,7 @@ async function verifyItem(item, getService, entry) {
 /** Resolve a host service by name from the plugin root context. */
 export function createStudioPlugins({
   getService,
-  pluginIndex = createDshPluginIndex(),
-  discovery = createDshPluginDiscovery(),
+  pluginMarket = createPluginMarket({ getService }),
 } = {}) {
   function service(name) {
     const instance = getService?.(name);
@@ -206,10 +205,10 @@ export function createStudioPlugins({
     return { items, source: 'plugin-manager' };
   }
 
-  /** Public plugin discovery: what exists in the npm/GitHub ecosystem, marked with local install state. */
+  /** Public plugin discovery: the official plugin index, marked with local install state. */
   async function discoverDsh({ force = false } = {}) {
     const manager = service('pluginManager');
-    const [catalog, bundles] = await Promise.all([discovery.discover({ force: force === true }), manager.listBundles()]);
+    const [catalog, bundles] = await Promise.all([pluginMarket.discover({ force: force === true }), manager.listBundles()]);
     const byName = new Map((bundles || []).map(bundle => [String(bundle.name), bundle]));
     const items = (catalog.items || []).map(item => {
       const bundle = item.packageName ? byName.get(item.packageName) : undefined;
@@ -217,31 +216,24 @@ export function createStudioPlugins({
       return {
         ...item,
         installed,
-        installedVersion: bundle?.version || '',
-        enabled: bundle ? bundle.enabled !== false : false,
-        readOnlyReason: bundle?.readOnlyReason || '',
+        installedVersion: bundle?.version || item.installedVersion || '',
+        enabled: bundle ? bundle.enabled !== false : item.enabled === true,
+        readOnlyReason: bundle?.readOnlyReason || item.readOnlyReason || '',
       };
     });
-    return { items, info: catalog.info, source: 'discovery' };
+    return { items, info: catalog.info, source: 'plugin-market' };
   }
 
+  /** The installed list: profile bundles plus the curated first-party rows. */
   async function listDsh() {
     const manager = service('pluginManager');
-    const catalog = await pluginIndex.load();
-    return { ...(await readDshItems(manager, catalog)), catalog: catalog.info };
-  }
-
-  /** Force one remote catalog refresh (UI "刷新清单"); failures keep last data. */
-  async function refreshDshCatalog() {
-    const manager = service('pluginManager');
-    const catalog = await pluginIndex.refresh();
+    const catalog = { entries: dshCuratedEntries(), info: { source: 'builtin', indexUrl: '', updatedAt: '' } };
     return { ...(await readDshItems(manager, catalog)), catalog: catalog.info };
   }
 
   async function verifyUsable(manager, name, change) {
     if (change.application === 'restart-required') return { state: 'pending-restart', checks: [], note: '配置已保存，需要重启 Host 后才能验证插件能力。' };
-    const catalog = await pluginIndex.load();
-    const listed = await readDshItems(manager, catalog);
+    const listed = await readDshItems(manager, { entries: dshCuratedEntries() });
     const item = listed.items.find(row => row.pluginId === String(name));
     if (!item) throw new StudioPluginsError('DSH_PLUGIN_NOT_FOUND_AFTER_CHANGE', '插件变更后 Host 清单中找不到该插件。', { pluginName: String(name), change });
     const verification = item.verification || { state: 'loaded', checks: [], note: 'Host 已加载插件。' };
@@ -299,5 +291,5 @@ export function createStudioPlugins({
     return { ...change, verification, note: verification.note };
   }
 
-  return { discoverDsh, listDsh, refreshDshCatalog, installDsh, uninstallDsh, setDshEnabled, updateDsh };
+  return { discoverDsh, listDsh, installDsh, uninstallDsh, setDshEnabled, updateDsh };
 }

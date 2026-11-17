@@ -81,7 +81,9 @@
     "verify-studio-native-harness": "node scripts/verify-studio-native-harness.mjs",
     "build:harness-node": "node scripts/verify-native-dependencies.mjs",
     "pin:native-registry": "node scripts/pin-native-registry.mjs",
-    "verify:client-modules": "node scripts/verify-client-modules.mjs"
+    "verify:client-modules": "node scripts/verify-client-modules.mjs",
+    "build:plugin-index": "node scripts/build-plugin-market-index.mjs",
+    "check:plugin-index": "node scripts/build-plugin-market-index.mjs --check"
   },
   "engines": {
     "node": ">=24.9.0",

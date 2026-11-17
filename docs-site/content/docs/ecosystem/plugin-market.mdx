@@ -1,232 +1,90 @@
 ---
 title: 插件市场
-description: 用一份 HTTPS JSON 远程索引刷新 DSH 插件市场：完整字段表、可复制示例、缓存与降级规则、就绪校验。
+description: DSH 官方插件索引（format 1）在 Studio 里的接入方式：索引源、请求模型、内置社区索引与安装路径。
 ---
 
-插件市场有**两源**：随产品出厂的内置目录，和运维可选的远程索引。两者合并后展示，内置条目优先。
+插件市场就是 **DSH 官方的插件索引**：一份 `format: 1` 静态 JSON，列出可安装的 bundle 及其标题、图标、作者、版本、`engines.dsh` 兼容范围与安装源。Studio 不再自建聚合——它读取 Host 的 `pluginMarket` 服务，并在 profile 没有任何索引源时，把随包内置的社区索引添加为默认源。
 
-- 内置目录：`DSH_CURATED_PLUGINS`（`src/dsh-plugin-catalog.mjs:112`），离线可用，只有第一方能声明探针字段。
-- 远程索引：一份 HTTPS JSON，指向它的环境变量是 `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX`（别名 `DSH_PLUGIN_INDEX_URL`）。
+- 内置社区索引：`assets/plugin-market/index.json`，由 Host 在 `GET /api/agentkit.plugin-market/index.json` 提供给官方读取器。
+- 用户索引源：属于当前 profile，可在「发现」页添加、删除、切换。
+- 安装、启用/停用、更新、卸载仍由官方 DSH 插件管理器执行。
 
-<Callout type="info" title="市场不负责安装">
-  远程索引只能描述「提供哪些插件、怎么展示」。安装、启用/停用、更新、卸载都由官方 DSH 插件管理器执行。
-  源码：`src/dsh-plugin-catalog.mjs:5-8`。
+<Callout type="info" title="为什么不再自建聚合">
+  旧实现每次冷加载要打 16 个外部请求（npm 搜索 + GitHub 搜索 + 14 份完整 packument），串行叠加最坏 24 秒，还受 GitHub 未授权 10 次/分的限流。索引方案把列表页需要的全部信息放进**一份文档**：一个市场页只需 1 次 GET / 索引源，搜索、筛选、排序与翻页都在 Host 内存里完成。
 </Callout>
 
-<Diagram src="/assets/agentkit-plugin-market.png" alt="插件市场流水线：内置目录与远程索引经确定性合并、四层就绪校验后渲染到面板，并画出缓存复用、stale 降级与失败提示三条旁路" />
+## 请求模型
 
-*读图要点：内置目录永远赢——远程索引只能追加或覆盖展示字段，不能关掉内置的 `featured`，也改不了探针字段。三条降级路径都不会让面板变空：刷新失败保留上一份并标 `stale`，首次失败回落内置目录，坏条目计入 `skipped` 后继续。*
+| 操作 | 外部请求数 |
+| --- | --- |
+| 列出索引源（`listIndexes`） | 0（只读配置） |
+| 首次读取某个源 | 1 |
+| 10 分钟 TTL 内再次读取 | 0 |
+| 显式刷新（`refresh: true`） | 1 |
+| 翻第 2 页及以后 | 0（`fetchedAt` 锚定同一份文档） |
+| 搜索 / 筛选 / 排序 | 0（Host 侧内存索引） |
 
-## 环境变量
+主机参数：`cacheTtlMs` 默认 600000（10 分钟）、`fetchTimeoutMs` 默认 15000、`maxBytes` 默认 128 MiB；单页最多 100 条。索引文档在 Worker 线程里解析，不阻塞 Host 事件循环。
 
-| 变量 | 别名 | 说明 |
-| --- | --- | --- |
-| `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | `DSH_PLUGIN_INDEX_URL`（兼容别名） | 远程索引 URL，首选 |
+## 索引格式
 
-两个都设时，`AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` 优先。空值表示「只用内置目录」。
-源码：`src/dsh-plugin-catalog.mjs:17-18`、`src/dsh-plugin-index.mjs:35-41`。
-
-## 索引文档结构
+根字段：`format`（必须为 `1`）、`title`（必填，`LocalizedText`）、`description`、`metadata`、`plugins[]`。插件字段：`name`（npm 包名，索引内唯一）、`title`、`description`、`icon`、`author`、`homepage`、`repository`、`metadata`、`versions[]`。版本字段：`version`（精确 SemVer）、`publishTimestamp`（Unix 秒）、`source`（`{"type":"npm"}` 或 `{"type":"git","url","commit","path"}`）、`engines.dsh`（SemVer range）。
 
 ```json
 {
-  "schemaVersion": 1,
-  "updatedAt": "2026-11-16T08:00:00.000Z",
+  "format": 1,
+  "title": { "en": "DSH Community Plugins", "zh": "DSH 社区插件" },
+  "metadata": {
+    "sortKeys": { "downloads": { "title": { "en": "Downloads", "zh": "下载量" }, "order": "desc" } }
+  },
   "plugins": [
     {
-      "id": "dsh-example-tools", "installSpec": "dsh-example-tools@1.4.2",
-      "displayName": "Example Tools", "description": "为 Agent 提供示例工具集。",
-      "category": "效率与通知", "tags": ["工具", "示例"],
-      "featured": false, "experimental": false, "capabilities": ["example.run"],
-      "homepage": "https://example.com", "author": "example", "icon": "◈",
-      "repository": "https://github.com/example/dsh-example-tools"
+      "name": "dshmarket",
+      "title": { "en": "dshmarket", "zh": "dshmarket" },
+      "metadata": { "keywords": ["dsh-plugin"], "sortKeys": { "downloads": 1289262 } },
+      "versions": [
+        { "version": "1.73.20", "publishTimestamp": 1790476800, "source": { "type": "npm" }, "engines": { "dsh": ">=0.2.0" } }
+      ]
     }
   ]
 }
 ```
 
-`plugins` 也可以直接是裸数组。`schemaVersion` 可省略，但一旦出现就必须等于 `1`。
-源码：`src/dsh-plugin-catalog.mjs:181-203`。
+未定义的成员会被忽略（可扩展）；格式违规会**整份拒绝**并给出 JSON 路径——没有一个坏条目能悄悄消失。
 
-## 条目字段（完整表）
+## 内置社区索引
 
-| 字段 | 类型 | 必填 | 约束 | 默认 | 源码 |
-| --- | --- | --- | --- | --- | --- |
-| `id` | string | ✅ | `PACKAGE_SPEC`，≤120 字符；也接受 `pluginId` / `name` 作为别名 | — | `:81-82` |
-| `installSpec` | string | — | `PACKAGE_SPEC`，≤140 | `id` | `:83-84` |
-| `displayName` | string | — | ≤80 | `id` | `:88` |
-| `description` | string | — | ≤400 | `""` | `:89` |
-| `category` | string | — | ≤24 | `其他` | `:90` |
-| `tags` | string[] | — | ≤8 项，每项 ≤24 | 回落到 `capabilities` 前 4 项 | `:91,106` |
-| `featured` / `experimental` | boolean | — | 必须严格 `true` | `false` | `:92-93` |
-| `capabilities` | string[] | — | ≤12 项，每项 ≤40 | `[]` | `:94` |
-| `homepage` / `repository` | string | — | **仅 HTTPS**，≤400 | `""` | `:95-96` |
-| `author` / `icon` | string | — | `author` ≤60；`icon` 是字形 ≤8 字符且无空白/尖括号，否则必须是 HTTPS 图片 | `""` | `:97`、`:58-63` |
-| `origin` | string | 自动 | 由来源决定，远程恒为 `remote` | — | `:99` |
-
-<Callout type="warn" title="四个字段远程索引写不了">
-  `expectedEntries`、`service`、`readinessNote`、`defaultEnabled` **只从内置目录读取**。
-  远程条目即使写了也会被丢弃——这是信任边界，不是遗漏。
-  源码：`src/dsh-plugin-catalog.mjs:10-13,101-107`。
-</Callout>
-
-## 文档级约束
-
-| 约束 | 值 | 违反时 |
-| --- | --- | --- |
-| `plugins` 必填 | 必须是数组 | `DSH_PLUGIN_CATALOG_INVALID` |
-| 条目上限 / `schemaVersion` | 500 / 省略或 `1` | `DSH_PLUGIN_CATALOG_TOO_LARGE`、`..._VERSION_UNSUPPORTED` |
-| 响应体上限 / 请求超时 | 512 KiB / 8 秒 | `DSH_PLUGIN_INDEX_TOO_LARGE`、`..._TIMEOUT` |
-
-源码：`src/dsh-plugin-catalog.mjs:186-191`、`src/dsh-plugin-index.mjs:65-67`。
-
-## URL 安全规则
-
-| 规则 | 结果 |
+| 文件 | 作用 |
 | --- | --- |
-| 空字符串 / `https:` | 只用内置目录 / ✅ 接受 |
-| `http:` 且主机为 `127.0.0.1` / `localhost` / `::1` | ✅ 接受（开发逃生口） |
-| 其他 `http:` / 非 HTTP(S) 协议 | ❌ `DSH_PLUGIN_INDEX_URL_REJECTED` |
-| 带 `username` 或 `password` 的 URL | ❌ 拒绝 |
-
-被拒绝后市场**不会清空**——继续展示内置目录，并通过 `info.error.code` 给出提示。
-源码：`src/dsh-plugin-index.mjs:43-53,100-109`。
-
-## 缓存与降级
-
-| 行为 | 规则 | 源码 |
-| --- | --- | --- |
-| TTL / 手动刷新 / 请求头 | 10 分钟；`refresh()` 强制绕过；`accept: application/json`、`user-agent: agentkit-studio-plugin-market` | `:65`、`:146`、`:80` |
-| 网络失败 | 返回**上一次成功的文档**并标记 `stale: true`；无缓存时回落到内置目录 | `:130-141`、`:132` |
-| 无效条目 | 计入 `skipped`，不中断整份文档 | `:197,202` |
-
-## 合并语义
-
-内置优先，远程只做**刷新与追加**：
-
-| 情况 | 结果 |
-| --- | --- |
-| 远程 id 不在内置里 | 追加为新条目，`origin: "remote"` |
-| 远程 id 命中内置 | 用远程的 `displayName` / `description` / `tags` / `capabilities` / `homepage` / `repository` / `author` / `icon` / `installSpec` 覆盖；`category` 只有非 `其他` 时才覆盖 |
-| 布尔 / 探针字段 | `featured` / `experimental` 取**或**（内置为 `true` 时远程关不掉）；`expectedEntries` / `service` / `readinessNote` / `defaultEnabled` 保持内置值 |
-
-源码：`src/dsh-plugin-catalog.mjs:206-232`。
-
-## 内置精选插件
-
-`DSH_CURATED_PLUGINS`（`src/dsh-plugin-catalog.mjs:112-158`）只有 3 个第一方条目。三者**默认不启用**，装完要手动开启。
-
-| 插件 | 名称 | 分类 | 能力 | 默认启用 | 就绪校验（`expectedEntries`） |
-| --- | --- | --- | --- | --- | --- |
-| `@deepseek-ai/dsh-experimental-agent-team-profile` | Agent Teams | 协作 | `spawn_teammate` / `list_agents` / `team_task` / 成员会话 | 否 | `agent-team`、`tool-agent-team`、`ui-agent-team` |
-| `@deepseek-ai/dsh-experimental-voice-input-bundle` | 语音输入 | 输入 | 麦克风录音 / SenseVoice 转写 / 草稿插入 | 否 | `speech-to-text`、`speech-to-text-sensevoice`、`api-speech-to-text`、`ui-voice-input` |
-| `@deepseek-ai/dsh-experimental-auto-review` | Auto Review | 权限 | 工具风险审查 / Auto 权限模式 / 拒绝原因展示 | 否 | `auto-review` |
-
-### 服务探针与代价
-
-| 插件 | `service` 探针 | 什么时候该启用 | 代价 |
-| --- | --- | --- | --- |
-| Agent Teams | `agentTeams.listMembers` / `spawnTeammate` / `createTask` | 需要多角色协作与共享任务板 | 每个成员是一个会话，token 消耗随成员数增长 |
-| 语音输入 | `speechToText.snapshot`（`probe`）/ `prepare` / `transcribe` | 中文语音输入、离线转写 | 首次需下载本地识别模型；需要麦克风权限；音频不上云 |
-| Auto Review | `permissionPresets.current` / `registerAuto` / `set` | 需要工具调用前的风险审查 | 每次审查多一次模型调用，延迟明显增加 |
+| `assets/plugin-market/index.json` | 索引文档（`format: 1`），随包分发，由 Host 提供 |
+| `assets/plugin-market/sources.txt` | 生成输入：每行一个 npm 包名 |
+| `scripts/build-plugin-market-index.mjs` | 生成器 / 校验器 |
 
 ```sh
-# 对真实 Host 逐个验证（必须用隔离 profile）
-AGENTKIT_DSH_HOME=/tmp/isolated-dsh \
-  pnpm verify-dsh-plugin-market --execute --all
+pnpm build:plugin-index    # 重新生成（读 sources.txt，为空时按下载量取前 80 个包）
+pnpm check:plugin-index    # 不联网，只校验已提交的产物
 ```
 
-装完后状态从 `not-installed` → `disabled` → `ready`。`failed` 时读 `note`，它会点名缺失的能力行。
-源码：`src/dsh-plugin-catalog.mjs:112-158`、`scripts/verify-dsh-plugin-market.mjs:15-19`。
+收录规则：只保留合法 SemVer、有发布时间、未弃用、未私有的版本，每个插件最多 20 个；输出按下载量降序、同分按包名升序，**确定性**（无时间戳、无随机），因此刷新在 review 里只体现为数据变化。
 
-## 就绪校验
+## 安装路径
 
-市场给每个条目一个状态，来自三层检查：
+索引只产出参数，不执行安装：npm 版本解析为 `name@version`（可带 `registry`），Git 版本解析为 `git+<url>.git#<commit>`（子目录追加 `&path:/<dir>`），随后交给官方 `pluginManager.inspect()` / `installBundle()`，兼容性检查、构建脚本批准与失败回滚都在那里。
 
-| 层 | 检查什么 | 通过条件 |
-| --- | --- | --- |
-| 能力行 | 内置条目的 `expectedEntries` 逐项对照 Host `listPlugins()` 的行 id | 行 id 完全相等，或以 `#<name>` / `:<name>` 结尾，且 `fiberPhase === "active"` |
-| 服务存在 | `getService(service.name)` | 返回非空 |
-| 方法齐全 / 探针有返回 | `service.methods[]`；`service.probe()`（若声明） | 每项 `typeof === "function"`；探针返回值非 `undefined` / `null` |
+## 未启用时
 
-| 状态 | 条件 |
+官方索引服务只随实验性 bundle `@deepseek-ai/dsh-experimental-plugin-market-bundle`（「自定义插件索引」）挂载。未启用时市场不会显示空货架，而是返回 `PLUGIN_MARKET_UNAVAILABLE` 并给出一键启用入口；该 bundle 同时出现在 Studio 的精选清单里。
+
+## 安全与信任
+
+索引是第三方内容：标题、作者、标签、来源都由索引声明，DSH 只校验格式、不验证声明。`http:` 索引（含其中列出的安装 spec）可能在传输途中被篡改，不受你控制的网络必须使用 `https:`；URL 图标由浏览器直接请求，会向图片主机暴露你的 IP 地址。安装前请核对确认框中的来源。
+
+## 相关源码
+
+| 关注点 | 位置 |
 | --- | --- |
-| `not-installed` | `item.installed === false` |
-| `disabled` | `item.enabled === false` |
-| `failed` / `loaded` | 有加载错误或探针缺失 / 已加载但没有 `expectedEntries` |
-| `ready` | 全部通过 |
-
-源码：`src/studio-plugins.mjs:72-115`。
-
-## 安装流程
-
-从「看见一个插件」到「它真的能跑」，中间有四个决策点。任何一步不通过都会停在那一步，而不是降级成「看起来装好了」：
-
-```mermaid
-flowchart TD
-  A["打开 DSH 插件页"] --> B["合并内置目录与远程索引"]
-  B --> C{"条目已安装？"}
-  C -->|否| D["not-installed：显示安装"]
-  C -->|是| E{"已启用？"}
-  E -->|否| F["disabled：显示启用"]
-  E -->|是| G["执行就绪校验"]
-  D --> H["调用官方安装接口"]
-  H --> G
-  F --> G
-  G --> I{"能力行 active？"}
-  I -->|否| J["failed：显示加载错误"]
-  I -->|是| K{"服务可解析？"}
-  K -->|否| J
-  K -->|是| L{"方法齐全且探针有返回？"}
-  L -->|否| J
-  L -->|是| M["ready：可对话"]
-```
-
-<Callout type="warn" title="安装成功不等于可用">
-`not-installed` 变成 `ready` 需要三层检查全部通过。中间任何一层缺失都会停在 `failed`，并带出具体是能力行、服务还是探针不合格——不会显示成 `ready` 让你以为可以用了。
-</Callout>
-
-## 如何评估社区插件
-
-市场里绝大多数插件没有 `expectedEntries`——它们的状态只会是 `loaded`。这不代表不可用，但判断得你自己做。
-
-| 检查项 | 怎么查 | 不合格的信号 |
-| --- | --- | --- |
-| 就绪校验 | 条目有没有 `expectedEntries` | 没有 → 加载失败也不会告诉你 |
-| 服务探针 | 有没有 `service.methods` | 没有 → 无法验证「装上了真的能用」 |
-| 权限面 | 条目 `capabilities` 是否声明全盘访问 | 未声明却要 `danger-full-access` |
-| 跟随 DSH 基线 | `peerDependencies` 是否锁 `0.2.2-rc.1` | 版本范围过宽（`*` / `>=0.1`） |
-| 可回滚 | 是否只经官方插件管理器安装 | 自己写 profile、自己下载二进制 |
-| 维护活跃度 | npm `keywords` 含 `dsh-plugin`；GitHub `topic:dsh-plugin` | 两者都没有 |
-| 有测试 | 仓库是否有 `test/` 与 CI | 只有源码没有测试 |
-
-**最省事的判断**：看它能不能通过 `verify-dsh-plugin-market --execute` 的同一套探针。通不过探针的插件，出问题时你只能靠日志。
-
-## 错误码对照
-
-| 错误码 | 触发 | 处理 |
-| --- | --- | --- |
-| `DSH_PLUGIN_INDEX_URL_REJECTED` | URL 非 HTTPS 且非 localhost | 换成 HTTPS |
-| `DSH_PLUGIN_INDEX_FETCH_FAILED` / `_HTTP_ERROR` | 请求未返回合法响应对象，或非 2xx | 检查网络与网关，看 `note` 里的状态码 |
-| `DSH_PLUGIN_INDEX_TOO_LARGE` | 响应体 > 512 KiB | 拆分或压缩索引 |
-| `DSH_PLUGIN_INDEX_INVALID_JSON` / `_INVALID` | 响应体不是 JSON，或文档结构不合法 | 校验 JSON，再对照上面的字段表 |
-| `DSH_PLUGIN_INDEX_TIMEOUT` / `_UNAVAILABLE` | 超过 8 秒，或未归类的失败 | 提升可达性，读 `note` |
-| `DSH_PLUGIN_CATALOG_INVALID` | 缺 `plugins` 数组 | 补字段 |
-| `DSH_PLUGIN_CATALOG_TOO_LARGE` | 条目 > 500 | 拆索引 |
-| `DSH_PLUGIN_CATALOG_VERSION_UNSUPPORTED` | `schemaVersion !== 1` | 改成 `1` 或删掉 |
-| `DSH_PLUGIN_CANCELLED` / `_OPERATION_FAILED` | 操作被取消，或变更未生效 | 重试，读 `details.error.diagnostic` |
-
-## 自检
-
-```sh
-# 1. 文档结构 + 条目 id 合法性
-node -e "const re=/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9.^~<>=*+-]+)?$/;
-const d=require('./index.json'); if(!Array.isArray(d.plugins)) throw new Error('plugins 必须是数组');
-for (const p of d.plugins) if(!re.test(p.id)) throw new Error('invalid id: '+p.id);
-console.log(d.plugins.length, 'entries ok');"
-
-# 2. 体积（必须 < 524288）
-wc -c index.json
-```
-
-插件清单字段见 [DSH 插件作者指南](./dsh-plugin-authoring.mdx)，能力协商见 [Host 兼容性](./host-compatibility.mdx)，npm 安装见 [npm 包](./npm-packages.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。
+| 官方服务适配器 | `src/plugin-market.mjs` |
+| 内置索引路由 | `src/host/routes/plugin-market-index.mjs` |
+| 精选第一方 bundle 与就绪探针 | `src/dsh-plugin-catalog.mjs` |
+| 安装 / 启停 / 更新 | `src/studio-plugins.mjs` |
+| 索引生成器 | `scripts/build-plugin-market-index.mjs` |
