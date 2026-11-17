@@ -8,6 +8,14 @@ import { pathToFileURL } from 'node:url';
 import { createHook } from 'node:async_hooks';
 
 if (!process.env.AGENTKIT_DSH_ROOT || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated DSH source and homes');
+// Default-bundle alignment is a profile-level side effect, not plugin-owned
+// state: enabling a bundle loads a plugin that subscribes `loader/volatile-update`
+// on the Host and is meant to outlive the Studio fiber that asked for it. This
+// verification asserts that one load/dispose cycle returns every listener, route
+// and timer, so it runs with the documented product switch that skips alignment
+// (`AGENTKIT_STUDIO_DEFAULT_BUNDLES=0`). The alignment itself is covered by
+// `tests/default-bundles.test.mjs` and by real Host startup.
+process.env.AGENTKIT_STUDIO_DEFAULT_BUNDLES = '0';
 const root = resolve(process.env.AGENTKIT_DSH_ROOT);
 const profile = process.env.STUDIO_VERIFY_PROFILE || 'studio-refactor';
 const installed = join(resolve(process.env.DSH_HOME), 'profiles', profile, 'node_modules/@kingsoftcloud/agentkit-studio');
