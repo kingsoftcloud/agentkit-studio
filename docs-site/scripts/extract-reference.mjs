@@ -1591,6 +1591,19 @@ curl -N "https://aicp.api.ksyun.com/agentengine/api/v1/RunAgent" \\
   }'
 \`\`\`
 
+### ${L('从公网调用 DSH ManagedRuntime', 'Call DSH ManagedRuntime from a public endpoint')}
+
+${L('用 Agent API Key 调用', 'Use the Agent API key to call')} ${C('POST {PublicEndpoint}/agentengine/api/v1/RunAgent')}${L('。请求使用', '. Set')} ${C('ApiFormat: "responses"')} ${L('与本轮', 'and send the current turn as')} ${C('ResponsesInput')}${L('。', '.')}
+
+| ${L('字段', 'Field')} | ${L('用途', 'Use')} |
+| --- | --- |
+| ${C('SessionId')} | ${L('平台会话 ID。取自 CreateSession 的 Data.Session.SessionId，或首轮 RunAgent 响应的 session_id。续聊时保持不变。', 'Platform session ID. Use Data.Session.SessionId from CreateSession or session_id from the first RunAgent response, and reuse it on later turns.')} |
+| ${C('InvocationId')} | ${L('每轮一个新 ID；同一轮重试保留原 ID。', 'Use a new ID for a new turn and keep it for retries of that turn.')} |
+| ${C('UserId')} | ${L('可选的 MCP 业务用户 ID；平台授权仍以认证主体为准。', 'Optional business user ID for MCP. Platform authorization still uses the authenticated principal.')} |
+| ${C('BusinessSessionId')} | ${L('可选的 MCP 业务会话 ID，不用于续聊。与平台 SessionId 分开。', 'Optional business session ID for MCP. It is independent of SessionId and does not select the conversation.')} |
+
+${L('Server 转发这两个业务字段，Host 通过工具请求的 _meta 和 HTTP 请求头传给绑定的 MCP 服务。后续轮次可以省略已绑定的字段；模型与会话历史不会收到这些业务 ID。', 'Server forwards both business fields, and the Host sends them to bound MCP servers in tool-call _meta and HTTP headers. Later turns can omit previously bound fields. Business IDs are excluded from model requests and transcripts.')}
+
 ### ${L('运行时 /v1/responses', 'Runtime /v1/responses')}
 
 ${L('字段来自', 'Fields come from')} ${C('src/deployment-conversation.mjs:26-27')}${L('。注意 ', '. Note that ')}${C('session_id')} ${L('与', 'and')} ${C('request_id')} ${L(

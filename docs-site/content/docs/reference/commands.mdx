@@ -1,19 +1,19 @@
 ---
 title: "命令参考"
-description: "56 个 make 目标与 99 个校验脚本的完整清单，含依赖关系、平台支持与源码位置。"
+description: "56 个 make 目标与 100 个校验脚本的完整清单，含依赖关系、平台支持与源码位置。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 命令入口
 
-仓库有两个执行面：`Makefile` 的 56 个目标（默认目标 `check`），以及 `scripts/` 下的 99 个校验脚本。
+仓库有两个执行面：`Makefile` 的 56 个目标（默认目标 `check`），以及 `scripts/` 下的 100 个校验脚本。
 
 | 入口 | 条数 | 什么时候用 |
 | --- | --- | --- |
 | `make <target>` | 56 | 日常开发、打包、门禁；目标带依赖与平台检查 |
-| `node scripts/verify-*.mjs` | 99 | 单点校验；门禁目标内部也是调它们 |
-| `node scripts/*.mjs` | 203 | 构建、发布、代码生成等非校验脚本 |
+| `node scripts/verify-*.mjs` | 100 | 单点校验；门禁目标内部也是调它们 |
+| `node scripts/*.mjs` | 204 | 构建、发布、代码生成等非校验脚本 |
 
 <Callout type="info" title="先看依赖">
 `make` 目标大多有前置依赖（例如 `web-dev` 依赖 `profile-install`）。直接跑依赖链比手动按顺序敲命令安全。
@@ -94,7 +94,7 @@ description: "56 个 make 目标与 99 个校验脚本的完整清单，含依�
 
 ## 校验脚本
 
-`scripts/verify-*.mjs` 共 99 个（顶层 98 个，另有 1 个在子目录），按文件名第二段分成 22 个家族。每个脚本的具体用途写在文件头注释里。
+`scripts/verify-*.mjs` 共 100 个（顶层 99 个，另有 1 个在子目录），按文件名第二段分成 23 个家族。每个脚本的具体用途写在文件头注释里。
 
 | 家族 | 条数 | 脚本 | 验收什么 |
 | --- | --- | --- | --- |
@@ -115,6 +115,7 @@ description: "56 个 make 目标与 99 个校验脚本的完整清单，含依�
 | `independent` | 1 | `verify-independent-workspace-host.mjs` | 原生引擎独立性 |
 | `ks3` | 1 | `verify-ks3-multipart.mjs` | KS3 存储 |
 | `macos` | 1 | `verify-macos-onboarding.mjs` | macOS 发布 |
+| `managed` | 1 | `verify-managed-mcp-identity.mjs` | — |
 | `packaged` | 1 | `verify-packaged-drag-region.mjs` | 打包产物 |
 | `patched` | 1 | `verify-patched-dsh-host.mjs` | 打补丁后的 Host |
 | `portable` | 1 | `verify-portable-codex.mjs` | 可移植资源与凭证 |
@@ -127,7 +128,7 @@ description: "56 个 make 目标与 99 个校验脚本的完整清单，含依�
 | --- | --- | --- |
 | make 目标 | `56` | 新增即更新本页，否则 `--check` 失败 |
 | 默认目标 | `check` | `make` 不带参数时执行 |
-| 校验脚本 | `99` | 门禁目标复用它们 |
+| 校验脚本 | `100` | 门禁目标复用它们 |
 | 排除目标 | `2` | 面向 Intel Mac 的遗留目标，不对外发布 |
 
 ## 开发者入口

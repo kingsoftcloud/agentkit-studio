@@ -82,7 +82,7 @@ toolSet / deferContext / concludeTurn / arguments`，没有 `scope`）。
 4. `normalizeMcpInvocationIdentity` 的**平台 `userId` 改为可选**：engine 进程内没有平台
    主体时，仍然转发 `source` + `sessionId` + 业务字段，而不是把整个通道丢掉。
 
-修复后的实际线上内容：
+修复后在真实 Host 门禁记录到的 MCP 字段（与公网 Server 转发验收分开）：
 
 ```json
 {

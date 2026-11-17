@@ -224,28 +224,36 @@ async function readRest(reader, decoder) {
   return text;
 }
 
-test('RunAgent binds business UserId and SessionId in private Runtime context', async t => {
-  let seen;
+test('RunAgent binds business identity and continues on the same platform SessionId', async t => {
+  const seen = [];
   const api = await httpFixture(t, { onRun: async request => {
-    seen = currentBusinessInvocation();
-    assert.equal(request.input, 'business turn');
-    assert.equal(request.sessionId, seen.nativeSessionId);
+    const identity = currentBusinessInvocation();
+    assert.equal(request.sessionId, identity.nativeSessionId);
+    seen.push(identity);
   } });
-  const response = await api.runAgent({ SessionId: 'business-session', UserId: 'customer@example.com',
+  const response = await api.runAgent({ SessionId: 'platform-session', BusinessSessionId: 'business-session', UserId: 'customer@example.com',
     InvocationId: 'business-run-1', ResponsesInput: 'business turn' });
   assert.equal(response.status, 200);
-  await response.text();
-  assert.equal(seen.contract, 'agentkit.business-invocation/v1');
-  assert.equal(seen.userId, 'customer@example.com');
-  assert.equal(seen.sessionId, 'business-session');
-  assert.equal(seen.requestId, 'business-run-1');
-  assert.equal(seen.agentId, 'ar-managed');
-  assert.match(seen.businessDigest, /^[a-f0-9]{64}$/);
-  assert.match(seen.nativeSessionId, /^runtime-/);
-  assert.ok(!JSON.stringify(api.stored).includes('customer@example.com'), 'business identity must not enter DSH transcript');
+  assert.ok((await response.text()).includes('response.completed'));
+  const continued = await api.runAgent({ SessionId: 'platform-session', InvocationId: 'business-run-2', ResponsesInput: 'follow-up' });
+  assert.equal(continued.status, 200);
+  assert.ok((await continued.text()).includes('response.completed'));
+  const [first, second] = seen;
+  assert.equal(first.contract, 'agentkit.business-invocation/v1');
+  assert.equal(first.userId, 'customer@example.com');
+  assert.equal(first.sessionId, 'business-session');
+  assert.equal(first.requestId, 'business-run-1');
+  assert.equal(first.agentId, 'ar-managed');
+  assert.match(first.businessDigest, /^[a-f0-9]{64}$/);
+  assert.match(first.nativeSessionId, /^runtime-/);
+  assert.deepEqual(second, { ...first, requestId: 'business-run-2' });
+  assert.equal(api.stored.size, 1);
+  const transcript = JSON.stringify([...api.stored.values()]);
+  assert.ok(!transcript.includes('customer@example.com') && !transcript.includes('"business-session"'),
+    'business identity must not enter DSH transcript');
   assert.equal(currentBusinessInvocation(), null, 'request context must not leak after RunAgent returns');
-  const conflict = await api.runAgent({ SessionId: 'business-session', UserId: 'other@example.com',
-    InvocationId: 'business-run-2', ResponsesInput: 'another turn' });
+  const conflict = await api.runAgent({ SessionId: 'platform-session', UserId: 'other@example.com',
+    InvocationId: 'business-run-3', ResponsesInput: 'another turn' });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).ReasonCode, 'RUNTIME_BUSINESS_SESSION_CONFLICT');
 });
@@ -279,17 +287,15 @@ test('a conflicting business session does not partially bind durable identity', 
   const registry = await createManagedSessionRegistry(api.root);
   const record = await registry.read('partial-session');
   assert.equal(record.businessUserId, undefined);
-  assert.equal(record.businessSessionId, 'old-session');
+  assert.equal(record.explicitBusinessSessionId, 'old-session');
 });
 
-test('a deployment can require business UserId and SessionId for MCP bindings', async t => {
+test('require mode requires a business user but not a BusinessSessionId', async t => {
   const api = await httpFixture(t, { mcp: true, env: { AGENTKIT_MCP_BUSINESS_IDENTITY: 'require' } });
   const missing = await api.runAgent({ SessionId: 'mcp-session', ResponsesInput: 'hello' });
   assert.equal(missing.status, 400);
   assert.equal((await missing.json()).ReasonCode, 'RUNTIME_BUSINESS_ID_REQUIRED');
-  const missingSession = await api.runAgent({ UserId: 'biz-user', ResponsesInput: 'hello' });
-  assert.equal(missingSession.status, 400);
-  assert.equal((await missingSession.json()).ReasonCode, 'RUNTIME_BUSINESS_ID_REQUIRED');
+  assert.equal(api.stored.size, 0);
   const valid = await api.runAgent({ SessionId: 'mcp-session', UserId: 'biz-user', InvocationId: 'mcp-run-1', ResponsesInput: 'hello' });
   assert.equal(valid.status, 200);
   await valid.text();
@@ -305,9 +311,36 @@ test('without the opt-in, MCP bindings keep accepting callers that never send Us
   // still reach MCP, but no business user is invented for a caller that never
   // claimed one.
   assert.equal(seen.userId, undefined);
-  assert.equal(seen.sessionId, 'legacy-session');
+  assert.equal(seen.sessionId, undefined);
   assert.equal(typeof seen.requestId, 'string');
-  assert.equal(typeof seen.businessDigest, 'string', 'the named session still separates replay fingerprints');
+  assert.equal(seen.businessDigest, undefined, 'the platform SessionId alone does not change the replay fingerprint');
+});
+
+test('old platform IDs stored as businessSessionId are ignored and do not block an explicit binding', async t => {
+  const seen = [];
+  const api = await httpFixture(t, { onRun: async () => { seen.push(currentBusinessInvocation()); } });
+  const sessionId = 'platform-session';
+  assert.equal((await api.action('CreateSession', { SessionId: sessionId })).status, 200);
+  const registry = await createManagedSessionRegistry(api.root);
+  const old = await registry.read(sessionId);
+  await registry.write({ ...old, businessSessionId: sessionId });
+  for (const BusinessSessionId of [undefined, 'order-42']) {
+    const response = await api.runAgent({ SessionId: sessionId, BusinessSessionId, ResponsesInput: 'hello' });
+    assert.equal(response.status, 200);
+    assert.ok((await response.text()).includes('response.completed'));
+  }
+  assert.deepEqual(seen.map(item => item.sessionId), [undefined, 'order-42']);
+  assert.deepEqual(seen.map(item => item.nativeSessionId), [old.nativeSessionId, old.nativeSessionId]);
+});
+
+test('RunAgent rejects a BusinessSessionId that is unsafe for MCP headers', async t => {
+  const api = await httpFixture(t);
+  for (const BusinessSessionId of ['unsafe\r\nvalue', 'x'.repeat(201), '   ']) {
+    const response = await api.runAgent({ SessionId: 'platform-session', BusinessSessionId, ResponsesInput: 'hello' });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).ReasonCode, 'RUNTIME_BUSINESS_SESSION_ID_INVALID');
+  }
+  assert.equal(api.stored.size, 0);
 });
 
 test('a direct Responses caller cannot claim a business identity', async t => {
@@ -325,7 +358,7 @@ test('a direct Responses caller cannot claim a business identity', async t => {
   assert.equal(seen.sessionId, undefined);
 });
 
-test('omitting RunAgent SessionId never substitutes the platform session', async t => {
+test('a RunAgent platform SessionId without BusinessSessionId does not become MCP attribution', async t => {
   const seen = [];
   const service = await createMcpLoopbackService({ transport: 'http', getCredential: () => 'loopback-token',
     onCall: (request, extra) => { seen.push({ meta: request.params._meta, headers: extra?.requestInfo?.headers }); } });
@@ -339,7 +372,7 @@ test('omitting RunAgent SessionId never substitutes the platform session', async
     { invocation: nativeMcpInvocation({ scope: { userId: 'aeu_platform' }, agent: { session: { id: request.sessionId } },
       agentId: 'ar-managed', runId: 'run-1', callId: 'call-1' }) });
   } });
-  const response = await api.runAgent({ UserId: 'customer@example.com', ResponsesInput: 'hello' });
+  const response = await api.runAgent({ SessionId: 'platform-session', UserId: 'customer@example.com', ResponsesInput: 'hello' });
   assert.equal(response.status, 200);
   await response.text();
   const meta = seen[0].meta['io.agentkit.studio/invocation'];
@@ -355,7 +388,7 @@ test('omitting RunAgent InvocationId derives a platform request id for the busin
   const response = await api.runAgent({ SessionId: 'no-invocation', UserId: 'customer@example.com', ResponsesInput: 'hello' });
   assert.equal(response.status, 200);
   await response.text();
-  assert.equal(seen[0].sessionId, 'no-invocation');
+  assert.equal(seen[0].sessionId, undefined);
   // businessInvocationId is never empty: it carries the platform request id.
   assert.match(seen[0].requestId, /^[0-9a-f-]{36}$/);
 });
@@ -377,7 +410,7 @@ test('a real RunAgent HTTP turn reaches a real MCP server with both identities',
       agent: { session: { id: request.sessionId } }, agentId: 'ar-managed',
       runId: 'run-1', callId: 'call-1' }) });
   } });
-  const response = await api.runAgent({ SessionId: 'business-session-42', UserId: 'customer@example.com',
+  const response = await api.runAgent({ SessionId: 'platform-session', BusinessSessionId: 'business-session-42', UserId: 'customer@example.com',
     InvocationId: 'request-1001', ResponsesInput: 'hello' });
   assert.equal(response.status, 200);
   await response.text();

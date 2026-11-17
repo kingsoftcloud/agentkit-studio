@@ -40,8 +40,11 @@ const freePort = () => new Promise(done => {
   probe.listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => done(port)); });
 });
 
-/** One OpenAI-compatible turn: the first request asks for the MCP tool, the
- *  second answers. Streaming SSE is what the DSH provider expects. */
+const platformSessionId = 'platform-session-42';
+const firstTurn = 'Call the bound CRM tool with the first note.';
+const secondTurn = 'Call the bound CRM tool with the follow-up note.';
+
+/** Request the MCP tool once per user turn, then complete the model response. */
 function modelServer() {
   const requests = [];
   const server = createServer((req, res) => {
@@ -50,15 +53,18 @@ function modelServer() {
     req.on('end', () => {
       const parsed = body ? JSON.parse(body) : null;
       requests.push(parsed);
-      const first = requests.filter(item => item?.messages).length <= 1;
-      const frame = first
+      const messages = Array.isArray(parsed?.messages) ? parsed.messages : [];
+      const user = messages.findLastIndex(message => message.role === 'user');
+      const useTool = user >= 0 && messages.findLastIndex(message => message.role === 'tool') < user;
+      const callId = JSON.stringify(messages[user] ?? '').includes(secondTurn) ? 'call-2' : 'call-1';
+      const frame = useTool
         ? { id: 'c', choices: [{ index: 0, delta: { role: 'assistant', content: '',
-          tool_calls: [{ index: 0, id: 'call-1', type: 'function',
+          tool_calls: [{ index: 0, id: callId, type: 'function',
             function: { name: 'save_crm', arguments: '{"note":"business"}' } }] } }] }
         : { id: 'c', choices: [{ index: 0, delta: { role: 'assistant', content: 'saved' } }] };
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write(`data: ${JSON.stringify(frame)}\n\n`);
-      res.write(`data: ${JSON.stringify({ id: 'c', choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }],
+      res.write(`data: ${JSON.stringify({ id: 'c', choices: [{ index: 0, delta: {}, finish_reason: useTool ? 'tool_calls' : 'stop' }],
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`);
       res.end('data: [DONE]\n\n');
     });
@@ -180,20 +186,34 @@ try {
   }
   if (!ready) throw fail('DSH_HOST_NOT_READY', `Host did not answer /health within 90s: ${logs.join('').slice(-2000)}`);
 
-  const response = await fetch(`${base}/agentengine/api/v1/RunAgent`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json',
-      'x-agentengine-target-version-id': plan.identity.versionId,
-      'x-agentengine-manifest-sha256': plan.identity.manifestSha256,
-      'x-agentengine-identity-namespace': 'business', 'x-agentengine-business-tenant-id': 'tenant',
-      'x-agentengine-subject-type': 'user', 'x-agentengine-subject-id': 'alice' },
-    body: JSON.stringify({ AgentId: 'ar-identity-gate', SessionId: 'order-session-42',
-      UserId: 'customer@example.com', InvocationId: 'request-1001',
-      ResponsesInput: 'Call the bound CRM tool with a short note.', Stream: true, ApiFormat: 'responses' }),
-  });
-  result.runStatus = response.status;
-  await response.text().catch(() => '');
-  if (response.status !== 200) throw fail('RUN_AGENT_FAILED', `RunAgent returned ${response.status}: ${logs.join('').slice(-2000)}`);
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json',
+    'x-agentengine-target-version-id': plan.identity.versionId,
+    'x-agentengine-manifest-sha256': plan.identity.manifestSha256,
+    'x-agentengine-identity-namespace': 'business', 'x-agentengine-business-tenant-id': 'tenant',
+    'x-agentengine-subject-type': 'user', 'x-agentengine-subject-id': 'alice' };
+  const run = async (InvocationId, ResponsesInput, attribution) => {
+    const response = await fetch(`${base}/agentengine/api/v1/RunAgent`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ AgentId: 'ar-identity-gate', SessionId: platformSessionId,
+        InvocationId, ResponsesInput, Stream: true, ApiFormat: 'responses', ...attribution }),
+    });
+    const body = await response.text();
+    if (!response.ok) throw fail('RUN_AGENT_FAILED', `RunAgent returned ${response.status}: ${logs.join('').slice(-2000)}`);
+    const completed = body.split('\n').find(line => line.startsWith('data: ') && line.includes('"type":"response.completed"'));
+    const reply = completed && JSON.parse(completed.slice(6)).response;
+    if (reply?.session_id !== platformSessionId || !reply.conversation?.id)
+      throw fail('RUN_AGENT_SESSION_MISSING', body.slice(-2000));
+    return reply;
+  };
+  const first = await run('request-1001', firstTurn, { UserId: 'customer@example.com', BusinessSessionId: 'order-session-42' });
+  const second = await run('request-1002', secondTurn);
+  if (first.conversation.id !== second.conversation.id || first.id === second.id) throw fail('RUN_AGENT_SESSION_CHANGED');
+  if (!model.requests.some(item => {
+    const turns = JSON.stringify(item?.messages?.filter(message => message.role === 'user') ?? []);
+    return turns.includes(firstTurn) && turns.includes(secondTurn);
+  })) throw fail('PREVIOUS_TURN_NOT_IN_MODEL_CONTEXT');
+  result.platformSessionId = platformSessionId;
+  result.responseIds = [first.id, second.id];
 
   result.hostLogs = logs.join('').slice(-4000);
   result.modelRequestCount = model.requests.length;
@@ -222,6 +242,13 @@ try {
   if (call.headers['x-agentkit-invocation-id'] !== 'request-1001'
     || call.headers['x-agentkit-business-invocation-id'] !== 'request-1001') throw fail('INVOCATION_HEADER_MISSING');
   if (call.headers.authorization !== 'Bearer fixture-mcp-token') throw fail('MCP_AUTHORIZATION_MUTATED');
+  const nextCall = mcp.observed.find(item => item.headers['x-agentkit-invocation-id'] === 'request-1002');
+  const nextMeta = nextCall?.meta?.['io.agentkit.studio/invocation'];
+  if (nextMeta?.sessionId !== meta.sessionId || nextMeta.businessUserId !== meta.businessUserId
+    || nextMeta.businessSessionId !== meta.businessSessionId
+    || nextCall.headers['x-agentkit-business-user-id'] !== meta.businessUserId
+    || nextCall.headers['x-agentkit-business-session-id'] !== meta.businessSessionId)
+    throw fail('CONTINUED_MCP_IDENTITY_MISSING');
   result.passed = true;
 } catch (error) {
   result.failure = { code: error.code || 'MANAGED_MCP_IDENTITY_VERIFICATION_FAILED', message: error.message };

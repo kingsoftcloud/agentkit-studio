@@ -105,6 +105,19 @@ curl -N "https://aicp.api.ksyun.com/agentengine/api/v1/RunAgent" \
   }'
 ```
 
+### Call DSH ManagedRuntime from a public endpoint
+
+Use the Agent API key to call `POST {PublicEndpoint}/agentengine/api/v1/RunAgent`. Set `ApiFormat: "responses"` and send the current turn as `ResponsesInput`.
+
+| Field | Use |
+| --- | --- |
+| `SessionId` | Platform session ID. Use Data.Session.SessionId from CreateSession or session_id from the first RunAgent response, and reuse it on later turns. |
+| `InvocationId` | Use a new ID for a new turn and keep it for retries of that turn. |
+| `UserId` | Optional business user ID for MCP. Platform authorization still uses the authenticated principal. |
+| `BusinessSessionId` | Optional business session ID for MCP. It is independent of SessionId and does not select the conversation. |
+
+Server forwards both business fields, and the Host sends them to bound MCP servers in tool-call _meta and HTTP headers. Later turns can omit previously bound fields. Business IDs are excluded from model requests and transcripts.
+
 ### Runtime /v1/responses
 
 Fields come from `src/deployment-conversation.mjs:26-27`. Note that `session_id` and `request_id` are **derived deterministically** from the original identifiers rather than being random — that is what lets a resend be recognised as the same request:

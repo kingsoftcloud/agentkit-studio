@@ -105,6 +105,19 @@ curl -N "https://aicp.api.ksyun.com/agentengine/api/v1/RunAgent" \
   }'
 ```
 
+### 从公网调用 DSH ManagedRuntime
+
+用 Agent API Key 调用 `POST {PublicEndpoint}/agentengine/api/v1/RunAgent`。请求使用 `ApiFormat: "responses"` 与本轮 `ResponsesInput`。
+
+| 字段 | 用途 |
+| --- | --- |
+| `SessionId` | 平台会话 ID。取自 CreateSession 的 Data.Session.SessionId，或首轮 RunAgent 响应的 session_id。续聊时保持不变。 |
+| `InvocationId` | 每轮一个新 ID；同一轮重试保留原 ID。 |
+| `UserId` | 可选的 MCP 业务用户 ID；平台授权仍以认证主体为准。 |
+| `BusinessSessionId` | 可选的 MCP 业务会话 ID，不用于续聊。与平台 SessionId 分开。 |
+
+Server 转发这两个业务字段，Host 通过工具请求的 _meta 和 HTTP 请求头传给绑定的 MCP 服务。后续轮次可以省略已绑定的字段；模型与会话历史不会收到这些业务 ID。
+
 ### 运行时 /v1/responses
 
 字段来自 `src/deployment-conversation.mjs:26-27`。注意 `session_id` 与 `request_id` 都由调用方从原始标识**确定性派生**，不是随机值——这样重发同一轮才能被认成同一请求：
