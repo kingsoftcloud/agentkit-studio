@@ -209,6 +209,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         void applyDefaultBundles({
           manager: pluginCtx.get('pluginManager'), storeDir: studioStoreDir, version: dshPin.version,
           env: runtimeEnv, log: message => console.log(message),
+          // Never rewrite a profile the person is still onboarding: the first-run
+          // form saves the same package.json and an on-demand install holds its
+          // writer lock. Unreadable configuration counts as configured so a
+          // transient read failure cannot suspend the alignment forever.
+          profileConfigured: () => configurationPromise.then(configuration => configuration.describe())
+            .then(state => state.modelConfigured === true, () => true),
         }).then(result => {
           if (!result.applied) return;
           // With the index bundle enabled the profile still needs a source to

@@ -52,9 +52,10 @@ async function writeMarker(file, value) {
  * @param {string} options.version - DSH version the defaults belong to.
  * @param {object} [options.env] - Environment carrying the opt-out.
  * @param {(message: string) => void} [options.log] - Sink for one line per bundle.
+ * @param {() => Promise<boolean>} [options.profileConfigured] - Whether the profile has a model configured yet.
  * @returns {Promise<{applied: boolean, reason: string, enabled: string[], failed: object[]}>}
  */
-export async function applyDefaultBundles({ manager, storeDir, version, env = process.env, log = () => {} } = {}) {
+export async function applyDefaultBundles({ manager, storeDir, version, env = process.env, log = () => {}, profileConfigured } = {}) {
   if (!manager || typeof manager.listBundles !== 'function') {
     return { applied: false, reason: 'plugin-manager-unavailable', enabled: [], failed: [] };
   }
@@ -63,6 +64,15 @@ export async function applyDefaultBundles({ manager, storeDir, version, env = pr
   }
   if (!storeDir) return { applied: false, reason: 'store-unavailable', enabled: [], failed: [] };
   if (defaultBundlesDisabled(env)) return { applied: false, reason: 'disabled-by-environment', enabled: [], failed: [] };
+  // A profile the person has not configured yet is being onboarded right now, and
+  // the first-run form saves the same `package.json` this alignment rewrites. An
+  // on-demand install holds the profile writer lock for the whole pnpm run, so
+  // aligning first makes the very first save fail with a lock timeout. Leave the
+  // profile untouched until it has a model; the marker is not written, so the
+  // next start aligns as usual.
+  if (typeof profileConfigured === 'function' && !await profileConfigured()) {
+    return { applied: false, reason: 'profile-not-configured', enabled: [], failed: [] };
+  }
 
   const markerFile = join(storeDir, MARKER_FILE);
   const marker = await readMarker(markerFile);
