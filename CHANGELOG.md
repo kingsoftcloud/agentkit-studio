@@ -12,9 +12,9 @@
 - 托管 `RunAgent` 用平台 `SessionId` 继续同一会话；可选的 `UserId` 和 `BusinessSessionId` 分别透传为绑定 MCP 工具的 `businessUserId` 和 `businessSessionId`，通过 `_meta` 和 HTTP 头发送。业务归属不参与平台鉴权，也不进入模型请求或 transcript。`AGENTKIT_MCP_BUSINESS_IDENTITY=require` 只要求业务用户；旧记录中从平台会话复制的业务 ID 不再发送。详见 `docs/mcp-invocation-identity.md`。
 
 
-- 升级 Studio Harness 到 0.0.23：原生消息保留已发送图片与纯图片消息（缩略图、放大、历史刷新），纯回答的每轮耗时改用已提交起止时间；新增转发事件唤醒与浏览器绘制合并，真实模型正文更新可测量。
+- 升级 Studio Harness 到 0.0.25：原生消息保留已发送图片与纯图片消息（缩略图、放大、历史刷新），纯回答的每轮耗时改用已提交起止时间；新增转发事件唤醒与浏览器绘制合并，真实模型正文更新可测量。
 - 多工作区独立 Harness：Studio 按会话持久化的工作区各自连接独立 Harness 服务，切换 Alpha/Beta 后模型、工作目录和历史跟随各自服务；未绑定目录明确拒绝，不回落到其他项目。
-- 移除生产进程内 Harness：删除进程内 Harness 启动、执行/工具工厂桥、旧 `sessions/native-*` 控制入口和三个 bundledDependencies，执行只走独立服务或显式外部命令；锁定 npm Harness Core/Node/UI 0.0.23（同步 lockfile、Core override 与逐文件 registry pins）。
+- 移除生产进程内 Harness：删除进程内 Harness 启动、执行/工具工厂桥、旧 `sessions/native-*` 控制入口和三个 bundledDependencies，执行只走独立服务或显式外部命令；锁定 npm Harness Core/Node/UI 0.0.25（同步 lockfile、Core override 与逐文件 registry pins）。
 - 交互修复：显式依赖完整会话展示接口，移除重复引擎 iframe；过程默认折叠、用量保留在输入框底部、失败以中性色摘要展开查看完整原因；保留带请求身份、游标和偏移的正文增量、图片能力握手、按账本期限等待重试和按请求回执去重的用户气泡；独立引擎读取搜索提供方配置，未配置时不向模型提供无效的 `web_search`；Ezone 安装超时由独立进程组监管。
 - 验证：三个 npm 包均核对发布来源和归档摘要，安装后校验 541 个 Harness 文件与 551 个 Studio 归档文件；真实打包 Studio 使用 DeepSeek V4.1 Flash 完成联网搜索，只有一个 Native 视图，升级前后 45 个 Run 记录逐一保持不变。
 - 发布门禁跟上新的 Agent 列表交互：「手动配置」改为从「更多创建方式」菜单进入，运行时改由 radiogroup 选择，客户端页面验收重新走通创建与编辑绑定流程。
