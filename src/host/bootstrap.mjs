@@ -198,7 +198,14 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   if (!managedRuntime && !portableRuntime) {
     const indexSource = createPluginMarketIndexSource({ getService: name => ctx.get(name) });
     ctx.inject(['pluginManager'], pluginCtx => {
+      // The delay exists so a first-run install never blocks Host readiness. It
+      // must die with the fiber: a profile that unloads Studio inside the delay
+      // (the lifecycle acceptance loads and disposes the plugin in under a
+      // second) would otherwise align bundles after teardown, and enabling one
+      // subscribes `loader/volatile-update` on the still-running Host.
+      let disposed = false;
       const timer = setTimeout(() => {
+        if (disposed) return;
         void applyDefaultBundles({
           manager: pluginCtx.get('pluginManager'), storeDir: studioStoreDir, version: dshPin.version,
           env: runtimeEnv, log: message => console.log(message),
@@ -217,6 +224,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         });
       }, 3000);
       timer.unref?.();
+      pluginCtx.effect(() => () => {
+        disposed = true;
+        clearTimeout(timer);
+      }, 'agentkit-studio: default bundle alignment');
     });
   }
 
