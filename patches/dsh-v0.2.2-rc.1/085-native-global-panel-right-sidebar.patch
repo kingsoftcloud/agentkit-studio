@@ -1,0 +1,410 @@
+diff --git a/packages/client/ui-sidebar-right/src/client/contract/slots.ts b/packages/client/ui-sidebar-right/src/client/contract/slots.ts
+index bb7c97edd202e9c57188b9c349f41bb918a81c70..b2da031925049e556702b431da814b8b68600954 100644
+--- a/packages/client/ui-sidebar-right/src/client/contract/slots.ts
++++ b/packages/client/ui-sidebar-right/src/client/contract/slots.ts
+@@ -22,7 +22,7 @@
+  */
+ import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
+ import type {} from '@deepseek-ai/dsh-client-ui-slots'
+-import type { RightbarOwnerProps } from '@deepseek-ai/dsh-client-ui-layout/client'
++import type { MainPanelId, RightbarOwnerProps } from '@deepseek-ai/dsh-client-ui-layout/client'
+ // The locale plugin's own merge carries the shared `common` vocabulary that the
+ // lookup chain consults after this namespace misses.
+ import type {} from '@deepseek-ai/dsh-client-locale/client'
+@@ -39,6 +39,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+   }
+ 
+   interface SlotMap {
++    /** The dock belonging to the selected global main panel. */
++    'rightbar.panel': {
++      kind: 'single'
++      scope: 'root'
++      owner: RightbarOwnerProps & { readonly panelId: MainPanelId }
++    }
++    /** The active tab body in a global panel's dock. */
++    'sidebar.right.panel.tab': {
++      kind: 'keyed'
++      scope: 'root'
++      owner: { readonly panelId: MainPanelId; readonly active: boolean; readonly fullscreen: boolean }
++    }
+     /** Session content selected by the root-scoped right Sidebar controller. */
+     'rightbar.session': {
+       kind: 'single'
+diff --git a/packages/client/ui-sidebar-right/src/client/index.ts b/packages/client/ui-sidebar-right/src/client/index.ts
+index 1f3d3781fe596b60cdca6771336eb748ee1bb9fc..dd7d055996d79b5b8b357002e56f069b2404eb54 100644
+--- a/packages/client/ui-sidebar-right/src/client/index.ts
++++ b/packages/client/ui-sidebar-right/src/client/index.ts
+@@ -42,6 +42,7 @@ import { ExpandButton } from './shell/ExpandButton.tsx'
+ import { RightbarSeat, type SidebarRightInjected } from './shell/SidebarRight.tsx'
+ import { closeWithPaneFocus, openWithPaneFocus } from './shell/close-focus.ts'
+ import { RightbarRoot, type RightbarRootInjected } from './shell/RightbarRoot.tsx'
++import { PanelSeat, type PanelSeatInjected } from './shell/PanelSeat.tsx'
+ import { SidebarSessionViews } from './session-views.ts'
+ import { createSidebarRightController, type SidebarRightController } from './service.ts'
+ import { SidebarRightTabRegistry } from './tab-registry.ts'
+@@ -187,6 +188,7 @@ export function apply(ctx: ClientContext): void {
+   // Unloading aborts every tab occurrence, which releases every pin.
+   ctx.effect(() => () => {
+     controller.tabDomain.dispose()
++    controller.panelSurfaces.dispose()
+     void disposeService()
+     void disposeRegistry()
+   }, 'ui-sidebar-right: service faces')
+@@ -233,12 +235,23 @@ export function apply(ctx: ClientContext): void {
+     const disposeSeat = ctx.slots.inject('rightbar', function* () {
+       yield ctx.slots.register({
+         name: 'rightbar',
+-        children: { 'rightbar.session': { kind: 'single', scope: 'session' } },
++        children: { 'rightbar.session': { kind: 'single', scope: 'session' }, 'rightbar.panel': { kind: 'single', scope: 'root' } },
+         inject: (): RightbarRootInjected => ({
+           hooks: { views: views.source },
+           mountView: reference => views.mount(reference),
+         }),
+       }, RightbarRoot)
++      const panel: PanelSeatInjected = {
++        hooks: { panels: controller.panelSurfaces.source },
++        intentsFor: panelId => controller.panelSurfaces.dock(panelId),
++        close: (panelId) => { controller.setPanelExpanded(panelId, false) },
++        setFullscreen: (panelId, fullscreen) => { controller.panelSurfaces.dock(panelId).setMode(fullscreen ? 'fullscreen' : 'push') },
++        syncPresentation: injected.syncPresentation,
++      }
++      yield ctx.slots.register({
++        name: 'rightbar.panel', locale: NS, inject: () => panel,
++        children: { 'sidebar.right.panel.tab': { kind: 'keyed', scope: 'root' } },
++      }, PanelSeat)
+       yield ctx.slots.register({
+         name: 'rightbar.session',
+         locale: NS,
+diff --git a/packages/client/ui-sidebar-right/src/client/panel-surfaces.ts b/packages/client/ui-sidebar-right/src/client/panel-surfaces.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c9895f7e7b6544a1d0968f0e34c206ea9b5c8524
+--- /dev/null
++++ b/packages/client/ui-sidebar-right/src/client/panel-surfaces.ts
+@@ -0,0 +1,59 @@
++/** Ephemeral dock surfaces owned by global panels, outside all Sessions. */
++import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
++import { DockController, type LayoutState, type TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
++import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
++import { pageAddress } from './contract/seed.ts'
++
++class PanelDock extends DockController {
++  override closeTab(tabId: TabId): void {
++    super.closeTab(tabId)
++    if (Object.keys(this.getSnapshot().state.tabs).length === 0) this.setExpanded(false)
++  }
++}
++
++export class SidebarRightPanelSurfaces {
++  private readonly docks = new Map<MainPanelId, { dock: PanelDock; release: () => void }>()
++  readonly source = createSnapshotStore<ReadonlyMap<MainPanelId, LayoutState>>(new Map())
++
++  /** @param panelId - global panel key. @returns unregisters its dock. */
++  register(panelId: MainPanelId): () => void {
++    if (this.docks.has(panelId)) throw new Error(`sidebarRight: panel ${panelId} is already registered`)
++    const dock = new PanelDock()
++    const entry = { dock, release: dock.subscribe(() => this.publish(panelId, dock.getSnapshot().state)) }
++    this.docks.set(panelId, entry)
++    this.publish(panelId, dock.getSnapshot().state)
++    return () => {
++      if (this.docks.get(panelId) !== entry) return
++      entry.release()
++      this.docks.delete(panelId)
++      this.publish(panelId)
++    }
++  }
++
++  dock(panelId: MainPanelId): PanelDock {
++    const entry = this.docks.get(panelId)
++    if (entry === undefined) throw new Error(`sidebarRight: no registered dock for panel ${panelId}`)
++    return entry.dock
++  }
++
++  /** @param panelId - global panel key. @param kind - registered body key. @param title - localized tab title. */
++  open(panelId: MainPanelId, kind: string, title: string): void {
++    const dock = this.dock(panelId)
++    dock.openContent({ kind, title, contentId: pageAddress(kind) })
++    if (!dock.getSnapshot().state.expanded) dock.setMode('push')
++    dock.setExpanded(true)
++  }
++
++  dispose(): void {
++    for (const entry of this.docks.values()) entry.release()
++    this.docks.clear()
++    this.source.set(new Map())
++  }
++
++  private publish(panelId: MainPanelId, state?: LayoutState): void {
++    const next = new Map(this.source.getSnapshot())
++    if (state === undefined) next.delete(panelId)
++    else next.set(panelId, state)
++    this.source.set(next)
++  }
++}
+diff --git a/packages/client/ui-sidebar-right/src/client/service.ts b/packages/client/ui-sidebar-right/src/client/service.ts
+index 8e53ba2f5ab15d8fd28d1082b688e1216d5c883b..33b09203e6ca87ebce333ac570d7cc3fa52f85f1 100644
+--- a/packages/client/ui-sidebar-right/src/client/service.ts
++++ b/packages/client/ui-sidebar-right/src/client/service.ts
+@@ -40,6 +40,7 @@ import type { FloatRect, LayoutState, PaneId, TabId, TabRecord } from '@deepseek
+ import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, dockPaneIds, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
+ import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { SessionId } from '@deepseek-ai/dsh-session/types'
++import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
+ import type { SidebarRightNavigationParams, SidebarRightResourceParams, SidebarRightTabParamsFor } from './contract/params.ts'
+ import { pageAddress } from './contract/seed.ts'
+ import type { SidebarRightDestination } from './contract/slots.ts'
+@@ -48,6 +49,7 @@ import { canCloseTab, findHostContentTab, type SidebarRightState, type SurfaceSt
+ import type { createSidebarRightStore } from './stores.ts'
+ import { TabDomain, type PinResource } from './tab-domain.ts'
+ import { SidebarTabInventory } from './tab-inventory.ts'
++import { SidebarRightPanelSurfaces } from './panel-surfaces.ts'
+ 
+ /** The seat's bound action set. */
+ export type SurfaceActions = BoundActions<ReturnType<typeof createSidebarRightStore>>
+@@ -214,6 +216,12 @@ export type SidebarRightCloseHandler = (sessionId: SessionId, tab: TabRecord) =>
+ 
+ /** The outward right-Sidebar face (`ctx.sidebarRight`). */
+ export interface ISidebarRight {
++  /** Register the dock for a global panel. @param panelId - main panel key. @returns unregisters the dock. */
++  registerPanelSurface(panelId: MainPanelId): () => void
++  /** Open a global panel tab. @param panelId - main panel key. @param kind - body slot key. @param title - localized tab title. */
++  openPanelTab(panelId: MainPanelId, kind: string, title: string): void
++  /** @param panelId - main panel key. @param expanded - whether to show its dock. */
++  setPanelExpanded(panelId: MainPanelId, expanded: boolean): void
+   /**
+    * The Session on screen, or `undefined` while none is (a global panel fills
+    * the main column, or no Session is selected). It changes before React
+@@ -299,6 +307,14 @@ export interface ISidebarRight {
+ 
+ /** Cross-plugin right-Sidebar face (ctx.sidebarRight). */
+ export class SidebarRightController implements ISidebarRight {
++  readonly panelSurfaces = new SidebarRightPanelSurfaces()
++
++  /** @inheritdoc ISidebarRight.registerPanelSurface */
++  registerPanelSurface(panelId: MainPanelId): () => void { return this.panelSurfaces.register(panelId) }
++  /** @inheritdoc ISidebarRight.openPanelTab */
++  openPanelTab(panelId: MainPanelId, kind: string, title: string): void { this.panelSurfaces.open(panelId, kind, title) }
++  /** @inheritdoc ISidebarRight.setPanelExpanded */
++  setPanelExpanded(panelId: MainPanelId, expanded: boolean): void { this.panelSurfaces.dock(panelId).setExpanded(expanded) }
+   /** Open tab metadata across saved and adopted Sessions, independent of visible seats. */
+   readonly openTabs: SidebarTabInventory['source']
+   /** The on-screen Session; see {@link ISidebarRight.mounted}. */
+diff --git a/packages/client/ui-sidebar-right/src/client/shell/PanelSeat.tsx b/packages/client/ui-sidebar-right/src/client/shell/PanelSeat.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..db05b0e00bfa1a1c04ca5d4799f1cba2f784bcbe
+--- /dev/null
++++ b/packages/client/ui-sidebar-right/src/client/shell/PanelSeat.tsx
+@@ -0,0 +1,67 @@
++import { useEffect, useLayoutEffect } from 'react'
++import type { CSSProperties } from 'react'
++import type { HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
++import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
++import { DockLayout, type DockIntents, type LayoutState } from '@deepseek-ai/dsh-client-ui-dockkit'
++import { dockLabels } from '../labels.ts'
++import { PanelChrome, type SidebarRightPresentation } from './SidebarRight.tsx'
++import type {} from '../contract/slots.ts'
++import css from './SidebarRight.module.css'
++
++export interface PanelSeatInjected {
++  readonly hooks: { panels: HostObservable<ReadonlyMap<MainPanelId, LayoutState>> }
++  readonly intentsFor: (panelId: MainPanelId) => DockIntents
++  readonly close: (panelId: MainPanelId) => void
++  readonly setFullscreen: (panelId: MainPanelId, fullscreen: boolean) => void
++  readonly syncPresentation: (presentation: SidebarRightPresentation) => void
++}
++
++type PanelSeatProps = PropsRuntime<'rightbar.panel'>
++  & PropsRenderSlots<'sidebar.right.panel.tab'>
++  & PropsLocale<'sidebarRight'>
++  & InjectFace<PanelSeatInjected>
++
++/** Render the selected panel's tabs; the frame owns the column and its divider. */
++export function PanelSeat({ panelId, width, viewportWidth, canShow, usePanels, renderSlot, t,
++  intentsFor, close, setFullscreen, syncPresentation }: PanelSeatProps) {
++  const layout = usePanels(panels => panels.get(panelId))
++  const shown = layout?.expanded === true
++  const compact = viewportWidth < 768 || !canShow
++  const fullscreen = compact || layout?.mode === 'fullscreen'
++  const exitFullscreen = (): void => { if (compact) close(panelId); else setFullscreen(panelId, false) }
++
++  useLayoutEffect(() => {
++    syncPresentation({ shown, track: shown && !compact, fullscreen: shown && fullscreen })
++  }, [panelId, shown, compact, fullscreen, syncPresentation])
++  useLayoutEffect(() => () => { syncPresentation({ shown: false, track: false, fullscreen: false }) }, [panelId, syncPresentation])
++  useEffect(() => {
++    if (!shown || !fullscreen) return
++    const escape = (event: KeyboardEvent): void => {
++      if (event.key !== 'Escape' || event.repeat) return
++      event.preventDefault()
++      event.stopImmediatePropagation()
++      if (compact) close(panelId); else setFullscreen(panelId, false)
++    }
++    document.addEventListener('keydown', escape, true)
++    return () => { document.removeEventListener('keydown', escape, true) }
++  }, [panelId, shown, fullscreen, compact, close, setFullscreen])
++  if (layout === undefined || (!shown && layout.floats.length === 0)) return null
++  return (
++    <div className={css.panel}
++      data-sidebar-right-panel-owner={panelId}
++      data-sidebar-right-panel={fullscreen ? 'fullscreen' : 'push'}
++      data-sidebar-right-open={shown || undefined}
++      style={{ width: fullscreen ? '100vw' : width, '--dsh-sidebar-width': fullscreen ? '100vw' : `${width}px` } as CSSProperties}
++    >
++      <div className={css.panelBody}>
++        <DockLayout state={layout} active canSplit={false} hideSplitWhenBlocked canAddTab={() => false}
++          labels={dockLabels(t)} intents={intentsFor(panelId)}
++          renderTab={tab => renderSlot('sidebar.right.panel.tab', { panelId, active: true, fullscreen }, { entryKey: tab.kind })}
++          chrome={<PanelChrome t={t} fullscreen={fullscreen} shortcuts={[]}
++            collapse={() => { close(panelId) }}
++            toggleFullscreen={() => { if (fullscreen) exitFullscreen(); else setFullscreen(panelId, true) }} />}
++        />
++      </div>
++    </div>
++  )
++}
+diff --git a/packages/client/ui-sidebar-right/src/client/shell/RightbarRoot.tsx b/packages/client/ui-sidebar-right/src/client/shell/RightbarRoot.tsx
+index 26bedb1d18f44951985f8242ddfa6199a00eafbf..12da97087aa08de5ababcb590c4727b493b0eefb 100644
+--- a/packages/client/ui-sidebar-right/src/client/shell/RightbarRoot.tsx
++++ b/packages/client/ui-sidebar-right/src/client/shell/RightbarRoot.tsx
+@@ -12,7 +12,7 @@ export interface RightbarRootInjected {
+   readonly mountView: (reference: SessionReference) => () => void
+ }
+ 
+-type RootProps = PropsRuntime<'rightbar'> & PropsRenderSlots<'rightbar.session'> & InjectFace<RightbarRootInjected>
++type RootProps = PropsRuntime<'rightbar'> & PropsRenderSlots<'rightbar.session' | 'rightbar.panel'> & InjectFace<RightbarRootInjected>
+ 
+ function SessionView({ view, visible, SessionProvider, renderSlot, mountView, width, viewportWidth, canShow }:
+   Pick<RootProps, 'SessionProvider' | 'renderSlot' | 'mountView' | 'width' | 'viewportWidth' | 'canShow'>
+@@ -32,7 +32,10 @@ function SessionView({ view, visible, SessionProvider, renderSlot, mountView, wi
+  * @returns the foreground and retained background Sidebars.
+  */
+ export function RightbarRoot({ usePanelInfo, useViews, ...props }: RootProps) {
+-  const visible = usePanelInfo(info => info.activePanelId === null)
++  const panelId = usePanelInfo(info => info.activePanelId)
+   const views = useViews(value => value)
+-  return <>{views.map(view => <SessionView key={view.sessionId} {...props} view={view} visible={visible} />)}</>
++  const { renderSlot, width, viewportWidth, canShow } = props
++  return <>{views.map(view => <SessionView key={view.sessionId} {...props} view={view} visible={panelId === null} />)}
++    {panelId !== null && renderSlot('rightbar.panel', { panelId, width, viewportWidth, canShow })}
++  </>
+ }
+diff --git a/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx b/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx
+index e0182a611b5b99f210efbb7f5fa31516c56a1ef3..c284a49660d1742ef8b3cfc59bf2ca92989d12fa 100644
+--- a/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx
++++ b/packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx
+@@ -270,7 +270,8 @@ function ExitFullscreenGlyph(): ReactNode {
+ }
+ 
+ /** The panel's two controls, placed by the kit at the top-right pane's strip end. */
+-function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFullscreen }: Pick<PanelProps, 'sessionId' | 'actions' | 't' | 'fullscreen' | 'shortcuts' | 'toggleFullscreen'>): ReactNode {
++/** Native controls shared by Session docks and global-panel docks. */
++export function PanelChrome({ fullscreen, t, shortcuts, toggleFullscreen, collapse }: Pick<PanelProps, 't' | 'fullscreen' | 'shortcuts' | 'toggleFullscreen'> & { collapse: () => void }): ReactNode {
+   const next: DockMode = fullscreen ? 'push' : 'fullscreen'
+   const modeLabel = fullscreen ? t('chrome.exitFullscreen') : t('chrome.toFullscreen')
+   const mode = shortcuts.find(entry => entry.id === 'pane.fullscreen.toggle')
+@@ -296,7 +297,7 @@ function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFulls
+           aria-label={t('chrome.collapseAria')}
+           aria-keyshortcuts={toggle?.aria}
+           data-sidebar-right-toggle
+-          onClick={() => { actions.toggleExpanded(sessionId) }}
++          onClick={collapse}
+         >
+           <IconPanelLeftOutlineRegular className={css.collapseGlyph} />
+         </button>
+@@ -365,7 +366,7 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
+           keepMounted={tab => types.find(type => type.kind === tab.kind)?.keepMounted === true}
+           getTabTriggerProps={panel.getTabTriggerProps} tabMenuOpen={panel.tabMenuOpen}
+           chrome={<PanelChrome
+-            sessionId={sessionId} fullscreen={fullscreen} actions={actions} t={t}
++            fullscreen={fullscreen} t={t} collapse={() => { actions.toggleExpanded(sessionId) }}
+             shortcuts={panel.shortcuts} toggleFullscreen={panel.toggleFullscreen}
+           />}
+           onRoom={reportRoom}
+diff --git a/packages/client/ui-sidebar-right/tests/apply.client.spec.ts b/packages/client/ui-sidebar-right/tests/apply.client.spec.ts
+index c2acde776874e7c30add81a3de3172c1bfe51772..770844890e3b80e6961eafac044408e084c6fba9 100644
+--- a/packages/client/ui-sidebar-right/tests/apply.client.spec.ts
++++ b/packages/client/ui-sidebar-right/tests/apply.client.spec.ts
+@@ -26,6 +26,7 @@ import type { createSidebarRightStore } from '../src/client/stores.ts'
+ import * as sidebarStores from '../src/client/stores.ts'
+ import { RightbarSeat } from '../src/client/shell/SidebarRight.tsx'
+ import { RightbarRoot } from '../src/client/shell/RightbarRoot.tsx'
++import { PanelSeat } from '../src/client/shell/PanelSeat.tsx'
+ import { ExpandButton } from '../src/client/shell/ExpandButton.tsx'
+ import { GuideBody } from '../src/client/tabs/guide/GuideBody.tsx'
+ import { GuideTitle } from '../src/client/tabs/guide/GuideTitle.tsx'
+@@ -140,6 +141,7 @@ describe('ui-sidebar-right apply', () => {
+       ['contextMenu.icon', 'sidebar.close', undefined, IconCloseOutlineRegular],
+       ['contextMenu.content', 'tab', undefined, TabMenuContent],
+       ['rightbar', undefined, undefined, RightbarRoot],
++      ['rightbar.panel', undefined, 'sidebarRight', PanelSeat],
+       ['rightbar.session', undefined, 'sidebarRight', RightbarSeat],
+       ['conversation.session.header.corner', undefined, 'sidebarRight', ExpandButton],
+       ['sidebar.right.pane.tab', GUIDE_ID, 'sidebarRight', GuideBody],
+@@ -149,6 +151,7 @@ describe('ui-sidebar-right apply', () => {
+     expect(Object.keys(seat('rightbar.session').children as object)).toEqual([
+       'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title',
+     ])
++    expect(seat('rightbar.panel').children).toEqual({ 'sidebar.right.panel.tab': { kind: 'keyed', scope: 'root' } })
+     expect(seat('sidebar.right.pane.tab').children).toMatchObject({ 'sidebar.right.tab.guide': { kind: 'chain', scope: 'session' } })
+     // Both seats read one store: the button only needs to know whether the panel is expanded.
+     expect(seat('rightbar.session').store).toBeDefined()
+@@ -346,7 +349,7 @@ describe('ui-sidebar-right apply', () => {
+     expect(dictionaries.size).toBe(0)
+     await ctx.plugin({ inject: [...inject], apply }).await()
+     expect(ctx.sidebarRightTabs.get('guide')?.id).toBe(GUIDE_ID)
+-    expect(registered).toHaveLength(7)
++    expect(registered).toHaveLength(8)
+   })
+ })
+ 
+diff --git a/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx b/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx
+index c6ae78c2e803d9f128812540302991e6fb90eadc..9c22b15a84aaf0a83b0777790c46952eab95f487 100644
+--- a/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx
++++ b/packages/client/ui-sidebar-right/tests/seat.client.spec.tsx
+@@ -35,6 +35,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+ 
+ const SESSION = 's-test' as SessionId
+ const OTHER = 's-other' as SessionId
++const GLOBAL = 'test-global-panel' as MainPanelId
+ const runtimes: SlotTestRuntime[] = []
+ let getAnimationsDescriptor: PropertyDescriptor | undefined
+ 
+@@ -69,6 +70,39 @@ function transition(property = 'transform') {
+   }
+ }
+ 
++it('a global panel gets a native tab and returns the track to the original session on navigation', async () => {
++  const h = await mountSeat()
++  const sessionTab = h.open()
++  function PanelBody({ panelId, fullscreen }: PropsRuntime<'sidebar.right.panel.tab'>) {
++    return <div data-test-panel-tab={panelId} data-fullscreen={fullscreen}>Owner panel body</div>
++  }
++  let release = () => {}
++  await act(async () => {
++    h.runtime.slots.register({ name: 'sidebar.right.panel.tab', key: 'test-global-tab' }, PanelBody)
++    release = h.controller.registerPanelSurface(GLOBAL)
++    h.runtime.panelInfo.set({ activePanelId: GLOBAL })
++    h.controller.openPanelTab(GLOBAL, 'test-global-tab', 'Owner panel')
++  })
++  const panel = () => h.view.container.querySelector(`[data-sidebar-right-panel-owner="${GLOBAL}"]`)
++  expect(panel()?.querySelector('[data-test-panel-tab]')?.textContent).toBe('Owner panel body')
++  expect(panel()?.querySelector('[data-dockkit-tab]')?.textContent).toContain('Owner panel')
++  expect((panel() as HTMLElement).style.width).toBe('420px')
++  expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false)
++  expect(h.controller.mounted.getSnapshot()).toBeUndefined()
++  act(() => { h.runtime.panelInfo.set({ activePanelId: null }) })
++  expect(panel()).toBeNull()
++  expect(h.controller.active()).toEqual(sessionTab)
++  act(() => { h.runtime.panelInfo.set({ activePanelId: GLOBAL }) })
++  fireEvent.click(panel()!.querySelector('[data-sidebar-right-mode]')!)
++  expect(panel()?.getAttribute('data-sidebar-right-panel')).toBe('fullscreen')
++  fireEvent.keyDown(document, { key: 'Escape' })
++  expect(panel()?.getAttribute('data-sidebar-right-panel')).toBe('push')
++  fireEvent.click(panel()!.querySelector('[data-sidebar-right-toggle]')!)
++  expect(panel()).toBeNull()
++  expect(h.frame.closeRightbar).toHaveBeenCalled()
++  act(() => { release() })
++})
++
+ async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, opener = false, keepMounted = false) {
+   const runtime = await SlotTestRuntime.create()
+   runtimes.push(runtime)

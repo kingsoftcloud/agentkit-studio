@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "01726d5eeadedc23bd84d9515737e9a8f604f10b",
+  "headCommit": "ae7801815ef7d9b169e9a7e506c4334d9419b81f",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "dfb26a10882831b3a0075f5674c17abfa002eb24",
-  "sourceSha256": "a9681425531107a4b6424379aa07b607295158b189cac9e3146159f992dbfea0",
+  "tree": "b5872d19d9d8b6bc5cc6f4ca3cf837a00028e080",
+  "sourceSha256": "eba39d32e99d7d44693a6dac9e9c97837e019fbd757e30f94c8f28d4f2e00cd8",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "4d1e4e33f562c09babcb4e967c1b59922353a1a4b190e1dc89c6b35b7c15cd33"
+    "sha256": "aad8427b9c7d05b0fd11acda84c8e3c0455f088db96ea17d3dbb326e75779394"
   },
   "commits": [
     {
@@ -328,6 +328,12 @@
       "file": "084-chat-runtime-presentation.patch",
       "commit": "01726d5eeadedc23bd84d9515737e9a8f604f10b",
       "sha256": "6d9f7cc2998589ccfb29fc0a78a43e7796c38a13960ae0f894b0742f0a81f15f"
+    },
+    {
+      "id": "085",
+      "file": "085-native-global-panel-right-sidebar.patch",
+      "commit": "ae7801815ef7d9b169e9a7e506c4334d9419b81f",
+      "sha256": "7380ea061ed964fe8a450749a9f22f7a4f09439834940c46bd2d8cad11bef58e"
     }
   ]
 }
