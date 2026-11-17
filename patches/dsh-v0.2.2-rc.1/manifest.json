@@ -2634,12 +2634,56 @@
       },
       "sequence": 53,
       "sha256": "6d9f7cc2998589ccfb29fc0a78a43e7796c38a13960ae0f894b0742f0a81f15f"
+    },
+    {
+      "id": "085",
+      "file": "085-native-global-panel-right-sidebar.patch",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "category": "product",
+      "dependsOn": [],
+      "affectedFiles": [
+        "packages/client/ui-sidebar-right/src/client/contract/slots.ts",
+        "packages/client/ui-sidebar-right/src/client/index.ts",
+        "packages/client/ui-sidebar-right/src/client/panel-surfaces.ts",
+        "packages/client/ui-sidebar-right/src/client/service.ts",
+        "packages/client/ui-sidebar-right/src/client/shell/PanelSeat.tsx",
+        "packages/client/ui-sidebar-right/src/client/shell/RightbarRoot.tsx",
+        "packages/client/ui-sidebar-right/src/client/shell/SidebarRight.tsx",
+        "packages/client/ui-sidebar-right/tests/apply.client.spec.ts",
+        "packages/client/ui-sidebar-right/tests/seat.client.spec.tsx"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ],
+      "contracts": [
+        "A global main panel may register native right-sidebar tabs without creating or borrowing a Session. The frame still owns the divider and the retained column width."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio UI maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Root panel and Session sidebar switching, native tab strip, fullscreen, collapse and provider disposal regression checks."
+      },
+      "removeWhen": "DSH provides a supported native right sidebar for global main panels.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-sidebar-right/tests/apply.client.spec.ts",
+          "packages/client/ui-sidebar-right/tests/seat.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      },
+      "sequence": 54,
+      "sha256": "7380ea061ed964fe8a450749a9f22f7a4f09439834940c46bd2d8cad11bef58e"
     }
   ],
-  "patchedTree": "dfb26a10882831b3a0075f5674c17abfa002eb24",
-  "patchedSourceSha256": "a9681425531107a4b6424379aa07b607295158b189cac9e3146159f992dbfea0",
+  "patchedTree": "b5872d19d9d8b6bc5cc6f4ca3cf837a00028e080",
+  "patchedSourceSha256": "eba39d32e99d7d44693a6dac9e9c97837e019fbd757e30f94c8f28d4f2e00cd8",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "c21be17228984f0d3f2a7f565901fe56610e6296385d95c96ca3761a42ce8833"
+    "sha256": "2931f1cef423819654399b4c0ede6cdfc33d49099643103b87ab1512073bbd73"
   }
 }
