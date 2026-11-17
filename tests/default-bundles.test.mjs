@@ -130,3 +130,18 @@ test('the environment opt-out and an unavailable Host skip alignment', async () 
 test('the default list keeps the market and Computer Use', () => {
   assert.deepEqual([...DEFAULT_ENABLED_BUNDLES], [MARKET, CUA]);
 });
+
+test('a profile that is still onboarding is left untouched and retried next start', async () => {
+  await withStore(async storeDir => {
+    const manager = fakeManager([
+      bundle(MARKET),
+      bundle(CUA, { availability: 'missing', installed: false, installTarget: { spec: `${CUA}@0.2.2-rc.1` } }),
+    ]);
+    const result = await applyDefaultBundles({ manager, storeDir, version: '0.2.2-rc.1', profileConfigured: async () => false });
+    assert.equal(result.applied, false);
+    assert.equal(result.reason, 'profile-not-configured');
+    // No profile write, and no marker: the next start must try again.
+    assert.deepEqual(manager.calls, []);
+    await assert.rejects(readFile(join(storeDir, 'default-bundles.json'), 'utf8'), { code: 'ENOENT' });
+  });
+});
