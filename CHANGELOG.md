@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.16 - 2026-11-17
 
 - Star Harness 使用 Studio 随包发布的固定摘要校验运行时及其依赖，通过校验后再启动。插件只接管已绑定的工作区。
 
@@ -11,8 +11,6 @@
 - 模型与凭证设置的「高级」段新增默认收起的「请求预算与请求头」：按模型配置最大输出 Token、上下文窗口、请求超时（毫秒）与自定义请求头（可增删的键值行）。请求头随「读取模型」的目录读取一起发送（配置的 `Authorization` 优先于凭证生成的 Bearer，不同请求头各自读取一次目录），名称按 RFC 7230 token 校验、值拒绝换行等控制字符，空行与重复名称在保存时被丢弃，全部清空即移除该字段；预算必须是大于 0 的整数，留空沿用网关默认值。字段随 `modelProfiles` 持久化，`config.yaml` 与导出的运行包往返都保留；未配置时请求与历史行为完全一致。
 - 托管 `RunAgent` 用平台 `SessionId` 继续同一会话；可选的 `UserId` 和 `BusinessSessionId` 分别透传为绑定 MCP 工具的 `businessUserId` 和 `businessSessionId`，通过 `_meta` 和 HTTP 头发送。业务归属不参与平台鉴权，也不进入模型请求或 transcript。`AGENTKIT_MCP_BUSINESS_IDENTITY=require` 只要求业务用户；旧记录中从平台会话复制的业务 ID 不再发送。详见 `docs/mcp-invocation-identity.md`。
 
-
-## 0.0.16 - 2026-11-16
 
 - 升级 Studio Harness 到 0.0.23：原生消息保留已发送图片与纯图片消息（缩略图、放大、历史刷新），纯回答的每轮耗时改用已提交起止时间；新增转发事件唤醒与浏览器绘制合并，真实模型正文更新可测量。
 - 多工作区独立 Harness：Studio 按会话持久化的工作区各自连接独立 Harness 服务，切换 Alpha/Beta 后模型、工作目录和历史跟随各自服务；未绑定目录明确拒绝，不回落到其他项目。
