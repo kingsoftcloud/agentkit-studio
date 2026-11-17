@@ -921,6 +921,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               userId: String(options.userId || options.metadata?.userId || 'studio-anonymous'),
               sessionId,
               agentId,
+              memoryContract: toolAgent?.spec?.memory?.contract,
+              memoryDomain: 'cloud',
             });
           } catch (error) {
             // Memory persistence is a post-response side effect. Preserve the

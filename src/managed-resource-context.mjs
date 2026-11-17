@@ -17,10 +17,14 @@ export function createManagedResourceContext(runtime) {
       } catch { throw denied(); }
       // This is consistency checking, not signature verification. Only the
       // control-plane resource endpoint verifies the signature and grants access.
-      if (claims.format !== 'agentengine.dsh-memory-permit/v1' || claims.agent_id !== runtime.identity.agentId
+      if (!['agentengine.dsh-memory-permit/v1', 'agentengine.dsh-memory-permit/v2'].includes(claims.format)
+        || claims.agent_id !== runtime.identity.agentId
         || claims.version_id !== runtime.identity.versionId || claims.manifest_sha256 !== runtime.identity.manifestSha256
         || claims.memory_id !== memoryId || claims.subject_digest !== subjectDigest
         || !Number.isSafeInteger(claims.expires_at) || claims.expires_at <= Date.now() / 1000 || signal?.aborted) throw denied();
+      if (claims.format.endsWith('/v2') && (claims.partition_version !== 'v2'
+        || typeof claims.subject_ref !== 'string' || !/^aeu_[a-f0-9]{64}$/.test(claims.subject_ref)
+        || typeof claims.resource_account_id !== 'string' || !claims.resource_account_id.trim())) throw denied();
       const context = { permit, active: true, signal };
       try { return await storage.run(context, invoke); }
       finally { context.active = false; }

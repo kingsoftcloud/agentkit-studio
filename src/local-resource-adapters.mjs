@@ -8,13 +8,22 @@ import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
 import { fetchNativeSkillArchive } from './providers/native-skill-loader.mjs';
 import { MCP_JSON_PARSER_CONTRACT, NATIVE_MCP_JSON_CODEC, nativeMcpJsonParser, nativeMcpSchemaValidator } from './providers/native-mcp-json.mjs';
 import { applyMcpInvocationHeaders, createMcpInvocationScope, mcpInvocationMeta, normalizeMcpInvocationIdentity } from './providers/mcp-invocation-identity.mjs';
-import { memorySubjectId, memorySessionId } from './memory-identity.mjs';
+import { memoryPartitionV2, memorySessionId, memorySubjectId, resolveMemorySubject } from './memory-identity.mjs';
 
 export class LocalResourceError extends Error {
   constructor(code, message, details = {}) { super(message); this.name = 'LocalResourceError'; this.code = code; this.details = details; }
 }
 
 function resourceId(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
+
+function memoryPartitionFor(collectionId, userId, agentId, options = {}) {
+  if (options.memoryContract?.partition_version !== 'v2' || options.memoryDomain !== 'local') {
+    return memorySubjectId(collectionId, userId, agentId);
+  }
+  const subject = resolveMemorySubject({ contract: options.memoryContract, domain: 'local',
+    profileId: options.profileId || userId });
+  return memoryPartitionV2({ collectionId, agentId, scope: subject.scope, subjectRef: subject.subjectRef });
+}
 
 function memoryReply(reply, requireReceipt = false) {
   let data = reply?.data;
@@ -439,10 +448,10 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     }
   }
 
-  async function searchMemory(id, query, userId, { agentId = '' } = {}) {
+  async function searchMemory(id, query, userId, options = {}) {
     if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
     const collectionId = resourceId(id);
-    const subjectId = memorySubjectId(collectionId, userId, agentId);
+    const subjectId = memoryPartitionFor(collectionId, userId, options.agentId || '', options);
     const result = await serverClient.action('QueryMemorySdk', {
       MemoryCollectionId: collectionId, AgentUserId: subjectId,
       // Memory API accepts at most 512 Unicode characters. A delegated task
@@ -462,7 +471,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     return memories;
   }
 
-  function prepareMemoryWrite(id, userId, messages, { sessionId = '', agentId = '', flush = false } = {}) {
+  function prepareMemoryWrite(id, userId, messages, { sessionId = '', agentId = '', flush = false, memoryContract, memoryDomain, profileId } = {}) {
     assertOpen();
     if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
     const collectionId = resourceId(id);
@@ -478,7 +487,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     if (!conversation.length) return null;
     const payload = {
       MemoryCollectionId: collectionId,
-      AgentUserId: memorySubjectId(collectionId, userId, agentId),
+      AgentUserId: memoryPartitionFor(collectionId, userId, agentId, { memoryContract, memoryDomain, profileId }),
       SceneId: '_sys_general',
       DataType: 'conversation',
       Data: { Conversation: conversation },
@@ -525,16 +534,16 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     cloudSkillSpaces.clear();
   }
 
-  async function memoryAction(action, id, userId, payload, { agentId = '' } = {}) {
+  async function memoryAction(action, id, userId, payload, options = {}) {
     if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用');
     const reply = await serverClient.action(action, { MemoryCollectionId: resourceId(id),
-      AgentUserId: memorySubjectId(resourceId(id), userId, agentId), ...payload }, { apiVersion: '2025-11-14' });
+      AgentUserId: memoryPartitionFor(resourceId(id), userId, options.agentId || '', options), ...payload }, { apiVersion: '2025-11-14' });
     return memoryReply(reply, action !== 'ListMemories');
   }
   async function listMemory(id, userId, options) {
     const { data } = await memoryAction('ListMemories', id, userId, { Page: 1, PageSize: 100 }, options);
     if (!Array.isArray(data.MemoryList)) throw new LocalResourceError('MEMORY_RESPONSE_UNKNOWN', '记忆列表格式无法识别');
-    const subjectId = memorySubjectId(resourceId(id), userId, options?.agentId);
+    const subjectId = memoryPartitionFor(resourceId(id), userId, options?.agentId || '', options);
     if (data.MemoryList.some(item => item.AgentUserId && item.AgentUserId !== subjectId)) throw new LocalResourceError('MEMORY_PARTITION_MISMATCH', '记忆归属无法核对');
     return { items: data.MemoryList.filter(item => typeof item.MemoryId === 'string' && typeof item.Memory === 'string')
       .map(item => ({ id: item.MemoryId, text: item.Memory })), hasMore: Number(data.Total || data.TotalCount || 0) > data.MemoryList.length };

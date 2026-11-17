@@ -153,22 +153,32 @@ export function boundMemoryWritePolicy(record, input) {
     mode: String(record?.spec?.memory?.write?.mode || 'candidate').trim().toLowerCase(), flush: explicitMemoryIntent(input) };
 }
 
+function memoryRuntimeOptions({ base, memoryContract, memoryDomain, profileId } = {}) {
+  const options = { ...base };
+  if (memoryContract) {
+    options.memoryContract = memoryContract;
+    options.memoryDomain = memoryDomain;
+    options.profileId = profileId;
+  }
+  return options;
+}
+
 /** Persist one completed turn through the Host-owned memory adapter. */
-export async function writeBoundMemory({ binding, resourceAdapter, input, assistantText, userId, sessionId, agentId, agent, onResource } = {}) {
+export async function writeBoundMemory({ binding, resourceAdapter, input, assistantText, userId, sessionId, agentId, agent, onResource, memoryContract, memoryDomain, profileId } = {}) {
   if (!binding || typeof resourceAdapter?.writeMemory !== 'function') return { accepted: false, reason: 'adapter_unavailable' };
   const resource = binding.config?.binding?.resource || {};
   const resourceId = resource.id || resource.resourceId;
   return checkedResource({ kind: 'memory-instance', resourceId, action: 'write', agent, onResource }, () => resourceAdapter.writeMemory(resourceId, userId || 'studio-anonymous', [
     { role: 'user', content: input },
     { role: 'assistant', content: assistantText },
-  ], {
+  ], memoryRuntimeOptions({ base: {
     sessionId: String(sessionId || ''),
     agentId: String(agentId || ''),
     // AICP extracts ordinary turn syncs asynchronously. A direct "请记住"
     // request is an explicit fact-save operation and may flush this session;
     // candidate writes keep the cheaper queued path.
     flush: explicitMemoryIntent(input),
-  }));
+  }, memoryContract, memoryDomain, profileId })));
 }
 
 async function collectDshTools(toolAdapter, bindings, agent) {
@@ -239,7 +249,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   if (!toolsOnly && memory && record?.spec?.memory?.recall?.enabled !== false) {
     const resourceId = memory.config.binding.resource.id || memory.config.binding.resource.resourceId;
     if (typeof resourceAdapter.searchMemory !== 'function') throw new LocalRuntimeError('MEMORY_ADAPTER_MISSING', '记忆库适配器未启用');
-    const hits = await checkedResource({ kind: 'memory-instance', resourceId, action: 'recall', agent, onResource }, () => resourceAdapter.searchMemory(resourceId, input, userId, { agentId }));
+    const memoryContract = record?.spec?.memory?.contract;
+    const hits = await checkedResource({ kind: 'memory-instance', resourceId, action: 'recall', agent, onResource }, () => resourceAdapter.searchMemory(resourceId, input, userId,
+      memoryRuntimeOptions({ base: { agentId }, memoryContract,
+        memoryDomain: record?.metadata?.local === true ? 'local' : 'cloud',
+        profileId: record?.metadata?.profileId || userId })));
     resourceContext += '\n\nMemory binding contract: 当前 Agent 绑定了长期记忆库，下文的 Memory 召回及后续写入由 Host 管理，与上面的 Knowledge 检索片段和 MCP 专题目录分开，不需要模型调用独立记忆工具。';
     resourceContext += memoryWriteEnabled(record, memory, input)
       ? '本轮正常完成后，Host 会按配置向记忆库提交本轮内容；你不能因没有独立工具就声称记忆仅保留在当前会话，也不能在写入结果尚未返回时声称已保存。'
@@ -519,7 +533,10 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       send({ kind: 'assistant_text', lifecycle: 'completed', payload: { text } });
       if (preparedMemoryWrite && typeof resourceAdapter?.writeMemory === 'function') {
         try {
-          const result = await writeBoundMemory({ binding: preparedMemoryWrite, resourceAdapter, input, assistantText: text, userId: parsed.userId, sessionId: parsed.sessionId, agentId: record.metadata?.teamRole?.sourceAgentId || agentId, agent, onResource: check => noteTrace('resource.checked', check) });
+          const result = await writeBoundMemory({ binding: preparedMemoryWrite, resourceAdapter, input, assistantText: text, userId: parsed.userId, sessionId: parsed.sessionId, agentId: record.metadata?.teamRole?.sourceAgentId || agentId, agent, onResource: check => noteTrace('resource.checked', check),
+            memoryContract: record?.spec?.memory?.contract,
+            memoryDomain: record?.metadata?.local === true ? 'local' : 'cloud',
+            profileId: record?.metadata?.profileId || parsed.userId });
           noteTrace('memory.write', { accepted: result?.accepted === true });
         } catch (error) {
           // Memory persistence is a post-response side effect. Keep the
