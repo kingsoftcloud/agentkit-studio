@@ -20,7 +20,7 @@ DSH owns loading, dependency resolution, and lifecycle. Studio only makes the pl
 <Callout type="warn" title="The package name is not free-form">
   Both `id` and `installSpec` must match
   `^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9.^~<>=*+-]+)?$` from
-  `src/dsh-plugin-catalog.mjs:21`. Uppercase or unusual symbols make the row get **silently dropped** —
+  the npm package-name rules of the DSH index format. Uppercase or unusual symbols make the row get **silently dropped** —
   the market will not error, you simply will not appear.
 </Callout>
 
@@ -93,14 +93,14 @@ Source: `src/index.mjs:16-43`.
 
 | Channel | Mechanism | Source |
 | --- | --- | --- |
-| npm search | Package `keywords` contains `dsh-plugin` | `src/dsh-plugin-discovery.mjs:22` |
-| GitHub search | Repository `topic: dsh-plugin` | `src/dsh-plugin-discovery.mjs:24` |
-| Built-in catalog / remote index | Open a PR against `DSH_CURATED_PLUGINS`, or configure `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | `src/dsh-plugin-catalog.mjs:112` |
+| Bundled community index | Package `keywords` contains `dsh-plugin` and it ranks into the shipped index (top 80 by downloads) | `assets/plugin-market/index.json` |
+| Your own index source | Publish a `format: 1` static JSON and add its URL on the Discover page | `src/plugin-market.mjs` |
+| Default-enabled bundles | Studio's first-party default list | `src/host/default-bundles.mjs` |
 
 Only **first-party** entries in the built-in catalog may declare `expectedEntries` / `service` / `readinessNote`.
 Third-party plugins are discovered via npm or GitHub, and the market reports
 "Host loaded this plugin; Studio has no capability probe for it."
-Source: `src/studio-plugins.mjs:100-104`.
+Source: `src/host/default-bundles.mjs`, `src/plugin-market.mjs`.
 
 ## Pre-publish checklist
 

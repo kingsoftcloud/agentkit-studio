@@ -85,8 +85,8 @@ An index is third-party content: titles, authors, labels and sources are declare
 
 | Concern | Where |
 | --- | --- |
-| Official service adapter | `src/plugin-market.mjs` |
+| Bundled index source (default source, document reads) | `src/plugin-market.mjs` |
 | Bundled index route | `src/host/routes/plugin-market-index.mjs` |
-| Curated first-party bundles and readiness probes | `src/dsh-plugin-catalog.mjs` |
-| Install / enable / update | `src/studio-plugins.mjs` |
+| Default-enabled bundles | `src/host/default-bundles.mjs` |
+| Install / enable / update | The official `pluginManager` (Studio adds no wrapper) |
 | Index generator | `scripts/build-plugin-market-index.mjs` |

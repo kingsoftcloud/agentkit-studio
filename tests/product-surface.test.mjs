@@ -294,15 +294,8 @@ test('operational pages keep the old Studio hierarchy without stacked duplicate 
   assert.match(clientSource, /消息记录 \$\{messages.length\}/);
 });
 
-test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter', () => {
-  assert.match(clientSource, /dshPlugins: \(\) => \(bridgeAvailable\(\)\s*\?\s*studioBridgeOperation\('plugins\/dsh-list'/);
-  assert.match(clientSource, /function dshPluginMarketList/);
+test('Studio preserves the Codex plugin lifecycle adapter', () => {
   assert.match(clientSource, /codexPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/codex-list'/);
-  assert.match(clientSource, /installDshPlugin: /);
-  assert.match(clientSource, /enableDshPlugin: /);
-  assert.match(clientSource, /disableDshPlugin: /);
-  assert.match(clientSource, /updateDshPlugin: /);
-  assert.match(clientSource, /uninstallDshPlugin: /);
   assert.match(clientSource, /hostRemote\.installCodexPlugin/);
   assert.match(clientSource, /hostRemote\.uninstallCodexPlugin/);
   assert.match(clientSource, /data-codex-plugin-center/);
@@ -310,17 +303,18 @@ test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter
   assert.match(clientSource, /section\('插件目录'/);
 });
 
-test('the official DSH plugin center is the only visible market and carries Studio market items', () => {
-  assert.match(clientSource, /ctx\.slots\.inject\('plugins\.item'/);
-  assert.match(clientSource, /agentkit-dsh-plugin-market/);
-  assert.match(clientSource, /label: '插件市场'/);
-  assert.match(clientSource, /function DshPluginMarketItem/);
+test('the official DSH plugin center is the only market', () => {
+  // DSH owns the market: its 已安装 / 发现 tabs read the official plugin index.
+  // Studio contributes no market row of its own, so no DSH plugin surface may
+  // appear in the client.
+  assert.doesNotMatch(clientSource, /agentkit-dsh-plugin-market/);
+  assert.doesNotMatch(clientSource, /function DshPluginMarketItem/);
+  assert.doesNotMatch(clientSource, /plugins\/dsh-list/);
+  assert.doesNotMatch(clientSource, /plugins\/dsh-discover/);
+  assert.doesNotMatch(clientSource, /id: 'marketplace', label: '插件市场'/);
+  // Codex stays an official plugin item through the same public slot.
   assert.match(clientSource, /agentkit-codex-plugin-market/);
   assert.match(clientSource, /function CodexPluginMarketItem/);
-  assert.match(clientSource, /打开插件中心/);
-  // The market is a row inside the official plugin page, never a Studio
-  // sidebar panel and never a second plugin center.
-  assert.doesNotMatch(clientSource, /id: 'marketplace', label: '插件市场'/);
 });
 
 test('resource surface exposes real MCP and Skill lifecycle actions', () => {

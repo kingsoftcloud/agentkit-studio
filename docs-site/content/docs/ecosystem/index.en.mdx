@@ -23,12 +23,12 @@ AgentKit Studio is not a closed app. It runs as a DSH plugin itself, and it expo
 | Expert catalog | Inner page of the Agents panel | — | `src/client/pages/expert-catalog.mjs` |
 | Template square | Inner page of the Agents panel | — | `src/client/pages/template-square.mjs` |
 
-The market adds no sidebar entry and no second plugin center — it reuses the same list on the official DSH **Plugins** page.
+Studio ships **no plugin market of its own**: the market is the official DSH Plugins page with its **Installed** and **Discover** tabs, and the Host's `pluginMarket` service reads the index. Studio does two things only — add the bundled community index as the default source, and enable the "Custom plugin indexes" and Computer Use bundles by default.
 
 <Callout type="info" title="The market is metadata only">
-  Install, enable/disable, update, and uninstall are all executed by the official DSH plugin manager.
-  The Studio market owns **discovery and presentation** — not profile writes, not compatibility decisions,
-  not runtime loading. Source: `src/plugin-market.mjs:1-16`, `src/dsh-plugin-catalog.mjs:1-14`.
+  Install, enable/disable, update, and uninstall are all executed by the official DSH plugin manager; fetching, validation, caching, search and paging belong to the official `pluginMarket` service.
+  Studio writes no profile, makes no compatibility decision and loads no runtime.
+  Source: `src/plugin-market.mjs:1-16`, `src/host/default-bundles.mjs:1-18`.
 </Callout>
 
 ## Three trust boundaries
@@ -41,7 +41,7 @@ The easiest way to get ecosystem work wrong is to blur who is allowed to decide 
 | Plugin installation | The official DSH plugin manager | ❌ The market must not write profiles or run installers itself |
 | Capability probes | The Host | ❌ A remote document must not assert "and it really loaded" |
 
-Source: `src/dsh-plugin-catalog.mjs:9-13`, `src/plugin-market.mjs:22-40`.
+Source: `src/plugin-market.mjs:22-40`, `src/host/default-bundles.mjs:9-16`.
 
 ## Versions and identity
 
@@ -93,7 +93,7 @@ A few terms recur throughout this chapter; here is the single agreed spelling:
 | --- | --- |
 | "Installing the plugin gives me everything the market lists" | The market lists **installable** packages; availability depends on whether the Host loaded them — see [readiness checks](./plugin-market.mdx#readiness-checks) |
 | "An index can declare anything" | An index declares presentation and installation facts only; Host capability probes stay in the curated list — see [Security and trust](./plugin-market.mdx#security-and-trust) |
-| "Codex plugins and DSH plugins are the same pipeline" | Two separate paths: `plugins/dsh-*` and `plugins/codex-*`, with different install targets |
+| "Codex plugins and DSH plugins are the same pipeline" | DSH plugins live on the official Plugins page; Codex is a separate `plugins/codex-*` path with different install targets |
 | "A team is just a list of agents" | A team is a `kind: "team"` template whose roles may only reference immutable templates, never plain agents |
 
 ## Next

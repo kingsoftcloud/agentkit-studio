@@ -23,12 +23,12 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
 | 专家目录 | 智能体面板内页 | — | `src/client/pages/expert-catalog.mjs` |
 | 模板广场 | 智能体面板内页 | — | `src/client/pages/template-square.mjs` |
 
-插件市场不新增侧边栏入口，也不建立第二个插件中心——它复用 DSH 官方「插件」页的同一个列表。
+Studio **不提供插件市场**：市场就是 DSH 官方「插件」页的「已安装 / 发现」两个 tab，索引由 Host 的 `pluginMarket` 服务读取。Studio 只做两件事——把随包内置的社区索引添加到默认源，以及默认启用「自定义插件索引」与 Computer Use 两个官方 bundle。
 
 <Callout type="info" title="市场只做元数据">
-  安装、启用/停用、更新、卸载全部由官方 DSH 插件管理器执行。Studio 的市场负责**发现与呈现**，
-  不负责写入 profile、不做兼容性判定、不加载运行时。
-  源码：`src/plugin-market.mjs:1-16`、`src/dsh-plugin-catalog.mjs:1-14`。
+  安装、启用/停用、更新、卸载全部由官方 DSH 插件管理器执行；索引的抓取、校验、缓存、搜索与分页由官方 `pluginMarket` 服务完成。
+  Studio 不写 profile、不做兼容性判定、不加载运行时。
+  源码：`src/plugin-market.mjs:1-16`、`src/host/default-bundles.mjs:1-18`。
 </Callout>
 
 ## 三个信任边界
@@ -41,7 +41,7 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
 | 插件安装 | 官方 DSH 插件管理器 | ❌ 市场不能自己写 profile、不能自己执行安装 |
 | 能力探针 | Host 自己 | ❌ 远程文档不能声明「我确实加载成功了」 |
 
-源码：`src/dsh-plugin-catalog.mjs:9-13`、`src/plugin-market.mjs:22-40`。
+源码：`src/plugin-market.mjs:22-40`、`src/host/default-bundles.mjs:9-16`。
 
 ## 版本与身份
 
@@ -93,7 +93,7 @@ AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时�
 | --- | --- |
 | 「装好插件就有市场里的全部能力」 | 市场列出的是**可安装**的包；是否可用取决于 Host 是否加载成功，见[就绪校验](./plugin-market.mdx#就绪校验) |
 | 「索引能声明一切」 | 索引只声明展示与安装信息；Host 能力探针留在精选清单里，见[安全与信任](./plugin-market.mdx#安全与信任) |
-| 「Codex 插件和 DSH 插件是同一套」 | 两条独立链路：`plugins/dsh-*` 与 `plugins/codex-*`，安装目标也不同 |
+| 「Codex 插件和 DSH 插件是同一套」 | DSH 插件走官方插件页；Codex 是独立的 `plugins/codex-*` 链路，安装目标也不同 |
 | 「专家团就是几个 Agent 的列表」 | 专家团是 `kind: "team"` 的独立模板，角色只能引用不可变模板，不能引用普通 Agent |
 
 ## 下一步

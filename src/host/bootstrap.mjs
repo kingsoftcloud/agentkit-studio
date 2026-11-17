@@ -17,6 +17,7 @@ import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
 import { alignProfileProductPlugin } from './profile-plugin-alignment.mjs';
 import { applyDefaultBundles } from './default-bundles.mjs';
+import { createPluginMarketIndexSource } from '../plugin-market.mjs';
 import dshPin from '../../dsh-pin.json' with { type: 'json' };
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
@@ -190,17 +191,34 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     studioChannelsPromise, cloudSchedulesPromise, authoringRemoteFactory, deployments,
   } = services;
 
-  // Default bundles: Studio keeps the official plugin index and Computer Use on
-  // for every profile. The plugin manager mounts with the profile, so apply this
-  // in the background — a first-run install must not delay the Host surface.
-  ctx.inject(['pluginManager'], pluginCtx => {
-    void applyDefaultBundles({
-      manager: pluginCtx.get('pluginManager'), storeDir: studioStoreDir, version: dshPin.version,
-      env: runtimeEnv, log: message => console.log(message),
-    }).catch(error => {
-      console.warn('[studio] default bundle alignment skipped', { message: error instanceof Error ? error.message : String(error) });
+  // Default bundles: a desktop profile keeps the official plugin index and
+  // Computer Use switched on. Managed and portable runtimes pin their own
+  // profile bundles, so they are left untouched; everything runs after a short
+  // delay because a first-run install must never delay Host readiness.
+  if (!managedRuntime && !portableRuntime) {
+    const indexSource = createPluginMarketIndexSource({ getService: name => ctx.get(name) });
+    ctx.inject(['pluginManager'], pluginCtx => {
+      const timer = setTimeout(() => {
+        void applyDefaultBundles({
+          manager: pluginCtx.get('pluginManager'), storeDir: studioStoreDir, version: dshPin.version,
+          env: runtimeEnv, log: message => console.log(message),
+        }).then(result => {
+          if (!result.applied) return;
+          // With the index bundle enabled the profile still needs a source to
+          // show; the official market has no built-in one, so seed the bundled
+          // community index when the user configured none. Enabling a bundle can
+          // need a restart, in which case the next start seeds it.
+          return indexSource.ensureIndexSource().then(seeded => {
+            if (seeded.seeded) console.log(`[studio] added bundled plugin index source ${seeded.url}`);
+            else if (seeded.reason !== 'already-configured') console.log(`[studio] plugin index source not seeded: ${seeded.reason}`);
+          });
+        }).catch(error => {
+          console.warn('[studio] default bundle alignment skipped', { message: error instanceof Error ? error.message : String(error) });
+        });
+      }, 3000);
+      timer.unref?.();
     });
-  });
+  }
 
   // Generic cloud-control capability for independent DSH plugins. The Host
   // owns configuration, credentials, and AgentEngine clients; consumers only

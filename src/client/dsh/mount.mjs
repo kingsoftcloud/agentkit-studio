@@ -14,7 +14,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, NativeApprovalPanel, CodexPluginMarketItem, StarHarnessItem, DshPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, NativeApprovalPanel, CodexPluginMarketItem, StarHarnessItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote });
@@ -40,14 +40,9 @@ export function mountStudio(ctx, app) {
   }, props => h(CredentialOnboarding, { ...props, dshModel: createDshModelBridge(ctx) })));
   ctx.effect(() => connectionOwner.bind(ctx.connection), 'agentkit-studio:remote-connection');
   ctx.on('connection/reset', () => { window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')); window.dispatchEvent(new CustomEvent('agentkit-studio:connection-reset')); });
-  // DSH owns the single global plugin center. Studio contributes Codex as
-  // an official plugin item through the public plugin-manager slot, so the
-  // existing Codex catalog stays available without a second DSH market.
-  // Studio contributes the DSH plugin market (curated bundles plus an optional
-  // remote index) as a row inside the official 插件 page.
-  ctx.slots.inject('plugins.item', () => ctx.slots.register({
-    name: 'plugins.item', id: 'agentkit-dsh-plugin-market', order: 50, label: '插件市场',
-  }, props => h(DshPluginMarketItem, props)));
+  // DSH owns the single global plugin center: its own 已安装 / 发现 tabs are the
+  // market, so Studio contributes no market row of its own. Codex stays an
+  // official plugin item through the same public plugin-manager slot.
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agentkit-codex-plugin-market', order: 90, label: 'Codex 插件',
   }, props => h(CodexPluginMarketItem, props)));

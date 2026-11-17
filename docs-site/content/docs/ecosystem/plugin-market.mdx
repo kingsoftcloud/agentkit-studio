@@ -85,8 +85,8 @@ pnpm check:plugin-index    # 不联网，只校验已提交的产物
 
 | 关注点 | 位置 |
 | --- | --- |
-| 官方服务适配器 | `src/plugin-market.mjs` |
+| 内置索引源（默认源、文档读取） | `src/plugin-market.mjs` |
 | 内置索引路由 | `src/host/routes/plugin-market-index.mjs` |
-| 精选第一方 bundle 与就绪探针 | `src/dsh-plugin-catalog.mjs` |
-| 安装 / 启停 / 更新 | `src/studio-plugins.mjs` |
+| 默认启用的 bundle | `src/host/default-bundles.mjs` |
+| 安装 / 启停 / 更新 | 官方 `pluginManager`（Studio 不再包一层） |
 | 索引生成器 | `scripts/build-plugin-market-index.mjs` |
