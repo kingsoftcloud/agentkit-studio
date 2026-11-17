@@ -57,7 +57,7 @@ export async function createManagedSessionRegistry(directory) {
     if (value && (value.format !== 'agentengine.dsh-session/v1' || value.sessionId !== id || !managedSessionKey(value.nativeSessionId)
       || !/^[a-f0-9]{64}$/.test(value.owner || '') || !/^[a-f0-9-]{36}$/.test(value.epoch || '')
       || (value.businessUserId !== undefined && businessInvocationId(value.businessUserId) !== value.businessUserId)
-      || (value.businessSessionId !== undefined && businessInvocationId(value.businessSessionId) !== value.businessSessionId)
+      || (value.explicitBusinessSessionId !== undefined && businessInvocationId(value.explicitBusinessSessionId) !== value.explicitBusinessSessionId)
       || !['creating', 'ready', 'deleting', 'deleted'].includes(value.phase))) throw runtimeError('RUNTIME_SESSION_METADATA_INVALID', 503);
     return value;
   }

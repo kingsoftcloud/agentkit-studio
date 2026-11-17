@@ -9,19 +9,26 @@ MCP 协议本身没有「当前用户」字段：`tools/call` 的 JSON-RPC 参�
 - **平台主体**：谁有权限调用这个已部署 Agent，由托管 Runtime 的可信请求 Header 鉴权得到；它用于会话归属和控制权限。
 - **业务主体**：谁在业务系统里使用 Agent，由 `RunAgent` 请求的 `UserId` 传入；它用于 MCP 的业务数据分区和审计。
 
-托管 `RunAgent` 调用例如：
+调用已部署 DSH ManagedRuntime Agent 时，向其公网端点发送
+`POST /agentengine/api/v1/RunAgent`，使用 Agent API Key。示例请求体：
 
 ```json
 {
   "AgentId": "ar_xxx",
-  "SessionId": "order-session-42",
+  "SessionId": "sess-platform-42",
   "UserId": "customer@example.com",
+  "BusinessSessionId": "order-session-42",
   "InvocationId": "request-1001",
   "ResponsesInput": "查询我的订单",
   "Stream": true,
   "ApiFormat": "responses"
 }
 ```
+
+`SessionId` 是平台会话 ID。可以先从 `CreateSession` 的 `Data.Session.SessionId` 获取，
+也可以保存首轮 `RunAgent` 响应的 `session_id`。续聊传相同的 `SessionId` 和新的
+`InvocationId`，只发本轮输入。同一轮重试使用原来的 `InvocationId`。
+`BusinessSessionId` 是可选的 MCP 业务归属，例如工单号；它不参与续聊或平台鉴权。
 
 MCP 收到的调用身份字段含义如下：
 
@@ -36,18 +43,19 @@ MCP 收到的调用身份字段含义如下：
 | `nativeSessionId` | 关联 | Runtime 内部 DSH 会话 ID | 必定存在 |
 | `agentId` | 关联 | 当前托管 Agent | 必定存在 |
 | `runId` / `callId` | 关联 | 本轮 Run 与本次 MCP 调用 | Native/DSH 路径两者都在；Codex 路径**只保证 `callId`**——Codex 工具处理器作用域内没有 DSH Run，因此 `runId` 有意不填，见下方「契约决定」 |
-| `businessUserId` | 业务归属 | **业务用户 ID** | 未传 `RunAgent.UserId` 则**不出现** |
-| `businessSessionId` | 业务归属 | **业务会话 ID** | 未传 `RunAgent.SessionId` 则**不出现**，绝不用平台会话兜底 |
+| `businessUserId` | 业务归属 | `RunAgent.UserId`，由调用方声明 | 会话从未声明时不出现 |
+| `businessSessionId` | 业务归属 | `RunAgent.BusinessSessionId`，可选 | 会话从未声明时不出现 |
 | `businessInvocationId` | 业务归属 | **业务请求 ID** | 未传 `InvocationId` 时等于平台请求 ID |
 
 MCP 端因此可以这样判断：
 
-- 只想要「这次调用是谁、属于哪次请求」→ 用 `userId` / `sessionId` / `invocationId`，它们永远在。
+- 要关联 Host 调用，使用 `sessionId` / `invocationId`。`sessionId` 是内部原生会话 ID，不是公网续聊参数。
 - 想要「业务系统里的哪个用户、哪个业务会话」→ 用 `businessUserId` / `businessSessionId`，**存在即
   调用方声明过**，不存在就表示调用方没有提供业务身份，不要拿平台 ID 反推。
 
-`businessUserId` 和 `businessSessionId` 只存在于 Runtime 当前请求的 `AsyncLocalStorage` 上下文，
-不写入 DSH prompt、模型 options 或 transcript。身份**只能**由 Host 绑定：
+Host 把显式业务归属绑定到平台会话的私有记录。后续同一会话可省略已绑定的字段，换成不同值
+会返回 409 `RUNTIME_BUSINESS_SESSION_CONFLICT`。业务字段不会写进 DSH prompt、模型请求或
+transcript。Host 只在执行当前轮次时把绑定送给 MCP：
 
 - 业务私有字段只由 `RunAgent` 动作的 `responsesInput()` 铸造。直连 `/v1/responses` 的调用方即使
   在 body 里写 `__agentkit_business_user_id` 也不会被采纳，其 `session_id` 也不会变成业务会话。
@@ -146,15 +154,12 @@ async def call_tool(name: str, arguments: dict):
   `arguments` 只作为业务入参原样透传；模型不能通过参数伪造另一个用户。
 - **平台主体与业务主体分离**：平台 Header 决定谁能调用/控制该 Runtime，`RunAgent.UserId`
   只作为 MCP 业务分区键，不替代平台鉴权，也不参与 DSH 权限判断。
-- **不进入模型和历史**：业务 `UserId` / `SessionId` 不写入 DSH prompt、模型 options 或
-  transcript；MCP 请求结束后 AsyncLocalStorage 上下文即失效。
-- **只转发传输安全的字符串**：值必须是可打印 ASCII、长度 ≤ 200，否则请求被拒绝或身份降级为
-  「无身份」，不会把不可信字节送上 wire。
-- **业务身份是通用能力，默认不强制**：调用方传了 `RunAgent.UserId` 就把业务用户透传给绑定的 MCP
-  Server，传了 `SessionId` 才附带业务会话；都没传就不加任何业务字段。只有确实要按业务用户做数据分区或审计的部署，
-  才设置 `AGENTKIT_MCP_BUSINESS_IDENTITY=require` 把业务身份变成必填（缺失返回
-  `RUNTIME_BUSINESS_ID_REQUIRED`，同一平台会话换业务用户返回
-  `RUNTIME_BUSINESS_SESSION_CONFLICT`）。这样已有的 MCP Agent 不会被破坏性升级影响。
+- **不进入模型和历史**：业务 `UserId` / `BusinessSessionId` 不写入 DSH prompt、模型请求或
+  transcript。两者是经授权的调用方声明的归属值，业务服务应按自己的规则验证用户权限。
+- **只转发传输安全的字符串**：业务 ID 去除首尾空白后，需为 1–200 个可见 ASCII 字符（不含空格）。
+  非法的 `UserId` 或 `BusinessSessionId` 返回 400。
+- **业务用户默认选填**：设置 `AGENTKIT_MCP_BUSINESS_IDENTITY=require` 的 MCP 部署要求会话
+  已绑定业务 `UserId`（否则返回 `RUNTIME_BUSINESS_ID_REQUIRED`）。`BusinessSessionId` 仍可省略。
 - **严格 MCP Server 兼容开关**：若某个 MCP Server 用自写的严格请求校验拒绝未知 `_meta`，
   可设置 `AGENTKIT_MCP_INVOCATION_IDENTITY=0`（或在构造资源适配器时传
   `invocationIdentity: false`）整体关闭该通道。
@@ -167,8 +172,8 @@ async def call_tool(name: str, arguments: dict):
 
 | 位置 | 作用 |
 | --- | --- |
-| `src/providers/business-invocation-context.mjs` | 托管 RunAgent 的业务 `UserId` / `SessionId` 私有上下文 |
-| `src/managed-runtime-actions.mjs` | 接收并校验 RunAgent `UserId`，把它从公开 Responses payload 中剥离 |
+| `src/providers/business-invocation-context.mjs` | 托管 RunAgent 的业务 `UserId` / `BusinessSessionId` 私有上下文 |
+| `src/managed-runtime-actions.mjs` | 校验两个业务字段，绑定到私有会话记录，再从 Responses 请求中剥离 |
 | `src/build-runtime-http.mjs` | 在 Runtime 执行期间建立业务身份上下文，不进入 DSH prompt |
 | `src/providers/mcp-invocation-identity.mjs` | 身份规范化、`_meta` 构造、Header 注入、MCP 请求作用域 |
 | `src/local-resource-adapters.mjs` | `mcpFetch` 每请求注入 Header；`callMcpTool` 注入 `_meta` |
@@ -198,12 +203,10 @@ async def call_tool(name: str, arguments: dict):
 - **Codex 路径没有 `runId`**：Codex 工具处理器作用域内只有 `sessionId` / `userId` / `agentId` /
   `callId`，没有 DSH Run 标识。为了让「关联 ID 不得伪造」成立，`runId` 有意留空，而不是用
   `invocationId` 冒充。需要 Codex 侧也有 `runId` 的接入方，应先在 Codex 运行时补出真实 Run。
-- **`businessSessionId` 不做兜底**：调用方不传 `RunAgent.SessionId` 时，该字段不出现。平台会话
-  不会被改写成业务会话，MCP 端因此能区分「调用方声明过」和「没有提供」。
+- **`businessSessionId` 只取显式声明**：过去记录中从平台 ID 复制的值不再转发。原平台会话
+  可以继续使用，在下一轮加入 `BusinessSessionId` 就能绑定独立的业务会话。
 - **身份通道默认开启**：符合 MCP 扩展约定（忽略未知 `_meta`）的 Server 直接受益；自写严格校验
   的 Server 需要显式关闭（见「安全约束」）。
-- **业务身份默认不强制**：只有设置 `AGENTKIT_MCP_BUSINESS_IDENTITY=require` 的部署才把
-  `UserId` + `SessionId` 变成必填，避免破坏已有 MCP Agent。
 
 ## 验证边界
 
@@ -213,25 +216,24 @@ async def call_tool(name: str, arguments: dict):
 | 适配器 | 共享连接下的按请求注入、并发隔离 | `tests/local-resource-adapters.test.mjs` |
 | 托管入口 | 私有 sidecar 只能由 RunAgent 铸造、require 模式、审批恢复 | `tests/managed-runtime-approval.test.mjs` |
 | Native 集成 | 实际 `NativeKernel` + SQLite + 生产 MCP 适配器 + 本地 HTTP peer | `tests/native-mcp-dispatch-authority.test.mjs` |
-| 真实 DSH Host | 隔离 `DSH_HOME` 的真实 Host 进程、RunAgent 到 MCP 的完整链路 | `scripts/verify-managed-mcp-identity.mjs`，由 `managed-mcp-business-identity` CI 门禁运行 |
+| 真实 DSH Host | 隔离 `DSH_HOME` 的真实 Host 进程、同一平台会话两轮续聊和 MCP attribution | `scripts/verify-managed-mcp-identity.mjs`，由 `managed-mcp-business-identity` CI 门禁运行 |
 
-Native 集成用例里模型与 ToolRegistry 策略层是受控替身；真实 Host 门禁再验证
-「RunAgent 经 engine 进程到达 MCP Server」的完整部署路径。
+真实 Host 门禁断言第二轮模型请求看到了首轮历史、两次工具调用的业务字段一致。它直连 Host，
+公网 Gateway 和 Server 的字段转发需单独验证。
 
 ## 门禁结果
 
-本机 Node.js 26.3.0 低于 `.node-version` 基线（24.22.1；26.x 需 ≥ 26.12.1），`make check` 与
-真实 Host 门禁在本地不执行；完整门禁在 GitHub Actions 上跑：
+以下门禁在 GitHub Actions 执行：
 
 | 门禁 | 环境 | 结果 |
 | --- | --- | --- |
-| `public-gate`（`make check` 全量套件） | ubuntu-24.04 / Node 24.22.1 / Playwright Chromium | **通过**：5431 项，5430 pass，0 fail，1 skipped |
-| `patched-dsh-host` | 真实 DSH Host，`DSH_HOME` 指向 runner 临时目录 | **通过**：真实 Node 退出 + JSONL 重开 + 进程恢复，5 个场景全 PASS |
-| `native-engine-integration` | ubuntu-24.04 | **通过** |
-| `managed-mcp-business-identity` | 真实 DSH Host + 隔离 `DSH_HOME` + 本地 MCP loopback | **通过**：业务字段、关联 ID、Header 与 MCP 凭证均断言 |
+| `public-gate`（`make check` 全量套件） | ubuntu-24.04 / Node 24.22.1 / Playwright Chromium | 全量测试及打包检查 |
+| `patched-dsh-host` | 真实 DSH Host，`DSH_HOME` 指向 runner 临时目录 | Node 退出、JSONL 重开与进程恢复 |
+| `native-engine-integration` | ubuntu-24.04 | Native 引擎集成回归 |
+| `managed-mcp-business-identity` | 真实 DSH Host + 隔离 `DSH_HOME` + 本地 MCP loopback | 连续两轮、模型历史、业务字段及 MCP 凭证 |
 
 `patched-dsh-host` 继续验证 Host 归属、审批与进程恢复；`managed-mcp-business-identity` 专门断言
-「`RunAgent` 一轮经真实 DSH Host 进程到达 MCP Server 并观察到业务身份」。
+「`RunAgent` 用同一平台 Session 续聊，两轮均经真实 DSH Host 向 MCP Server 传递业务归属」。
 
 ## 回归
 

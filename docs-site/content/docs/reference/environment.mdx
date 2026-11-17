@@ -1,17 +1,17 @@
 ---
 title: "环境变量参考"
-description: "Studio 读取的 130 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。"
+description: "Studio 读取的 132 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 三档口径
 
-Studio 从进程环境读取 130 个变量名：其中 8 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
+Studio 从进程环境读取 132 个变量名：其中 8 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
 
 | 档位 | 标识 | 条数 | 含义 |
 | --- | --- | --- | --- |
-| 可配置 | `configurable` | 34 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
+| 可配置 | `configurable` | 36 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
 | 平台注入 | `platform` | 84 | 由容器、托管运行时或桌面外壳注入，手工设置通常会被覆盖或不生效。 |
 | 禁止修改 | `forbidden` | 12 | Studio 会读取，但值必须由凭证服务或设置界面持有；不要写进 shell profile、`.env` 或 CI 变量。 |
 
@@ -23,7 +23,7 @@ Studio 从进程环境读取 130 个变量名：其中 8 个是直接 `process.e
 
 | 命名空间 | 条数 | 说明 |
 | --- | --- | --- |
-| `AGENTKIT` | 53 | Studio 自身的配置项。 |
+| `AGENTKIT` | 55 | Studio 自身的配置项。 |
 | `KSADK` | 30 | Skill、沙箱、记忆库与知识库的运行参数。 |
 | `AGENTENGINE` | 11 | AgentEngine 控制面注入的运行时身份与端点。 |
 | `OTEL` | 10 | OpenTelemetry 标准导出变量。 |
@@ -65,8 +65,10 @@ Studio 从进程环境读取 130 个变量名：其中 8 个是直接 `process.e
 | `AGENTKIT_STUDIO_BUNDLE_DIR` | 平台注入 | `src/host/bootstrap.mjs` | — |
 | `AGENTKIT_STUDIO_WORKSPACE` | 平台注入 | `src/host/bootstrap.mjs` | — |
 | `AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `AGENTKIT_MCP_INVOCATION_IDENTITY` | 可配置 | `src/host/services/resources.mjs` | — |
 | `AGENTKIT_ENGINE_SERVICE_TOKEN` | 禁止修改 | `src/host/services/star-harness-worker.mjs` | — |
 | `AGENTKIT_KS3_ENDPOINT_MODE` | 可配置 | `src/ks3-endpoints.mjs` | — |
+| `AGENTKIT_MCP_BUSINESS_IDENTITY` | 可配置 | `src/managed-runtime-actions.mjs` | — |
 | `AGENTKIT_MODEL_API_KEY` | 禁止修改 | `src/managed-runtime-definition.mjs` | — |
 | `AGENTKIT_MANAGED_CODEX_API` | 可配置 | `src/managed-runtime-definition.mjs` | — |
 | `AGENTKIT_ENGINE_SERVICE_URL` | 平台注入 | `src/managed-runtime-definition.mjs` | — |
@@ -194,7 +196,7 @@ Studio 从进程环境读取 130 个变量名：其中 8 个是直接 `process.e
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| 环境变量名 | `130` | 改名即破坏性变更 |
+| 环境变量名 | `132` | 改名即破坏性变更 |
 | 直读 | `8` | `process.env.X` 字面量 |
 | Host 转发 | `30` | `*_ENV_NAMES` 常量数组声明 |
 | 平台注入 | `84` | 手工设置会被覆盖 |
