@@ -30,9 +30,9 @@ export function engineServiceFetch(endpoint, caFile) {
   return (url, options) => fetch(url, { ...options, dispatcher });
 }
 
-export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl = fetch) {
+export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl = fetch, viewPath = '/v1/views') {
   if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) return null;
-  const response = await fetchImpl(engineServiceEndpoint(endpoint, token) + '/v1/views/' + sha256, {
+  const response = await fetchImpl(engineServiceEndpoint(endpoint, token) + viewPath + '/' + sha256, {
     headers: { authorization: 'Bearer ' + token }, redirect: 'error', signal: AbortSignal.timeout(5000),
   });
   if (response.status === 404) {

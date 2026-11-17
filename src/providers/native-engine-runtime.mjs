@@ -184,6 +184,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const policy = useService ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !useService ? undefined : async request => {
+        // The portable cloud worker shares a container with the Host. Its
+        // workspace path cannot be admitted by the 0.0.25 shell sandbox.
+        if (useService && env.AGENTKIT_BUNDLE_STAR_HARNESS === '1' && request.tool === 'run_command') return 'deny';
         if (useService && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
           && !request.requiresUserApproval && !request.childRunId) return 'allow';
         const requiresApproval = request.requiresUserApproval === true || useService && sandbox === 'workspace-write'

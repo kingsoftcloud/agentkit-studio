@@ -14,16 +14,18 @@ export function nativeEngineViewResponse(request, runtime) {
   return new Response(request.method === 'HEAD' ? null : html, { status: 200, headers: ENGINE_VIEW_HEADERS });
 }
 
-export function registerNativeEngineView(ctx, runtime) {
+export function registerNativeEngineView(ctx, runtime, resolveDeploymentView) {
   ctx.connection.fetch.register({ path: NATIVE_ENGINE_VIEW_PATH, methods: ['GET', 'HEAD'], requestBody: 'buffered',
     fetch: async request => {
-      const cached = nativeEngineViewResponse(request, runtime);
-      if (cached.status !== 404 || typeof runtime.resolveView !== 'function') return cached;
-      const sha256 = new URL(request.url).searchParams.get('sha256') || '';
+      const { searchParams } = new URL(request.url);
+      const deploymentAgentId = searchParams.get('deploymentAgentId');
+      const cached = nativeEngineViewResponse(request, deploymentAgentId ? { view: () => null } : runtime);
+      if (cached.status !== 404) return cached;
+      const sha256 = searchParams.get('sha256') || '';
       if (!/^[a-f0-9]{64}$/.test(sha256)) return cached;
       try {
-        const html = await runtime.resolveView(sha256);
-        return html === null ? cached : new Response(request.method === 'HEAD' ? null : html, { status: 200, headers: ENGINE_VIEW_HEADERS });
+        const html = deploymentAgentId ? await resolveDeploymentView?.(deploymentAgentId, sha256) : await runtime.resolveView?.(sha256);
+        return html == null ? cached : new Response(request.method === 'HEAD' ? null : html, { status: 200, headers: ENGINE_VIEW_HEADERS });
       } catch {
         return new Response('View unavailable', { status: 503, headers: { 'cache-control': 'no-store' } });
       }

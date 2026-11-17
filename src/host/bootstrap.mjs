@@ -324,20 +324,21 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
   await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
+  const { createDeploymentConversation, createDeploymentHarnessView } = await import('../deployment-conversation.mjs');
+  const deploymentAgents = () => deployments().then(service => service.agents);
   const { registerNativeEngineView } = await import('./routes/native-engine-view.mjs');
-  registerNativeEngineView(ctx, nativeEngineRuntime);
+  registerNativeEngineView(ctx, nativeEngineRuntime, createDeploymentHarnessView({ agents: deploymentAgents, fetchImpl: services.runtimeFetch }));
   if (!managedRuntime && !portableRuntime) {
     const { registerNativeWebDelivery } = await import('./routes/native-web-delivery.mjs');
     ctx.inject(['sessionQuery', 'workspaceFiles'], scope => registerNativeWebDelivery(scope, nativeEngineRuntime));
   }
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('../deployment-agents.mjs');
-  const { createDeploymentConversation } = await import('../deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
     bridge,
     AdapterBase: LlmAdapter,
     cloudClient: await serverClientPromise,
     attachments: () => ctx.get('attachments'),
-    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch,
+    cloudRuntime: createDeploymentConversation({ agents: deploymentAgents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch,
       permissionModeFor: agentId => cloudExecutionModes.get(agentId) }),
     localHandler: localRuntimeHandler,
     codexRuntime,
@@ -346,6 +347,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     // Session preset; read it here so Codex's own sandbox follows the picker.
     permissionModeForSession: session => {
       try {
+        // A frozen Container sets headless approval independently of the
+        // sandbox. That combination may have no matching preset name.
+        if (portableRuntime && runtimeEnv.AGENTKIT_BUNDLE_STAR_HARNESS === '1') {
+          return ctx.get?.('sandboxPolicy')?.resolve({ session })?.mode;
+        }
         const current = ctx.get?.('permissionPresets')?.current?.(session);
         if (typeof current === 'string' && current) return current;
         return ctx.get?.('sessionProjections')?.stateOf?.(session, 'sandboxMode') ?? undefined;
