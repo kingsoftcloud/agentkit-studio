@@ -8,7 +8,8 @@ import { createGlobalConfiguration } from '../src/global-config.mjs';
 test('Native model options survive save/reopen and malformed options fail before writing', async () => {
   const home = await mkdtemp(join(tmpdir(), 'agentkit-native-options-'));
   const options = { protocol: 'openai-responses', contextWindow: 64000, maxOutputTokens: 4000,
-    requestTimeoutMs: 160000, parameters: { temperature: 0.2, reasoning: { effort: 'high' } } };
+    requestTimeoutMs: 160000, parameters: { temperature: 0.2, reasoning: { effort: 'high' } },
+    headers: { 'X-Gateway-Token': 'team-token', 'X-Request-Trace': 'enabled' } };
   const profile = { id: 'vision', provider: 'custom', modelName: 'observer', input: ['text', 'image'],
     baseUrl: 'https://model.invalid/v1', ...options };
   const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home }, inheritLegacy: false });
@@ -18,10 +19,30 @@ test('Native model options survive save/reopen and malformed options fail before
   const resolved = (await reopened.resolve()).values.modelProfiles[0];
   for (const [key, value] of Object.entries(options)) assert.deepEqual(resolved[key], value);
   for (const invalid of [{ protocol: 'unsupported' }, { contextWindow: 0 }, { maxOutputTokens: -1 },
-    { requestTimeoutMs: '10' }, { parameters: [] }]) {
+    { requestTimeoutMs: '10' }, { parameters: [] }, { headers: [] }, { headers: 'X-Token: 1' },
+    { headers: { 'X-Bad Header': '1' } }, { headers: { 'X-Token': 5 } },
+    { headers: { 'X-Token': 'line\r\nInjected: 1' } },
+    { headers: { 'X-Token': 'first', 'x-token': 'second' } },
+    { headers: Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`X-Header-${index}`, 'v'])) }]) {
     await assert.rejects(config.update({ modelProfiles: [{ ...profile, ...invalid }] }), { code: 'CONFIGURATION_INVALID' });
     assert.equal(await readFile(join(home, 'config.yaml'), 'utf8'), expected);
   }
+});
+
+test('clearing every request header removes the field instead of freezing an empty record', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-native-headers-'));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home }, inheritLegacy: false });
+  const profile = { id: 'gateway', provider: 'custom', modelName: 'model', baseUrl: 'https://model.invalid/v1',
+    headers: { 'X-Gateway-Token': '  team-token  ' } };
+  await config.update({ modelProfiles: [profile] });
+  const saved = (await config.resolve()).values.modelProfiles[0];
+  assert.deepEqual(saved.headers, { 'X-Gateway-Token': 'team-token' }, 'values are trimmed before they reach the wire');
+  // The settings form drops an emptied row and saves `undefined`, so the stored
+  // profile has no headers key at all rather than an empty object.
+  await config.update({ modelProfiles: [{ ...profile, headers: {} }] });
+  const cleared = (await config.resolve()).values.modelProfiles[0];
+  assert.equal(Object.hasOwn(cleared, 'headers'), false);
+  assert.doesNotMatch(await readFile(join(home, 'config.yaml'), 'utf8'), /headers/);
 });
 
 test('Host persists completed base URLs consistently for scalar and profile settings', async () => {

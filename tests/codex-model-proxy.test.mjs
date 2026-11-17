@@ -338,17 +338,46 @@ test('native Responses forward reasoning items exactly as Codex emitted them', a
   } finally { await proxy.close(); }
 });
 
-test('a reasoning-content rejection retries once with the null content removed', async () => {
+// Observed on the live gateway: a turn is legal when it carries an assistant
+// message with non-null content (`[]` and `''` count as set) or a function
+// call; a turn made only of reasoning items is refused with the
+// assistant-message rule, regardless of the reasoning item's content field.
+const rejectsReasoningOnlyTurn = body => {
+  let reasoning = false;
+  let carries = false;
+  let rejected = false;
+  const flush = () => {
+    if (reasoning && !carries) rejected = true;
+    reasoning = false;
+    carries = false;
+  };
+  for (const item of body.input || []) {
+    const type = item?.type;
+    if (type === 'reasoning') { reasoning = true; continue; }
+    if (type === 'function_call' || type === 'custom_tool_call') { carries = true; continue; }
+    if (type === 'function_call_output' || type === 'custom_tool_call_output') { flush(); continue; }
+    if (type === 'message' || type === undefined) {
+      if (item.role === 'assistant') {
+        if (item.content !== null && item.content !== undefined) carries = true;
+        continue;
+      }
+      flush();
+      continue;
+    }
+    flush();
+  }
+  flush();
+  return rejected;
+};
+
+test('a reasoning-only turn is dropped and the request retried once', async () => {
   const bodies = [];
   const proxy = await createCodexModelProxy({
     profile: { ...profile, api: 'responses' },
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       bodies.push(body);
-      if (body.input.some(item => item.type === 'reasoning' && item.content === null)) {
-        return Response.json({ error: { code: 'invalid_request_error', type: 'invalid_request_error',
-          message: 'Invalid assistant message: content or tool_calls must be set' } }, { status: 400 });
-      }
+      if (rejectsReasoningOnlyTurn(body)) return Response.json(EMPTY_ASSISTANT_400, { status: 400 });
       return Response.json({ id: 'resp-native', status: 'completed', output: [] });
     },
   });
@@ -362,10 +391,60 @@ test('a reasoning-content rejection retries once with the null content removed',
       ] }) });
     assert.equal(response.status, 200);
     assert.equal(bodies.length, 2);
-    // Reasoning items survive; only the explicit null content is dropped.
-    assert.deepEqual(bodies[1].input.map(item => item.id || item.type), ['rs-opaque', 'rs-null', 'message']);
-    assert.equal('content' in bodies[1].input[1], false);
-    assert.deepEqual(bodies[1].input[0].content, [], 'opaque reasoning content is preserved');
+    // The first attempt forwards the replayed turn untouched; the repair drops
+    // it instead of rewriting one field, because the turn carries nothing.
+    assert.deepEqual(bodies[0].input.map(item => item.id || item.type), ['rs-opaque', 'rs-null', 'message']);
+    assert.deepEqual(bodies[1].input.map(item => item.type || item.role), ['message']);
+  } finally { await proxy.close(); }
+});
+
+test('a trailing reasoning turn is repaired even without an explicit null content', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsReasoningOnlyTurn(body)) return Response.json(EMPTY_ASSISTANT_400, { status: 400 });
+      return Response.json({ id: 'resp-trailing', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+        { type: 'reasoning', id: 'rs-trailing', summary: [{ type: 'summary_text', text: 'Inspect.' }] },
+      ] }) });
+    assert.equal(response.status, 200);
+    assert.equal(bodies.length, 2, 'a rejected turn is worth one repair attempt');
+    assert.deepEqual(bodies[1].input.map(item => item.type || item.role), ['message']);
+  } finally { await proxy.close(); }
+});
+
+test('reasoning in a turn that carries a tool call is never dropped', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsReasoningOnlyTurn(body)) return Response.json(EMPTY_ASSISTANT_400, { status: 400 });
+      return Response.json({ id: 'resp-tools', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'run pwd' }] },
+        { type: 'reasoning', id: 'rs-kept', summary: [], content: null, encrypted_content: 'opaque' },
+        { type: 'function_call', call_id: 'call_1', name: 'pwd', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_1', output: '/tmp' },
+      ] }) });
+    assert.equal(response.status, 200);
+    assert.equal(bodies.length, 1, 'a legal turn needs no repair');
+    assert.deepEqual(bodies[0].input[1], { type: 'reasoning', id: 'rs-kept', summary: [], content: null, encrypted_content: 'opaque' });
   } finally { await proxy.close(); }
 });
 
@@ -390,5 +469,258 @@ test('an unrelated 400 forwards reasoning unchanged and does not retry', async (
     assert.equal((await response.json()).error.code, 'MODEL_UPSTREAM_ERROR');
     assert.equal(bodies.length, 1, 'only a reasoning rejection retries');
     assert.equal('content' in bodies[0].input[0], true, 'reasoning is untouched');
+  } finally { await proxy.close(); }
+});
+
+// A strict gateway (Kspmas / magpie) validates every assistant turn as
+// content-or-tool_calls and refuses an empty shell with this exact 400.
+const EMPTY_ASSISTANT_400 = { error: { code: 'invalid_request_error', type: 'invalid_request_error',
+  message: 'Invalid assistant message: content or tool_calls must be set' } };
+const emptyAssistantTurn = turn => {
+  const content = turn?.content;
+  const empty = content == null || (typeof content === 'string' && !content.trim()) || (Array.isArray(content) && !content.length);
+  return empty && !(Array.isArray(turn?.tool_calls) && turn.tool_calls.length);
+};
+const rejectsEmptyAssistant = body => (body.input || body.messages || []).some(turn => turn?.role === 'assistant' && emptyAssistantTurn(turn));
+
+test('an empty assistant turn never reaches a strict gateway on the native Responses route', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsEmptyAssistant(body)) return Response.json(EMPTY_ASSISTANT_400, { status: 400 });
+      return Response.json({ id: 'resp-repaired', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+        { type: 'message', role: 'assistant', content: [] },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'again' }] },
+      ] }) });
+    assert.equal(response.status, 200, 'the turn is repaired, not failed');
+    assert.equal(bodies.length, 1, 'repairing the body costs no retry round-trip');
+    assert.deepEqual(bodies[0].input.map(item => item.role), ['user', 'user']);
+  } finally { await proxy.close(); }
+});
+
+test('every empty assistant content form is dropped, and tool-call turns survive', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsEmptyAssistant(body)) return Response.json(EMPTY_ASSISTANT_400, { status: 400 });
+      return Response.json({ id: 'resp-forms', status: 'completed', output: [] });
+    },
+  });
+  const call = { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{}' };
+  try {
+    for (const [label, turn] of [
+      ['missing content', { type: 'message', role: 'assistant' }],
+      ['null content', { type: 'message', role: 'assistant', content: null }],
+      ['empty string', { type: 'message', role: 'assistant', content: '' }],
+      ['blank string', { type: 'message', role: 'assistant', content: '   ' }],
+      ['empty parts', { type: 'message', role: 'assistant', content: [] }],
+    ]) {
+      const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+        headers: { Authorization: `Bearer ${proxy.apiKey}` },
+        body: JSON.stringify({ model: 'gpt-5', input: [
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'go' }] },
+          turn, call,
+          { type: 'function_call_output', call_id: 'call_1', output: 'ok' },
+        ] }) });
+      assert.equal(response.status, 200, label);
+      const sent = bodies.at(-1);
+      assert.deepEqual(sent.input.map(item => item.type === 'message' ? item.role : item.type),
+        ['user', 'function_call', 'function_call_output'], label);
+    }
+  } finally { await proxy.close(); }
+});
+
+test('the Responses-to-Chat conversion never emits an empty assistant message', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsEmptyAssistant(body)) return Response.json(EMPTY_ASSISTANT_400, { status: 400 });
+      return Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+        { type: 'message', role: 'assistant', content: [] },
+      ] }) });
+    assert.equal(response.status, 200);
+    assert.equal(bodies.length, 1);
+    // contentToChat collapses the empty parts to '', which is why the shell has
+    // to be dropped after the conversion rather than left to the gateway.
+    assert.deepEqual(bodies[0].messages.map(message => message.role), ['user']);
+  } finally { await proxy.close(); }
+});
+
+test('profile headers reach the upstream request, and an explicit Authorization wins over the API key', async () => {
+  const seen = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses', headers: { 'X-Gateway-Token': '  gateway-secret  ', Authorization: 'Bearer operator-key' } },
+    fetchImpl: async (_url, options) => {
+      seen.push(options.headers);
+      return Response.json({ id: 'resp-headers', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: 'hi' }) });
+    assert.equal(response.status, 200);
+    assert.equal(seen[0]['X-Gateway-Token'], 'gateway-secret', 'values are trimmed');
+    assert.equal(seen[0].Authorization, 'Bearer operator-key', 'a configured header is an explicit operator choice');
+    assert.equal(seen[0]['Content-Type'], 'application/json', 'the body is always JSON');
+  } finally { await proxy.close(); }
+});
+
+test('the API key is the default Authorization header when the profile configures none', async () => {
+  const seen = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses', headers: { 'X-Gateway-Token': 'gateway-secret' } },
+    fetchImpl: async (_url, options) => {
+      seen.push(options.headers);
+      return Response.json({ id: 'resp-default-auth', status: 'completed', output: [] });
+    },
+  });
+  try {
+    await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` }, body: JSON.stringify({ model: 'gpt-5', input: 'hi' }) });
+    assert.equal(seen[0].Authorization, `Bearer ${profile.apiKey}`);
+  } finally { await proxy.close(); }
+});
+
+test('a configured output budget replaces the client value on both wires', async () => {
+  const bodies = [];
+  const upstream = (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return Response.json({ id: 'resp-budget', status: 'completed', output: [] });
+  };
+  const native = await createCodexModelProxy({ profile: { ...profile, api: 'responses', maxOutputTokens: 4096 }, fetchImpl: upstream });
+  try {
+    await fetch(`${native.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${native.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: 'hi', max_output_tokens: 16 }) });
+    assert.equal(bodies[0].max_output_tokens, 4096);
+  } finally { await native.close(); }
+
+  const chat = await createCodexModelProxy({ profile: { ...profile, maxOutputTokens: 2048 },
+    fetchImpl: async (url, options) => { bodies.push({ url, body: JSON.parse(options.body) }); return Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }); } });
+  try {
+    await fetch(`${chat.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${chat.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: 'hi', max_output_tokens: 16 }) });
+    assert.equal(bodies[1].body.max_tokens, 2048);
+    assert.equal(bodies[1].body.max_output_tokens, undefined, 'the Responses field never leaks onto the chat wire');
+  } finally { await chat.close(); }
+});
+
+test('a profile request timeout bounds upstream silence without a handler-level override', async () => {
+  let upstreamAborted = false;
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses', requestTimeoutMs: 30 },
+    fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => {
+      upstreamAborted = true;
+      reject(signal.reason);
+    }, { once: true })),
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: '{"input":"hi","stream":true}', signal: AbortSignal.timeout(1000) });
+    assert.equal(response.status, 502);
+    assert.equal(upstreamAborted, true);
+  } finally { await proxy.close(); }
+});
+
+// A strict gateway refuses a tool receipt whose assistant call is gone; the
+// request that carries it is refused wholesale.
+const ORPHAN_RECEIPT_400 = { error: { code: 'invalid_request_error', type: 'invalid_request_error',
+  message: "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'" } };
+const rejectsOrphanReceipt = body => {
+  const pending = new Set();
+  for (const item of body.input || []) {
+    if (item?.type === 'function_call' || item?.type === 'custom_tool_call') pending.add(item.call_id);
+    else if (item?.type === 'function_call_output' || item?.type === 'custom_tool_call_output') {
+      if (!pending.has(item.call_id)) return true;
+      pending.delete(item.call_id);
+    }
+  }
+  const chatPending = new Set();
+  for (const message of body.messages || []) {
+    if (message.role === 'assistant' && Array.isArray(message.tool_calls)) for (const call of message.tool_calls) chatPending.add(call.id);
+    else if (message.role === 'tool') {
+      if (!chatPending.has(message.tool_call_id)) return true;
+      chatPending.delete(message.tool_call_id);
+    }
+  }
+  return false;
+};
+
+test('an orphan tool receipt never reaches a strict gateway on the native Responses route', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsOrphanReceipt(body)) return Response.json(ORPHAN_RECEIPT_400, { status: 400 });
+      return Response.json({ id: 'resp-receipt', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'run' }] },
+        { type: 'function_call', call_id: 'call_1', name: 'pwd', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_1', output: '/tmp' },
+        { type: 'function_call_output', call_id: 'call_gone', output: '/gone' },
+      ] }) });
+    assert.equal(response.status, 200);
+    assert.equal(bodies.length, 1, 'the orphan is dropped pre-send instead of costing a retry');
+    assert.deepEqual(bodies[0].input.map(item => item.call_id || item.type), ['message', 'call_1', 'call_1']);
+  } finally { await proxy.close(); }
+});
+
+test('an orphan tool receipt is dropped on the Responses-to-Chat conversion route too', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsOrphanReceipt(body)) return Response.json(ORPHAN_RECEIPT_400, { status: 400 });
+      return Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'run' }] },
+        { type: 'function_call', call_id: 'call_1', name: 'pwd', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_1', output: '/tmp' },
+        { type: 'function_call_output', call_id: 'call_gone', output: '/gone' },
+      ] }) });
+    assert.equal(response.status, 200);
+    assert.equal(bodies.length, 1);
+    assert.deepEqual(bodies[0].messages.map(message => message.role), ['user', 'assistant', 'tool']);
+    assert.deepEqual(bodies[0].messages[1].tool_calls.map(call => call.id), ['call_1']);
   } finally { await proxy.close(); }
 });
