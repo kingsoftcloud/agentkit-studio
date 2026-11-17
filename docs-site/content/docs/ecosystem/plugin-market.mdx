@@ -73,7 +73,9 @@ pnpm check:plugin-index    # 不联网，只校验已提交的产物
 
 ## 未启用时
 
-官方索引服务只随实验性 bundle `@deepseek-ai/dsh-experimental-plugin-market-bundle`（「自定义插件索引」）挂载。未启用时市场不会显示空货架，而是返回 `PLUGIN_MARKET_UNAVAILABLE` 并给出一键启用入口；该 bundle 同时出现在 Studio 的精选清单里。
+官方索引服务只随实验性 bundle `@deepseek-ai/dsh-experimental-plugin-market-bundle`（「自定义插件索引」）挂载。Studio 会在每个 profile 第一次以某个 DSH 版本启动时自动启用它（同一份默认清单还会启用 Computer Use 的 `@deepseek-ai/dsh-cua-bundle`），所以市场默认可用；启用失败或安装不含该 bundle 时，市场返回 `PLUGIN_MARKET_UNAVAILABLE` 并给出一键启用入口。
+
+默认值每个 DSH 版本只应用一次：用户关掉某个默认 bundle 后不会被重新打开，可重试的失败（网络、pnpm）不写标记、下次启动重试；`AGENTKIT_STUDIO_DEFAULT_BUNDLES=0` 可整体关闭这个对齐。
 
 ## 安全与信任
 

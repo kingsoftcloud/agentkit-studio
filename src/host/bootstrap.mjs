@@ -16,6 +16,8 @@ import { bindPresetRegistry } from '../preset-registry-binding.mjs';
 import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
 import { alignProfileProductPlugin } from './profile-plugin-alignment.mjs';
+import { applyDefaultBundles } from './default-bundles.mjs';
+import dshPin from '../dsh-pin.json' with { type: 'json' };
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
 import { registerControlPlaneRoutes } from './routes/http.mjs';
@@ -187,6 +189,18 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     studioSchedulerPromise, studioObservabilityPromise, studioEvaluationPromise,
     studioChannelsPromise, cloudSchedulesPromise, authoringRemoteFactory, deployments,
   } = services;
+
+  // Default bundles: Studio keeps the official plugin index and Computer Use on
+  // for every profile. The plugin manager mounts with the profile, so apply this
+  // in the background — a first-run install must not delay the Host surface.
+  ctx.inject(['pluginManager'], pluginCtx => {
+    void applyDefaultBundles({
+      manager: pluginCtx.get('pluginManager'), storeDir: studioStoreDir, version: dshPin.version,
+      env: runtimeEnv, log: message => console.log(message),
+    }).catch(error => {
+      console.warn('[studio] default bundle alignment skipped', { message: error instanceof Error ? error.message : String(error) });
+    });
+  });
 
   // Generic cloud-control capability for independent DSH plugins. The Host
   // owns configuration, credentials, and AgentEngine clients; consumers only

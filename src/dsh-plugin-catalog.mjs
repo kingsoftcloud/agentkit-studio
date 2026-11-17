@@ -73,11 +73,13 @@ export const DSH_CURATED_PLUGINS = Object.freeze([
     tags: ['插件市场', '索引', '发现'],
     featured: true,
     experimental: true,
-    defaultEnabled: false,
+    defaultEnabled: true,
     capabilities: ['插件索引读取', '模糊搜索与分页', '版本与兼容性', '一键安装'],
     expectedEntries: ['plugin-market', 'ui-plugin-market'],
     service: { name: 'pluginMarket', methods: ['listIndexes', 'search', 'setIndexes'], probe: 'listIndexes' },
     readinessNote: 'Host 已加载官方插件索引服务；索引源属于当前 profile，可在「发现」页管理。',
+    // Studio switches this bundle on for every profile on the first Host start
+    // of a DSH version (see src/host/default-bundles.mjs).
   },
 ]);
 

@@ -2,6 +2,8 @@
 
 ## 0.0.16 - 2026-11-17
 
+- Studio 默认启用两个官方 bundle：「自定义插件索引」与 Computer Use（`@deepseek-ai/dsh-cua-bundle`）。Host 首次以某个 DSH 版本启动时按 profile 对齐一次——随包安装的直接 `setBundleEnabled`，按需安装的先安装再启用；同一版本内不重复应用，用户关闭后不会被重新打开，`AGENTKIT_STUDIO_DEFAULT_BUNDLES=0` 可整体关闭。
+
 - 插件市场改为直接消费 DSH 官方的插件索引机制（`format: 1` 静态索引 + Host 的 `pluginMarket` 服务），删除 Studio 自建的 npm 搜索 + GitHub 搜索聚合：一次市场页从 16 个外部请求（最坏 24 s）变成「每个索引源 1 次 GET」，搜索、筛选、排序与翻页全部在 Host 内存中完成。Studio 随包内置一份社区插件索引（由 `pnpm build:plugin-index` 从 npm 生成，`pnpm check:plugin-index` 在 CI 校验），由 Host 的 `/api/agentkit.plugin-market/index.json` 提供给官方读取器，并在 profile 没有索引源时自动添加；「自定义插件索引」实验性插件出现在精选清单里，未启用时市场给出明确的一键启用入口。
 
 - Star Harness 使用 Studio 随包发布的固定摘要校验运行时及其依赖，通过校验后再启动。插件只接管已绑定的工作区。

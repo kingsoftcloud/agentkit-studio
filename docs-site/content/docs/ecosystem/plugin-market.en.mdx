@@ -73,7 +73,9 @@ The index produces arguments; it never installs. An npm version resolves to `nam
 
 ## When it is not enabled
 
-The official index service is mounted only with the experimental bundle `@deepseek-ai/dsh-experimental-plugin-market-bundle` ("Custom plugin indexes"). Without it the market does not show an empty shelf: it answers `PLUGIN_MARKET_UNAVAILABLE` and offers a one-click enable action. The bundle also appears in Studio's curated list.
+The official index service is mounted only with the experimental bundle `@deepseek-ai/dsh-experimental-plugin-market-bundle` ("Custom plugin indexes"). Studio enables it automatically the first time a profile starts with a given DSH version (the same default list also enables Computer Use, `@deepseek-ai/dsh-cua-bundle`), so the market works out of the box; when enabling fails or the installation does not carry the bundle, the market answers `PLUGIN_MARKET_UNAVAILABLE` and offers a one-click enable action.
+
+The defaults apply once per DSH version: a person who switches a default bundle off keeps it off, a retryable failure (network, pnpm) leaves no marker so the next start retries, and `AGENTKIT_STUDIO_DEFAULT_BUNDLES=0` turns the alignment off entirely.
 
 ## Security and trust
 

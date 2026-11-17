@@ -23,7 +23,7 @@ test('the official plugin index bundle is curated with its service probe', () =>
   assert.deepEqual(entry.expectedEntries, ['plugin-market', 'ui-plugin-market']);
   assert.equal(entry.service.name, 'pluginMarket');
   assert.deepEqual(entry.service.methods, ['listIndexes', 'search', 'setIndexes']);
-  assert.equal(entry.defaultEnabled, false);
+  assert.equal(entry.defaultEnabled, true);
   assert.equal(dshCuratedPlugin('  @deepseek-ai/dsh-experimental-plugin-market-bundle  ').id, entry.id);
   assert.equal(dshCuratedPlugin(''), undefined);
   assert.equal(dshCuratedPlugin('missing'), undefined);
@@ -40,6 +40,6 @@ test('every curated row names an installable spec and its readiness surface', ()
     assert.ok(Array.isArray(entry.expectedEntries) && entry.expectedEntries.length > 0, `${entry.id} needs probe rows`);
     assert.ok(entry.service?.name, `${entry.id} needs a host service`);
     assert.ok(entry.service.methods.length > 0, `${entry.id} needs service methods`);
-    assert.equal(entry.defaultEnabled, false, `${entry.id} starts disabled`);
+    assert.equal(typeof entry.defaultEnabled, 'boolean', `${entry.id} declares its default`);
   }
 });
