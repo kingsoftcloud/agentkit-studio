@@ -1,6 +1,6 @@
 export const STAR_HARNESS_CHANGED = 'agentkit-studio:star-harness-changed';
 
-export function createStarHarnessPage({ ui, hostRemote, window }) {
+export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
   const { React: { createElement: h, useEffect, useRef, useState }, BRAND, buttonStyle, inputStyle } = ui;
   const button = (label, onClick, disabled) => h('button', { type: 'button', style: buttonStyle(), onClick, disabled }, label);
   const muted = { color: BRAND.inkMuted, margin: 0 };
@@ -47,19 +47,14 @@ export function createStarHarnessPage({ ui, hostRemote, window }) {
     const disabled = Boolean(busy || status?.busy);
     if (view !== 'page') {
       const enabled = status?.enabled === true;
-      return h('span', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' } },
+      return h('span', { className: 'studio-star-harness-summary', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' } },
         h('span', { role: error ? 'alert' : undefined, title: error || undefined,
           style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
         error || (status?.version ? '已安装 ' + status.version : '管理 Star Harness 版本')),
-        status?.version ? h('button', { type: 'button', role: 'switch', 'aria-label': '启用 Star Harness',
-          'aria-checked': enabled, disabled,
-          onClick: () => perform(enabled ? '正在停用…' : '正在启用…', () => hostRemote.enableStarHarness(!enabled), ''),
-          style: { display: 'inline-flex', alignItems: 'center', justifyContent: enabled ? 'flex-end' : 'flex-start',
-            padding: '2px', width: '32px', height: '16px', flex: 'none', border: 0, borderRadius: '999px',
-            background: enabled ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-border-l2)',
-            cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1 },
-        }, h('span', { 'aria-hidden': true, style: { width: '12px', height: '12px', borderRadius: '50%',
-          background: enabled ? 'var(--dsw-alias-bg-l1)' : 'var(--dsw-alias-label-secondary)' } })) : null);
+        status?.version ? h(Switch, {
+          checked: enabled, disabled, label: '启用 Star Harness', className: 'studio-star-harness-toggle',
+          onChange: next => perform(next ? '正在启用…' : '正在停用…', () => hostRemote.enableStarHarness(next), ''),
+        }) : null);
     }
 
     const requested = version.trim() || status?.availableUpgrade || status?.version || status?.recommendedVersion || '';

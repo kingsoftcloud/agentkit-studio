@@ -11,7 +11,7 @@ function render(status, hostRemote, events = [], view = 'page') {
       useEffect() {},
       useRef: current => ({ current }),
     }, BRAND: {}, buttonStyle: () => ({}), inputStyle: () => ({}) },
-    hostRemote, window: { Event, dispatchEvent: event => events.push(event.type) },
+    Switch: 'native-switch', hostRemote, window: { Event, dispatchEvent: event => events.push(event.type) },
   });
   return page({ view });
 }
@@ -49,10 +49,10 @@ test('the Star Harness summary toggles activation without a workspace binding', 
       return { ...state, enabled };
     },
   }, events, 'summary');
-  const toggle = descendants(view).find(node => node.props?.role === 'switch');
-  assert.equal(toggle.props['aria-checked'], false);
+  const toggle = descendants(view).find(node => node.type === 'native-switch');
+  assert.equal(toggle.props.checked, false);
   assert.equal(toggle.props.disabled, false);
-  await toggle.props.onClick();
+  await toggle.props.onChange(true);
   assert.deepEqual(updates, [true]);
   assert.deepEqual(events, [STAR_HARNESS_CHANGED]);
 });
