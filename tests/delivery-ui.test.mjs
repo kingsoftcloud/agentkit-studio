@@ -47,7 +47,7 @@ test('Delivery hydrates the preferred Agent, consumes focus and scrolls the requ
   let stored = JSON.stringify(focus), scrolled = 0;
   const window = { localStorage: { getItem: () => stored, removeItem: () => { stored = null; } } };
   const ui = harness('DeliveryPage', { focus }, window);
-  ui.api.agents = async () => ({ items: [{ metadata: { id: 'a' } }, { metadata: { id: 'b' } }] });
+  ui.api.agents = async () => ({ items: [{ metadata: { id: 'a' } }] });
   const hydrated = [], selectors = [], classes = new Set();
   ui.api.agent = async id => { hydrated.push(id); return { metadata: { id }, builds: [] }; };
   ui.nodes().find(node => node.props['data-studio-delivery']).props.ref.current = { querySelector: selector => { selectors.push(selector); return { scrollIntoView: () => { scrolled++; }, classList: { add: value => classes.add(value), remove: value => classes.delete(value) } }; } };
@@ -64,19 +64,33 @@ test('Delivery hydrates the preferred Agent, consumes focus and scrolls the requ
   assert.equal(selectors.at(-1), '[data-delivery-section="build"]');
 });
 
-test('Delivery handles an empty preferred catalog and retains focus when loading fails', async () => {
+test('Delivery retains an unavailable explicit target and never substitutes a different Agent', async () => {
   const focus = { tab: 'delivery', agentId: 'missing', section: 'build' };
   let stored = JSON.stringify(focus);
   const window = { localStorage: { getItem: () => stored, removeItem: () => { stored = null; } } };
   const ui = harness('DeliveryPage', { focus }, window);
+  ui.api.agents = async () => ({ items: [{ metadata: { id: 'other' } }] });
+  const attempted = [];
+  ui.api.agent = async id => { attempted.push(id); return { metadata: { id: 'other' } }; };
   await ui.settle();
-  assert.equal(ui.field('目标 Agent').props.value, '');
-  assert.equal(stored, null);
-  stored = JSON.stringify(focus);
+  assert.equal(ui.field('目标 Agent'), undefined);
+  assert.ok(ui.nodes().some(node => node.props.title === '交付状态不可用' && node.props.detail.includes('missing')));
+  assert.notEqual(stored, null);
+  await ui.button('重新读取').props.onClick(); await ui.settle();
+  assert.deepEqual(attempted, ['missing', 'missing']);
   ui.api.agents = async () => { throw Error('catalog offline'); };
   await ui.props({ focus: { ...focus } });
   assert.notEqual(stored, null);
   assert.ok(ui.nodes().some(node => node.props.title === '交付状态不可用' && node.props.detail === 'catalog offline'));
+});
+
+test('Delivery keeps the deployment selected on the Cloud Agent card', async () => {
+  const ui = harness('CloudDeploymentPanel', { agentId: 'a', deploymentId: 'older', selectedBuild: 'build-new' });
+  for (const [id, createdAt] of [['older', '2026-01-01'], ['latest', '2026-01-02']]) {
+    ui.rows.push({ id, agentId: 'a', cloudAgentId: `ar-${id}`, state: 'READY', createdAt });
+  }
+  await ui.settle();
+  assert.equal(ui.field('部署目标').props.value, 'older');
 });
 
 test('paired specifications default to 2 cores / 4 GB and checking never submits a create', async () => {

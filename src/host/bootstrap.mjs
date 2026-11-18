@@ -610,7 +610,14 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
           error.code = 'MCP_ID_MISSING';
           throw error;
         }
-        const listed = await adapters.listMcpTools(binding);
+        let listed;
+        try { listed = await adapters.listMcpTools(binding); }
+        catch (error) {
+          // A deleted catalog record must not block a desktop session or
+          // hide tools from the other bindings of this revision.
+          if (!strictResources && !portableRuntime && !managedRuntime && error?.code === 'MCP_NOT_FOUND') continue;
+          throw error;
+        }
         for (const tool of listed || []) {
           const name = String(tool?.name || '').trim();
           if (!name) continue;

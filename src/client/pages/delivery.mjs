@@ -36,7 +36,7 @@ export function createDeliveryPages({
   const MoreMenu = ({ id, open, onToggle, onClose }, ...children) => h(Menu, { open, onClose, align: 'end', portal: true, compact: true, listClassName: 'studio-menu',
     anchor: Button({ size: 'sm', variant: 'ghost', 'aria-label': `更多操作 ${id}`, 'aria-haspopup': 'menu', 'aria-expanded': open, onClick: onToggle }, '⋯') }, ...children);
 
-  function CloudDeploymentPanel({ agentId, selectedBuild, onBusyChange, hasCurrentBuild = Boolean(selectedBuild) }) {
+  function CloudDeploymentPanel({ agentId, selectedBuild, deploymentId, onBusyChange, hasCurrentBuild = Boolean(selectedBuild) }) {
     const [preview, setPreview] = useState(null);
     const [requestKey, setRequestKey] = useState('');
     const [records, setRecords] = useState([]);
@@ -59,8 +59,9 @@ export function createDeliveryPages({
     // state updates keep the list stable across refreshes of an idle deployment.
     const recordsSignature = useRef('');
     const existing = records.filter(record => record.agentId === agentId && record.cloudAgentId && record.state !== 'DELETED').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    const deploymentTarget = target === 'auto' ? existing[0]?.id || 'new' : target;
+    const deploymentTarget = target === 'auto' ? deploymentId || existing[0]?.id || 'new' : target;
     const targetRecord = existing.find(record => record.id === deploymentTarget);
+    const unavailableTarget = deploymentTarget !== 'new' && !targetRecord;
     const [cpu, ratio] = spec.split(':').map(Number);
     const resources = { cpu, memoryGiB: cpu * ratio, storageGiB: DEPLOYMENT_STORAGE.storageGiB };
     // Storage is fixed now, so it no longer takes part in the "inputs changed,
@@ -157,8 +158,9 @@ export function createDeliveryPages({
     return h(Fragment, null,
       Section({ id: 'sec-deploy', 'data-delivery-section': 'deploy', number: 2, done: existing.length > 0 && hasCurrentBuild, current: Boolean(selectedBuild) && hasCurrentBuild && !existing.length,
           title: '部署', className: !selectedBuild ? 'ad-step-dimmed' : undefined, meta: !selectedBuild ? '构建成功后可以部署' : undefined, help: '更新已有实例会保留实例 ID、规格和存储；创建新实例时按下面的规格新建。' },
-        Row({ title: '部署到', desc: targetRecord ? `更新「${targetRecord.agentName}」的当前实例` : '创建新的云端实例' },
+        Row({ title: '部署到', desc: targetRecord ? `更新「${targetRecord.agentName}」的当前实例` : unavailableTarget ? '从列表指定的实例' : '创建新的云端实例' },
           Select({ 'aria-label': '部署目标', value: deploymentTarget, disabled: busy, onChange: event => setTarget(event.target.value) },
+            unavailableTarget ? h('option', { value: deploymentTarget, disabled: true }, recordsLoaded ? '目标实例不可用' : '正在读取目标实例…') : null,
             existing.map(record => h('option', { key: record.id, value: record.id }, `更新 ${record.agentName} · 版本 ${record.revision} · ${record.cloudAgentId}`)),
             h('option', { value: 'new' }, '创建新的云端实例'))),
         targetRecord
@@ -268,12 +270,7 @@ export function createDeliveryPages({
         ]);
         const nextAgents = Array.isArray(agentResult?.items) ? agentResult.items : [];
         if (request !== agentRequest.current) return;
-        const nextAgent = preferredAgent && nextAgents.some(item => (item?.metadata?.id || item?.id) === preferredAgent)
-          ? preferredAgent : (nextAgents[0]?.metadata?.id || nextAgents[0]?.id || '');
-        setAgents(nextAgents);
-        setSelectedAgent(nextAgent);
-        setDeployments(Array.isArray(deploymentResult?.items) ? deploymentResult.items : []);
-        setOperations(Array.isArray(operationResult?.items) ? operationResult.items : []);
+        const nextAgent = preferredAgent || nextAgents[0]?.metadata?.id || nextAgents[0]?.id || '';
         // The collection endpoint intentionally keeps list rows small and
         // does not include the revision/build history. Load the selected
         // agent detail before rendering Delivery; otherwise an agent with a
@@ -283,10 +280,13 @@ export function createDeliveryPages({
         const current = nextAgents.find(item => (item?.metadata?.id || item?.id) === nextAgent);
         const detail = nextAgent ? await hostRemote.agent(nextAgent) : null;
         if (request !== agentRequest.current) return;
+        const detailId = detail?.metadata?.id || detail?.id;
+        if (nextAgent && (detailId ? detailId !== nextAgent : !current)) throw new Error(`目标 Agent ${nextAgent} 当前不可用`);
         const builds = Array.isArray(detail?.builds) ? detail.builds : (Array.isArray(current?.builds) ? current.builds : []);
-        if (nextAgent && detail) {
-          setAgents(nextAgents.map(item => (item?.metadata?.id || item?.id) === nextAgent ? { ...item, ...detail } : item));
-        }
+        setAgents(current ? nextAgents.map(item => item === current ? { ...item, ...detail } : item) : detail ? [...nextAgents, detail] : nextAgents);
+        setSelectedAgent(nextAgent);
+        setDeployments(Array.isArray(deploymentResult?.items) ? deploymentResult.items : []);
+        setOperations(Array.isArray(operationResult?.items) ? operationResult.items : []);
         const readyBuild = [...builds].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
         setSelectedBuild(String(readyBuild?.id || ''));
         setLoadedFocus(focus);
@@ -310,6 +310,7 @@ export function createDeliveryPages({
     }, [focus, loadedFocus, status, selectedAgent]);
 
     const currentAgent = agents.find(item => (item?.metadata?.id || item?.id) === selectedAgent);
+    const focusedDeploymentId = focus?.agentId === selectedAgent ? focus?.deploymentId : undefined;
     const builds = [...(Array.isArray(currentAgent?.builds) ? currentAgent.builds : [])].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const readyBuilds = builds.filter(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
     const hasCurrentBuild = readyBuilds.some(item => Number(item.revision || 1) === Number(currentAgent?.metadata?.revision || 1));
@@ -434,7 +435,8 @@ export function createDeliveryPages({
       : h('tr', null, h('td', { colSpan: 4 }, Note(null, '当前 Agent 还没有 Build。')));
     return h('div', { 'data-studio-delivery': 'true', ref: pageElement },
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
-      status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error, action: Button({ onClick: () => load() }, '重新读取') }) : null,
+      status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error,
+        action: Button({ onClick: () => load(focus !== loadedFocus ? focus?.agentId : undefined) }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,
         h('div', { className: 'ad-subject studio-row' },
           h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '✦'),
@@ -457,7 +459,8 @@ export function createDeliveryPages({
                 h('tbody', null, buildRows))),
             builds.length > historyLimit ? Button({ size: 'sm', style: { marginTop: '12px' }, onClick: () => setHistoryLimit(historyLimit + 5) }, '显示更多版本') : null) : null),
         directServerMode
-          ? h(CloudDeploymentPanel, { key: selectedAgent, agentId: selectedAgent, selectedBuild: agentLoading ? '' : selectedBuild, hasCurrentBuild, onBusyChange: setDeploymentBusy })
+          ? h(CloudDeploymentPanel, { key: `${selectedAgent}:${focusedDeploymentId || ''}`, agentId: selectedAgent,
+            deploymentId: focusedDeploymentId, selectedBuild: agentLoading ? '' : selectedBuild, hasCurrentBuild, onBusyChange: setDeploymentBusy })
           : h(Fragment, null, Section({ id: 'sec-deploy', 'data-delivery-section': 'deploy', number: 2, done: hasLiveDeployment && hasCurrentBuild, current: hasCurrentBuild && !hasLiveDeployment, title: '部署', className: !selectedBuild ? 'ad-step-dimmed' : undefined, meta: !selectedBuild ? '构建成功后可以部署' : undefined, help: '当前 Host 没有连接 AgentEngine Server，云端发布不可用；已构建的版本仍可导出运行包或在独立 Host 中运行。' },
             Row({ title: 'Build' }, Select({ value: selectedBuild, onChange: event => setSelectedBuild(event.target.value), disabled: directServerMode }, h('option', { value: '' }, readyBuilds.length ? '请选择 Build' : '暂无成功 Build'), readyBuilds.map(item => h('option', { key: item.id, value: item.id }, `${item.id} · Revision ${item.revision || '—'}`)))),
             Row({ title: '区域' }, Input({ value: region, onChange: event => setRegion(event.target.value), disabled: directServerMode })),

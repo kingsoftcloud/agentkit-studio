@@ -107,13 +107,15 @@ export function createResourcePages({
       if (deleting) return;
       const name = resource.displayName || resource.name || resource.resourceId;
       const cloud = resource.source === 'agentengine-server';
-      const title = cloud ? '删除云端 MCP' : '移除本地 MCP 配置';
-      const detail = cloud ? `确定删除云端 MCP“${name}”吗？这会删除云端资源并清理关联运行实例，所有引用它的 Agent 可能无法继续调用。已有 Agent Revision 不会自动解除绑定。` : `确定移除“${name}”的本地连接配置吗？远端 MCP 服务会保留，引用此配置的 Agent 可能无法继续调用；已有 Revision 不会自动解除绑定。`;
-      if (typeof window !== 'undefined' && !(await (actions.confirm({ title, detail, confirmLabel: cloud ? '删除云端 MCP' : '移除配置', danger: true })))) return;
+      const skill = resource.source === 'local-import' && resourceKind === 'skill';
+      const title = skill ? '移除本地 Skill' : cloud ? '删除云端 MCP' : '移除本地 MCP 配置';
+      const detail = skill ? `确定从资源库移除“${name}”的导入副本吗？可以再次从源目录导入，已引用它的 Agent 可在编辑页取消绑定。`
+        : cloud ? `确定删除云端 MCP“${name}”吗？这会删除云端资源并清理关联运行实例，所有引用它的 Agent 可能无法继续调用。已有 Agent Revision 不会自动解除绑定。` : `确定移除“${name}”的本地连接配置吗？远端 MCP 服务会保留，引用此配置的 Agent 可能无法继续调用；已有 Revision 不会自动解除绑定。`;
+      if (typeof window !== 'undefined' && !await actions.confirm({ title, detail, confirmLabel: skill || cloud ? title : '移除配置', danger: true })) return;
       setDeleting(true); setError(''); setMessage('');
       try {
-        await hostRemote.deleteResource(resource.resourceId, cloud ? 'cloud' : 'local');
-        setMessage(`${name} ${cloud ? '已从云端删除' : '的本地连接配置已移除'}。请在 Agent 编辑页更新相关绑定。`);
+        await hostRemote.deleteResource(resource.resourceId, cloud ? 'cloud' : 'local', skill ? 'skill' : undefined);
+        setMessage(`${name} ${skill ? '已从资源库移除' : cloud ? '已从云端删除' : '的本地连接配置已移除'}。请在 Agent 编辑页更新相关绑定。`);
         await reloadCatalog(true);
       } catch (reason) { setError(reason?.message || '资源删除失败'); }
       finally { setDeleting(false); }
@@ -146,7 +148,8 @@ export function createResourcePages({
       const id = resource.resourceId || resource.id || resource.name;
       const name = resource.displayName || resource.name || id;
       const localMcp = resourceKind === 'mcp' && resource.source === 'local';
-      const canDelete = localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
+      const localSkill = resourceKind === 'skill' && resource.source === 'local-import';
+      const canDelete = localSkill || localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
       const displayStatus = resourceStatusPresentation(resource, resourceKind);
       const needsFix = displayStatus.tone === 'signal' || resource.status === 'credential-missing' || (resourceKind === 'mcp' && displayStatus.label === '已配置，未探测');
       return h('article', { key: id, 'data-studio-resource-card': id, title: displayStatus.detail, className: 'resource-row studio-row' },
@@ -164,7 +167,7 @@ export function createResourcePages({
             resourceKind === 'mcp' && (!needsFix || localMcp) ? h(MenuItemButton, { onSelect: () => void probeMcp(resource) }, '重新探测') : null,
             resourceKind === 'mcp' ? h(MenuItemButton, { onSelect: () => setMcpPreview(resource) }, '查看工具') : null,
             resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h(MenuItemButton, { onSelect: () => void previewInstalledSkill(resource) }, '查看文件') : null,
-            canDelete ? h(MenuItemButton, { disabled: deleting, danger: true, onSelect: () => void remove(resource) }, localMcp ? '移除配置' : '删除云端 MCP') : null)));
+            canDelete ? h(MenuItemButton, { disabled: deleting, danger: true, onSelect: () => void remove(resource) }, localSkill ? '移除本地 Skill' : localMcp ? '移除配置' : '删除云端 MCP') : null)));
     });
     const table = rows.length ? h('div', { 'data-studio-resource-grid': resourceKind, className: 'resource-list', style: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 } }, tableRows) : null;
     const platformTable = platformCatalog ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },
@@ -216,7 +219,10 @@ export function createResourcePages({
       modelDialogOpen ? h(ModelResourceDialog, { onClose: () => setModelDialogOpen(false), onCreated: reloadCatalog }) : null,
       mcpDialogOpen ? h(McpResourceDialog, { resource: mcpEditing, onClose: closeMcpDialog, onCreated: () => { setLibraryRevision(value => value + 1); if (libraryView !== 'catalog') void reloadCatalog(); } }) : null,
       mcpPreview ? h(McpToolsDialog, { resource: mcpPreview, onClose: () => setMcpPreview(null) }) : null,
-      skillDialogOpen ? h(SkillDiscoveryDialog, { onClose: () => setSkillDialogOpen(false), onImported: reloadCatalog }) : null,
+      skillDialogOpen ? h(SkillDiscoveryDialog, { onClose: () => setSkillDialogOpen(false), onImported: () => {
+        if (libraryView === 'installed') void reloadCatalog();
+        else setLibraryView('installed');
+      } }) : null,
       skillPreview ? h(SkillPreviewDialog, { title: skillPreview.title, preview: skillPreview.files, file: skillPreviewFile, onClose: () => { setSkillPreview(null); setSkillPreviewFile(null); }, onSelect: loadSkillFile }) : null,
       resourcePreview ? h(ResourceDialog, { title: resourcePreview.displayName || resourcePreview.name || resourcePreview.resourceId, detail: '只读查看 Host 资源声明。Agent 绑定关系不会在资源库页面修改。', onClose: () => setResourcePreview(null) }, h('pre', { style: { margin: 0, maxHeight: '520px', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: BRAND.ink, background: BRAND.canvas, border: '1px solid ' + BRAND.border, borderRadius: '10px', padding: '12px', fontSize: '11px', lineHeight: 1.5 } }, JSON.stringify(resourcePreview, null, 2))) : null);
   }

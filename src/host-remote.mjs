@@ -148,7 +148,7 @@ export function createStudioHostRemote(options = {}) {
     createMcpResource: payload => request('/api/v1/catalog/mcp-servers', { method: 'POST', body: JSON.stringify(payload) }),
     updateMcpResource: (resourceId, payload) => request(`/api/v1/catalog/mcp-servers/${encodeURIComponent(resourceId)}`, { method: 'PUT', body: JSON.stringify(payload) }),
     probeMcpResource: (resourceId, timeoutSeconds = 15) => request(`/api/v1/catalog/mcp-servers/${encodeURIComponent(resourceId)}:probe?timeoutSeconds=${encodeURIComponent(timeoutSeconds)}`, { method: 'POST' }),
-    discoverSkills: scanPaths => request('/api/v1/catalog/skills:discover', { method: 'POST', body: JSON.stringify({ scanPaths: Array.isArray(scanPaths) ? scanPaths : [] }) }),
+    discoverSkills: (scanPaths, { fromInstalled = false } = {}) => request('/api/v1/catalog/skills:discover', { method: 'POST', body: JSON.stringify({ scanPaths: Array.isArray(scanPaths) ? scanPaths : [], ...(fromInstalled ? { fromInstalled: true } : {}) }) }),
     previewDiscoveredSkill: (inspectionToken, candidateId, path) => request(`/api/v1/catalog/skills/discoveries/${encodeURIComponent(inspectionToken)}/candidates/${encodeURIComponent(candidateId)}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`),
     commitDiscoveredSkill: (inspectionToken, candidateId, overwrite = false) => request(`/api/v1/catalog/skills/discoveries/${encodeURIComponent(inspectionToken)}:commit`, { method: 'POST', body: JSON.stringify({ candidateId, overwrite }) }),
     previewInstalledSkill: (resourceId, path) => request(`/api/v1/catalog/skills/${encodeURIComponent(resourceId)}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`),

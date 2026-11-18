@@ -33,7 +33,8 @@ export function createAgentForm({
     const requirements = creationSeed?.requirements || [];
     const templateSource = creationSeed?.templateSource || initialAgent?.metadata?.templateSource;
     const originalBindings = originalSpec.bindings || {};
-    const idsOf = items => (items || []).map(item => typeof item === 'string' ? item : item.resourceId).filter(Boolean);
+    const bindingId = item => typeof item === 'string' ? item : item?.resourceId || item?.id;
+    const idsOf = items => [...new Set((items || []).map(bindingId).filter(Boolean))];
     const [step, setStep] = useState(0);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
@@ -199,7 +200,10 @@ export function createAgentForm({
             ...(!cloudEditing ? { modelProfileId: selectedModel, modelProfileIds: selectedModels.length ? selectedModels : [selectedModel] } : {}),
             ...(boundPolicy ? { policyTemplate: policy, nativeAgentPolicy: boundPolicy } : {}),
             tools: selectedTools.map(resourceId => (originalBindings.tools || []).find(item => item.resourceId === resourceId) || { resourceId }),
-            mcpServers: selectedMcp.map(resourceId => (originalBindings.mcpServers || []).find(item => item.resourceId === resourceId) || { resourceId }),
+            mcpServers: selectedMcp.map(resourceId => {
+              const existing = (originalBindings.mcpServers || []).find(item => bindingId(item) === resourceId);
+              return typeof existing === 'object' ? { ...existing, resourceId } : { resourceId };
+            }),
             skills: selectedSkills.map(resourceId => (originalBindings.skills || []).find(item => item.resourceId === resourceId) || { resourceId }),
             plugins: builtMemory.plugins,
           },
@@ -230,15 +234,23 @@ export function createAgentForm({
         key: value, selected: form.template === value, title, desc: detail, onClick: () => chooseTemplate(value),
       })))) : null;
 
-    const capabilityPicker = (kind, title, values, setValues) => Row({ title: title || '工具', desc: `${values.length} 已选择` },
-      h('span', { className: 'af-selection-summary' }, values.length ? `${values.length} 项` : '未绑定'),
-      Collapsible({ summary: values.length ? '更改' : '绑定', className: 'af-binding-picker' },
-      catalog[kind]?.length ? h('div', { className: 'af-choices' }, catalog[kind].map(resource => {
-        const id = resource.resourceId;
-        return CheckCard({ key: id, checked: values.includes(id), disabled: resource.disabled === true,
-          title: resource.displayName || resource.name || id, desc: resource.unavailableReason || resource.description || resource.version || '',
-          onChange: event => setValues(current => event.target.checked ? [...current, id] : current.filter(value => value !== id)) });
-      })) : h('div', { className: 'af-empty' }, catalogStatus === 'loading' ? '正在读取目录…' : '暂无可用资源')));
+    const capabilityPicker = (kind, title, values, setValues) => {
+      const entries = catalog[kind] || [];
+      const known = new Set(entries.map(resource => resource.resourceId));
+      const unavailable = kind === 'mcp' || kind === 'skill'
+        ? values.filter(id => !known.has(id)).map(id => ({ resourceId: id, unavailableReason: '当前目录未返回此资源，可取消绑定' })) : [];
+      const choices = [...entries, ...unavailable];
+      return Row({ title: title || '工具', desc: `${values.length} 已选择` },
+        h('span', { className: 'af-selection-summary' }, values.length ? `${values.length} 项` : '未绑定'),
+        Collapsible({ summary: values.length ? '更改' : '绑定', className: 'af-binding-picker' },
+          choices.length ? h('div', { className: 'af-choices' }, choices.map(resource => {
+            const id = resource.resourceId;
+            const checked = values.includes(id);
+            return CheckCard({ key: id, checked, disabled: resource.disabled === true && !checked,
+              title: resource.displayName || resource.name || id, desc: resource.unavailableReason || resource.description || resource.version || '',
+              onChange: event => setValues(current => event.target.checked ? [...new Set([...current, id])] : current.filter(value => value !== id)) });
+          })) : h('div', { className: 'af-empty' }, catalogStatus === 'loading' ? '正在读取目录…' : '暂无可用资源')));
+    };
 
     // Native memory configuration. The local-default path (harness, blank/edit)
     // exposes recall/write/rollout; every other enabled path is cloud-only and

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLocalResourceAdapters, LocalResourceError } from '../src/local-resource-adapters.mjs';
@@ -31,6 +31,26 @@ test('durable cloud Memory writer snapshots its endpoint and credentials and ret
     await assert.rejects(writer.write(prepared, request), { code: 'RESOURCE_ADAPTER_CLOSED' });
     assert.equal(requests.length, 1);
   } finally { await adapters.close(); }
+});
+
+test('a deleted MCP is distinct from a catalog failure or corrupt record', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'studio-mcp-removal-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const resourceStore = createLocalMcpStore({ storeDir: root });
+  const record = await resourceStore.create({ server: { name: 'test-mcp', endpointUrl: 'https://example.test/mcp' } });
+  const cloudRequests = [];
+  const adapters = createLocalResourceAdapters({ resourceStore, serverClient: { action: async (_action, payload) => {
+    cloudRequests.push(payload.Id);
+    throw Object.assign(new Error('Catalog error'), { code: 'SERVER_ACTION_FAILED', status: payload.Id === 'mcp-removed' ? 404 : 503 });
+  } } });
+  t.after(() => adapters.close());
+  await resourceStore.remove(record.resourceId);
+  await assert.rejects(adapters.describeMcp(record.resourceId), { code: 'MCP_NOT_FOUND' });
+  await writeFile(join(root, `${record.resourceId}.json`), 'broken');
+  await assert.rejects(adapters.describeMcp(record.resourceId), { code: 'MCP_RECORD_INVALID' });
+  assert.deepEqual(cloudRequests, []);
+  await assert.rejects(adapters.describeMcp('mcp-removed'), { code: 'MCP_NOT_FOUND' });
+  await assert.rejects(adapters.describeMcp('mcp-catalog-offline'), { code: 'SERVER_ACTION_FAILED', status: 503 });
 });
 
 test('cloud Skill Space with no Skills is a valid empty binding', async () => {

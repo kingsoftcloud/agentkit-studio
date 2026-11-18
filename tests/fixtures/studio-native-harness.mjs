@@ -7,7 +7,7 @@ import { createModelService } from '../../src/model-service.mjs';
 import { createStudioNativeHarness } from './retired-native-harness.mjs';
 import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
-import { dshPresetId } from '../../src/agent-preset-admission.mjs';
+import { dshPresetId, HARNESS_SERVICE_PRESET_SUFFIX } from '../../src/agent-preset-admission.mjs';
 import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
 import { installWorkspaceRepairFault } from './studio-native-workspace-repair.mjs';
 import { installConversationForkControls } from './studio-native-conversation-fork.mjs';
@@ -57,6 +57,14 @@ async function applyProof(ctx, options) {
   try { savedIdentity = JSON.parse(await readFile(identity, 'utf8')); record = await agents.get(savedIdentity.id); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
+    let removedMcp;
+    if (options.mountHost && options.mcpUrl) {
+      const { createLocalMcpStore } = await import('../../src/local-mcp-store.mjs');
+      const store = createLocalMcpStore({ storeDir: join(options.directory, 'studio/resources/mcp') });
+      const added = await store.create({ server: { name: 'removed-mcp-fixture', endpointUrl: options.mcpUrl } });
+      removedMcp = added.resourceId;
+      await store.remove(removedMcp);
+    }
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
         execution: { ...(options.todos || options.planMode || options.conversationFork ? {} : { nativeTodoMode: 'off' }),
@@ -75,7 +83,7 @@ async function applyProof(ctx, options) {
       bindings: { modelProfileIds: ['fixture'], nativeAgentPolicy: {
         contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {},
       }, ...(options.mcpUrl
-        ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.sessionWorkspace ? ['read_workspace_file', 'write_workspace_file'] : options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
+        ? { mcpServers: [removedMcp, 'native-schema-fixture'].filter(Boolean), ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.sessionWorkspace ? ['read_workspace_file', 'write_workspace_file'] : options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
           : options.workspaceRepair ? ['apply_workspace_patch'] : options.contextPruning ? ['run_command'] : options.editCreate ? ['read_workspace_file', 'edit_workspace_file'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files']
           : options.conversationCommandRewind ? ['run_command', 'read_command_output', 'stop_command'] : options.deadlinePolicy || options.conversationRewind ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
@@ -121,7 +129,7 @@ async function applyProof(ctx, options) {
         KSADK_WEB_SEARCH_API_KEY: 'web-proof-search-secret', KSADK_WEB_SSRF_POLICY_JSON: '{"allow_private":true}' } : {}),
       // Exercise the actual product default, including restored presets.
     } });
-    presetId = dshPresetId(record.metadata.id, record.metadata.revision, record.buildId || '');
+    presetId = dshPresetId(record.metadata.id, record.metadata.revision, record.buildId || '') + HARNESS_SERVICE_PRESET_SUFFIX;
   } else {
     const bridge = mountRuntimeBridge(ctx);
     const models = createModelService({
@@ -207,8 +215,12 @@ async function applyProof(ctx, options) {
             await new Promise(resolve => setTimeout(resolve, 25));
           }
         }
-        if (!rows.some(row => row.name === '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin'
-          && row.config?.nativeEngineContract === 'agentkit.native-dsh-turn/v1')) throw Error('Production Native preset was not admitted');
+        const runtime = rows.find(row => row.name === '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin'
+          && row.config?.nativeEngineContract === 'agentkit.native-dsh-turn/v1');
+        if (!runtime) throw Error('Production Native preset was not admitted');
+        if (options.mcpUrl && !runtime.config.toolContracts.some(tool => tool.mcpResourceId === 'native-schema-fixture')) {
+          throw Error('A removed MCP hid the remaining working MCP contract');
+        }
       }
       if (source === 'resume' || options.conversationFork && agent.session.header.isSeeded) {
         if (ctx.sessionProjections.stateOf(agent.session, 'agentPreset') !== presetId) throw Error('Native preset identity was not persisted');

@@ -5,6 +5,16 @@ import { randomUUID } from 'node:crypto';
 import { sha256, portableError } from './portable-resources.mjs';
 
 const valid = id => /^dep_[a-f0-9]{32}$/.test(id || '');
+const withoutCredentials = ({ managedEnvironment, ...plan }) => plan;
+const intentFingerprint = ({ resourceCounts, ...plan }) => sha256(JSON.stringify(plan));
+
+function removeLegacyCredentials(record) {
+  record.plan = withoutCredentials(record.plan);
+  for (const version of [record.activeVersion, record.rollout, ...(record.versions || []), ...(record.rolloutHistory || [])]) {
+    if (version?.plan) version.plan = withoutCredentials(version.plan);
+  }
+  return record;
+}
 // Network homes, synced folders and filesystems without directory fsync support
 // reject fsync with these codes while still accepting the write. Directory fsync
 // only protects the new directory entry against power loss and the record content
@@ -55,12 +65,13 @@ export function createDeploymentStore({ storeDir, clock = Date.now, fs = nodeFs 
     try {
       const record = JSON.parse(text);
       if (record.id !== id || record.format !== 'agentkit.deployment/v1' || !record.plan || !Array.isArray(record.events)) throw Error();
-      return record;
+      return removeLegacyCredentials(record);
     } catch { throw portableError('DEPLOYMENT_RECORD_CORRUPT', '部署记录损坏，请保留文件并核对云端结果，不能重新提交创建'); }
   }
   async function create(plan, idempotencyKey) {
     await ready;
     if (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) throw portableError('DEPLOYMENT_REQUEST_ID_REQUIRED', '部署需要独立的请求标识');
+    plan = withoutCredentials(plan);
     const id = `dep_${sha256(idempotencyKey).slice(0, 32)}`, fingerprint = sha256(JSON.stringify(plan)), now = timestamp();
     const record = { format: 'agentkit.deployment/v1', id, fingerprint, plan, state: 'PREPARED', createdAt: now, updatedAt: now,
       cloudAgentId: null, requestId: randomUUID(), events: [{ at: now, state: 'PREPARED' }] };
@@ -69,7 +80,7 @@ export function createDeploymentStore({ storeDir, clock = Date.now, fs = nodeFs 
     catch (error) {
       if (error.code !== 'EEXIST') throw storageFailure(error, '写入', storeDir);
       const existing = await get(id);
-      if (existing.fingerprint !== fingerprint) throw portableError('DEPLOYMENT_IDEMPOTENCY_CONFLICT', '同一请求标识已用于不同部署，请刷新后检查已有记录');
+      if (existing.fingerprint !== fingerprint && intentFingerprint(existing.plan) !== intentFingerprint(plan)) throw portableError('DEPLOYMENT_IDEMPOTENCY_CONFLICT', '同一请求标识已用于不同部署，请刷新后检查已有记录');
       return { record: existing, created: false };
     }
     finally { await fs.rm(temporary, { force: true }); }
