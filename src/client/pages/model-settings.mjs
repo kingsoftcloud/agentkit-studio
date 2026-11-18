@@ -137,14 +137,27 @@ const SOURCE_LABELS = {
 const PROVIDER_LABELS = { ksyun: '金山云模型服务', openai: 'OpenAI' };
 
 /** Reasoner labels shared by the「思考等级」selector and its notices. */
-const REASONING_LABELS = { low: '低', medium: '中', high: '高', max: '最高' };
+/**
+ * Level names for the selector.
+ *
+ * `minimal` is missing on purpose: 星流 reads it as「关闭思考」and glm-5.3
+ * refuses it outright, while kimi-k3.1-pro accepts it on Chat and refuses it
+ * on Responses. A level the product cannot promise does not belong in a picker.
+ */
+const REASONING_LABELS = { low: '低', medium: '中', high: '高', xhigh: '极高', max: '最高' };
 
-/** One line per provider explaining what the selector actually sends. */
+/**
+ * One line per provider explaining what the selector actually sends.
+ *
+ * The 星流 rows are measured, not assumed: `low` through `max` answer 200 on
+ * kimi-k3, kimi-k3.1-pro, deepseek-v4.1-flash and glm-5.3 on both wires
+ * (`scripts/verify-model-wire.mjs`). `minimal` is the level that splits them.
+ */
 const REASONING_HINTS = {
-  ksyun: '金山云接受 low/high/max，按所选值原样发送。',
-  deepseek: 'DeepSeek 接受 low/high/max，按所选值原样发送。',
-  openai: 'OpenAI 只接受 minimal/low/medium/high；没有「最高 → max」，越界档位不会被发送。',
-  codex: 'Codex 只接受 minimal/low/medium/high，「最高」会按 high 发送。',
+  ksyun: '星流接受 低/中/高/极高/最高（low/medium/high/xhigh/max），按所选值原样发送。',
+  deepseek: 'DeepSeek 接受 低/中/高/极高/最高（low/medium/high/xhigh/max），按所选值原样发送。',
+  openai: 'OpenAI 的枚举止于 high；没有「极高」和「最高」，越界档位不会被发送。',
+  codex: 'Codex App Server 的枚举止于 high，「极高」和「最高」会按 high 发送。',
   custom: '未识别的提供商只提供低/高两档，并按同名值发送，避免上游拒绝非法档位。',
 };
 const reasoningHint = capability => REASONING_HINTS[capability.provider] || REASONING_HINTS.custom;
