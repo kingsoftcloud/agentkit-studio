@@ -271,11 +271,14 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { createNativeEngineRuntime, createHarnessServiceModelAdapter, HARNESS_SERVICE_MODEL_PROVIDER } = await import('../providers/native-engine-runtime.mjs');
   const { engineServiceWorkspaces, canonicalEngineWorkspace } = await import('../providers/engine-service-workspaces.mjs');
   const externalRoutes = engineServiceWorkspaces(runtimeEnv);
+  const credentials = credentialsService;
+  const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const starHarness = !managedRuntime && !portableRuntime
-    ? await import('./services/star-harness.mjs').then(({ createStarHarnessManager }) => createStarHarnessManager({
+    ? await import('./services/star-harness.mjs').then(async ({ createStarHarnessManager }) => createStarHarnessManager({
       root: join(studioStoreDir, 'star-harness'), env: runtimeEnv, externalRoutes,
       packageManager: ctx.get('profileContext')?.packageManager,
       profile: id => models.profile(id), settings: () => models.settings(),
+      modelProfiles: (await models.settings()).modelProfiles,
       workspaceRegistry: () => ctx.get('workspaceRegistry'),
       bundledVersion: createRequire(import.meta.url)('../../package.json').dependencies['@kingsoftcloud/agentkit-harness-node'],
     })) : undefined;
@@ -319,8 +322,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // adapters. The Host can service model discovery while this async plugin
   // scope is still activating, so a deployment callback must never observe a
   // temporal-dead-zone binding for the portable bundle service.
-  const credentials = credentialsService;
-  const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
   await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
@@ -346,9 +347,13 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     // Session preset; read it here so Codex's own sandbox follows the picker.
     permissionModeForSession: session => {
       try {
-        const current = ctx.get?.('permissionPresets')?.current?.(session);
-        if (typeof current === 'string' && current) return current;
-        return ctx.get?.('sessionProjections')?.stateOf?.(session, 'sandboxMode') ?? undefined;
+        const sandbox = ctx.get?.('sandboxPolicy');
+        const override = sandbox?.overrideOf?.(session);
+        if (override) return override;
+        const presets = ctx.get?.('permissionPresets');
+        const current = presets?.current?.(session);
+        if (current && current !== 'custom') return presets.resolve?.(current)?.sandbox ?? sandbox?.defaultMode ?? current;
+        return sandbox?.defaultMode;
       } catch { return undefined; }
     },
     requestNativeApproval: (agent, request) => {

@@ -337,9 +337,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             rest = await engine.status(runId);
             if (rest.running) continue;
             const approval = rest.pendingApproval;
-            if (!approval || !engine.approve || !onApproveTool) break;
+            if (!approval || !engine.approve) break;
             signal?.throwIfAborted();
-            const decision = await onApproveTool(approval);
+            const decision = onApproveTool ? await onApproveTool(approval) : 'deny';
             signal?.throwIfAborted();
             const receipt = await engine.approve(runId, approval.interactionId, decision);
             if (!['accepted', 'duplicate'].includes(receipt?.status))
@@ -443,6 +443,7 @@ function approvalReason(request) {
 function runFailureMessage(rest) {
   if (text(rest.modelError)) return rest.modelError;
   const reason = rest.reason ?? rest.phase ?? 'unknown';
+  if (reason === 'effect_outcome_unknown') return '工具已提交执行，但未能确认结果。请核对实际文件或终端状态，再发消息继续。';
   if (rest.phase === 'paused') return `任务已暂停（${reason}），可稍后继续。`;
   return `任务未完成（${reason}）。`;
 }

@@ -2,7 +2,7 @@
 // against a local model fixture. Studio code under test imports no engine module.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, renameSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -744,7 +744,7 @@ test('a committed provider backoff explains the wait before any retry actually s
   assert.equal(f.model.requests.length, 2);
 });
 
-test('Studio-installed Star Harness binds two isolated workers and retains Run history after a Host restart', { timeout: 30000 }, async t => {
+test('Studio-installed Star Harness routes registered workspaces to isolated workers and retains Run history after a Host restart', { timeout: 30000 }, async t => {
   const { createStarHarnessManager } = await import('../src/host/services/star-harness.mjs');
   const projects = await Promise.all(['Alpha', 'Beta'].map(async label => {
     const project = await setup(t, [
@@ -762,8 +762,10 @@ test('Studio-installed Star Harness binds two isolated workers and retains Run h
   const open = () => createStarHarnessManager({
     root, env: { PATH: process.env.PATH }, externalRoutes: new Map(), bundledVersion: version,
     releases: { entry: async () => release, install: async () => release, latest: async () => version },
+    modelProfiles: [{ id: 'Beta', modelName: 'Beta', default: true }],
+    workspaceRegistry: () => ({ list: () => [{ path: realpathSync(beta.cwd) }] }),
     settings: async () => ({ modelProfiles: projects.map(project => ({ id: project.label })) }),
-    profile: async id => {
+    profile: async (id = 'Beta') => {
       const project = projects.find(item => item.label === id);
       return { id, modelName: id, baseUrl: project.model.url, apiKey: 'fixture-only' };
     },
@@ -774,8 +776,7 @@ test('Studio-installed Star Harness binds two isolated workers and retains Run h
   try {
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
     await manager.install(version);
-    await assert.rejects(manager.setEnabled(true), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
-    for (const project of projects) await manager.bind(project.cwd, project.label);
+    await manager.bind(alpha.cwd, alpha.label);
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
     await manager.setEnabled(true);
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: true });
