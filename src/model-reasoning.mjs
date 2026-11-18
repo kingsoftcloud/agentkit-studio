@@ -32,16 +32,27 @@
  * other module invents a wire value.
  */
 export const REASONING_PROFILES = Object.freeze({
+  // 星流 serves the whole DSH level range on both wires — `low` through `max`
+  // answer 200 on kimi-k3, kimi-k3.1-pro, deepseek-v4.1-flash and glm-5.3 —
+  // so the selector offers the five levels an operator can tell apart. The
+  // historical low/high/max row was a guess that dropped `medium` and `xhigh`
+  // for no reason; see `scripts/verify-model-wire.mjs` for how the gateway is
+  // asked rather than assumed.
+  //
+  // `minimal` stays out: it is the "thinking off" spelling, and gateways
+  // disagree about it — glm-5.3 refuses it outright ("不支持关闭思考模式") while
+  // kimi-k3.1-pro accepts it on Chat and refuses it on Responses. A level the
+  // product cannot promise belongs behind a probe, not in the default row.
   ksyun: Object.freeze({
     provider: 'ksyun',
-    levels: Object.freeze(['low', 'high', 'max']),
-    wire: Object.freeze({ low: 'low', high: 'high', max: 'max' }),
+    levels: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']),
+    wire: Object.freeze({ low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' }),
     default: 'high',
   }),
   deepseek: Object.freeze({
     provider: 'deepseek',
-    levels: Object.freeze(['low', 'high', 'max']),
-    wire: Object.freeze({ low: 'low', high: 'high', max: 'max' }),
+    levels: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']),
+    wire: Object.freeze({ low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' }),
     default: 'high',
   }),
   openai: Object.freeze({
@@ -76,7 +87,7 @@ export const REASONING_FALLBACK_PROFILE = Object.freeze({
 });
 
 /** Every level a Studio declaration may expose, in canonical order. */
-export const STUDIO_REASONING_LEVELS = Object.freeze(['low', 'medium', 'high', 'max']);
+export const STUDIO_REASONING_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 
 /** Legacy alias for the DeepSeek-style wire map, kept for importers. */
 export const STUDIO_REASONING_WIRE = REASONING_PROFILES.ksyun.wire;
