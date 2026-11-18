@@ -21,7 +21,7 @@ function descendants(node) {
 }
 
 const state = { version: '0.0.24', availableUpgrade: '0.0.25', enabled: false,
-  models: [], workspaces: [{ workspace: '/tmp/previous-workspace', missing: true }] };
+  models: [], workspaces: [{ workspace: '/tmp/external-workspace', external: true, running: true }] };
 
 test('the Star Harness card applies an upgrade once and explains automatic workspace selection', async () => {
   const installed = Promise.withResolvers();
@@ -30,6 +30,7 @@ test('the Star Harness card applies an upgrade once and explains automatic works
     installStarHarness(version) { requests.push(version); return installed.promise; },
   }, events);
   const elements = descendants(view);
+  assert.doesNotMatch(JSON.stringify(view), /external-workspace/);
   const upgrade = elements.find(node => node.type === 'button' && node.children.includes('升级'));
   assert.ok(elements.some(node => node.type === 'p' && node.children.some(child => typeof child === 'string' && child.includes('会话在 Studio 中选择的工作区'))));
   const pending = upgrade.props.onClick();

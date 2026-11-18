@@ -86,10 +86,6 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
           button(reinstall ? '重新安装' : status.version ? '升级' : '安装', install,
             disabled || !requested || status.version === requested && !reinstall),
           status.previousVersion ? button('回退到 ' + status.previousVersion, restore, disabled) : null),
-        h('p', { style: muted }, '启用后，Star Harness 会使用会话在 Studio 中选择的工作区。'),
-        status.workspaces?.some(item => item.external) ? h('ul', { style: { ...stack, margin: 0, padding: 0, listStyle: 'none' } },
-          status.workspaces.filter(item => item.external).map(item => h('li', { key: item.workspace },
-            h('strong', { style: { overflowWrap: 'anywhere' } }, item.workspace),
-            h('p', { style: muted }, ['外部管理', item.model, item.running ? '运行中' : '未连接', item.version].filter(Boolean).join(' · '))))) : null) : null);
+        h('p', { style: muted }, '启用后，Star Harness 会使用会话在 Studio 中选择的工作区。')) : null);
   };
 }
