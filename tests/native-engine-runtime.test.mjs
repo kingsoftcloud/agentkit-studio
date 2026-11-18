@@ -2,7 +2,7 @@
 // against a local model fixture. Studio code under test imports no engine module.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -608,6 +608,42 @@ test('an uncertain bound A2A Send pauses the independent Run without a model ret
   assert.equal(f.model.requests.length, 1);
   assert.ok(chunks.some(chunk => chunk.type === 'engine-event' && chunk.event?.status === 'uncertain')
     || chunks.some(chunk => chunk.type === 'text' && /effect_outcome_unknown|任务已暂停/.test(chunk.text)));
+});
+
+test('an unconfirmed terminal effect is visible and the same session can send a new turn', { timeout: 15000,
+  skip: process.platform === 'win32',
+}, async t => {
+  const f = await setup(t, [
+    toolCall('one-command', 'run_command', { command: 'printf x >> once.txt && sleep 2' }),
+    final('Continued in the same session.'),
+  ]);
+  const runtime = await serviceRuntime(t, f);
+  const stateDir = join(f.cwd, '..', 'service-state');
+  const output = join(f.cwd, 'once.txt');
+  let interrupted = false;
+  // The command has already appended its marker. Break only its owned stdout
+  // receipt so the next turn can prove that the command was never repeated.
+  const inject = setInterval(() => {
+    if (interrupted || !existsSync(output)) return;
+    const stdout = readdirSync(stateDir, { recursive: true }).find(path => String(path).endsWith('/stdout'));
+    if (!stdout) return;
+    chmodSync(join(stateDir, stdout), 0o644);
+    interrupted = true;
+  }, 10);
+  t.after(() => clearInterval(inject));
+
+  const turn = { ...f.options, sandbox: 'danger-full-access', signal: AbortSignal.timeout(10000),
+    requestPolicyApproval: () => assert.fail('full-access workspace command should not prompt') };
+  const first = await collect(runtime.stream(turn));
+  clearInterval(inject);
+  assert.equal(interrupted, true);
+  assert.equal(first.findLast(chunk => chunk.event?.kind === 'run.terminal')?.event.reason, 'effect_outcome_unknown');
+  assert.match(first.findLast(chunk => chunk.type === 'text')?.text ?? '', /工具执行结果未确认/);
+  assert.equal(f.model.requests.length, 1);
+  const next = await collect(runtime.stream({ ...turn, input: 'Continue now.', turnId: '2' }));
+  assert.equal(next.findLast(chunk => chunk.type === 'text')?.text, 'Continued in the same session.');
+  assert.equal(f.model.requests.length, 2);
+  assert.equal(readFileSync(output, 'utf8'), 'x');
 });
 
 test('two workspace bindings isolate writes, model traffic and Run history even with identical Session and Run IDs', async t => {

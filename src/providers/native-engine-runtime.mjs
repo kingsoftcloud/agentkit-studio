@@ -347,7 +347,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           }
         }
         // The final answer is the Run's delivered text; commentary during the task was shown as progress.
-        if (text(rest.finalText ?? finalText)) yield { type: 'text', text: rest.finalText ?? finalText };
+        const answer = rest.finalText ?? finalText;
+        if (text(answer)) yield { type: 'text', text: answer };
+        else if (rest.terminal && rest.reason === 'effect_outcome_unknown')
+          yield { type: 'text', text: runFailureMessage(rest) };
         if (!rest.terminal || rest.outcome === 'failed' || rest.phase === 'failed')
           throw failure('NATIVE_ENGINE_RUN_INCOMPLETE', runFailureMessage(rest));
       } finally {
@@ -443,7 +446,7 @@ function approvalReason(request) {
 function runFailureMessage(rest) {
   if (text(rest.modelError)) return rest.modelError;
   const reason = rest.reason ?? rest.phase ?? 'unknown';
-  if (reason === 'effect_outcome_unknown') return '工具已提交执行，但未能确认结果。请核对实际文件或终端状态，再发消息继续。';
+  if (reason === 'effect_outcome_unknown') return '工具执行结果未确认。请先核对实际结果，再发消息继续。';
   if (rest.phase === 'paused') return `任务已暂停（${reason}），可稍后继续。`;
   return `任务未完成（${reason}）。`;
 }
