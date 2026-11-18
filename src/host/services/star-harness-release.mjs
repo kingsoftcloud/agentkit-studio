@@ -173,13 +173,13 @@ export async function inspectStarHarness(connection, { version, signal, required
   }
 }
 
-export async function startStarHarness({ packageDirectory, version, workspaceRoot, stateDir, profile, env = process.env, signal }) {
+export async function startStarHarness({ packageDirectory, version, workspaceRoot, stateDir, profile, agentId = 'studio-local-harness', env = process.env, signal }) {
   signal?.throwIfAborted();
   const token = randomBytes(32).toString('base64url');
   const search = Object.fromEntries(Object.entries(env).filter(([name]) =>
     /^(?:(?:AGENTKIT_ENGINE|KSADK|OPENCLAW)_WEB_SEARCH_(?:PROVIDER|BASE_URL|API_KEY|SCOPE)|KSADK_MCP_KEY|KSC_AIPRO_API_KEY|KSC_AIPRO_APIKEY|AIPRO_API_KEY)$/.test(name)));
   const child = fork(workerEntry, [packageDirectory, '--workspace', workspaceRoot, '--state-dir', stateDir,
-    '--agent', 'studio-local-harness'], {
+    '--agent', agentId], {
     execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     env: { ...childEnvironment(env), ...search, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_MODEL_BASE_URL: profile.baseUrl,

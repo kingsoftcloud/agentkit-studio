@@ -184,6 +184,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const policy = useService ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !useService ? undefined : async request => {
+        if (useService && request.tool === 'run_command' && env.AGENTKIT_MANAGED_STAR_HARNESS === '1') return 'deny';
         if (useService && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
           && !request.requiresUserApproval && !request.childRunId) return 'allow';
         const requiresApproval = request.requiresUserApproval === true || useService && sandbox === 'workspace-write'
