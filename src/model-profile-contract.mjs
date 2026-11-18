@@ -40,3 +40,34 @@ export function modelRuntimeOptions(profile) {
   return Object.fromEntries(MODEL_RUNTIME_OPTION_KEYS.filter(key => profile[key] !== undefined)
     .map(key => [key, structuredClone(profile[key])]));
 }
+
+/**
+ * The wire a profile speaks to its model gateway.
+ *
+ * A profile has two routes to the same gateway — the Codex loopback proxy and
+ * the DSH provider — and both have to agree on the wire. The Codex side already
+ * honours `codexApi` (`src/providers/codex-configured-models.mjs`); the DSH
+ * side hardcoded `openai-completions`, so a profile that declares Responses
+ * still reached the gateway through the Chat conversion, losing reasoning items
+ * and the tool-call semantics for nothing.
+ *
+ * **`codexApi` deliberately does not feed this.** It is the「Codex 模型接口」
+ * selector — a statement about Codex, not about the gateway — and it defaults to
+ * Responses for every profile. Reading it here would flip every existing DSH
+ * route onto the Responses wire, which 42 of 星流's 59 models do not implement
+ * (they answer 404). Only `protocol` opts a profile into Responses, and a
+ * profile that declares nothing keeps the historical Chat wire, so an existing
+ * configuration does not change behaviour by being read.
+ *
+ * Use `probeModelWire()` (`src/model-wire-probe.mjs`) to find out which wire a
+ * model actually speaks before setting `protocol`.
+ *
+ * @param {object} profile - the resolved model profile.
+ * @returns {'openai-completions' | 'openai-responses' | 'anthropic-messages'}
+ */
+export function providerWireApi(profile) {
+  const protocol = String(profile?.protocol ?? '').trim();
+  if (protocol === 'openai-responses') return 'openai-responses';
+  if (protocol === 'anthropic-messages') return 'anthropic-messages';
+  return 'openai-completions';
+}

@@ -2,6 +2,7 @@ import { isCredentialRefName } from '../../credential-ref.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { studioReasoning } from '../../model-reasoning.mjs';
+import { providerWireApi } from '../../model-profile-contract.mjs';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
 
 export const DEFAULT_KSYUN_BASE_URL = 'http://kspmas.ksyun.com/v1';
@@ -80,14 +81,20 @@ export function createModelBridge({ hostRemote }) {
         // alone; on a catalog route the session-level choice carries it.
         const dedicated = models.length === 1 && models[0].id === modelName;
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
-          displayName: `${provider} · ${modelName}`, api: 'openai-completions', apiKeyEnv: credentialName,
+          displayName: `${provider} · ${modelName}`, api: providerWireApi(profile), apiKeyEnv: credentialName,
           baseURL: baseUrl,
           // Kspmas validates message roles and answers
           // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends
           // the system prompt as `developer` to every reasoning model on a route
           // it does not detect as non-standard, and a Studio route is always an
           // OpenAI-compatible gateway pi-ai cannot know: keep `system`.
-          compat: { supportsDeveloperRole: false },
+          //
+          // `store` is the same story one field over: the proxy is stateless
+          // (a `previous_response_id` is refused outright), so a gateway that
+          // only implements the older request shape — LiteLLM and friends —
+          // rejects the key itself, and dropping it costs a stateless route
+          // nothing it could have used.
+          compat: { supportsDeveloperRole: false, supportsStore: false },
           // A concrete route default keeps fresh sessions on a thinking level
           // instead of DSH's "provider default" row, which would omit the
           // parameter and leave thinking to the gateway's own default.

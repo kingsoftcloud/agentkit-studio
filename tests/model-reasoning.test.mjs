@@ -165,7 +165,7 @@ test('a gateway catalog route never declares a route default its siblings cannot
   // Kspmas answers `400 Invalid request: role 'developer' is not allowed`, and
   // pi-ai sends the system prompt as `developer` to every reasoning model on a
   // route it cannot detect as non-standard.
-  assert.deepEqual(provider.compat, { supportsDeveloperRole: false });
+  assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
   const routed = provider.models.find(model => model.id === 'deepseek-v4.1-flash-1017');
   assert.deepEqual(routed.reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
   // The sibling catalog entry must not inherit a capability its profile never
@@ -183,7 +183,7 @@ test('a route serving this profile model alone keeps the concrete route default'
   await bridge.applyProfiles({ profiles: [reasoner] });
   const provider = providers['agentkit-studio-reasoner'];
   assert.equal(provider.reasoning, 'high');
-  assert.deepEqual(provider.compat, { supportsDeveloperRole: false });
+  assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
   assert.deepEqual(provider.models[0].reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
 });
 
@@ -197,6 +197,30 @@ test('a default profile without a reasoning declaration clears a stale default e
   // A level left behind by an earlier profile would fail every fresh session
   // for an effort this model never declared.
   assert.deepEqual(defaultOps.find(op => op.path[0] === 'reasoningEffort'), { op: 'unset', path: ['reasoningEffort'] });
+});
+
+test('the DSH route speaks the wire the profile declares', async () => {
+  // The Codex loopback proxy already honours `codexApi`; the DSH provider
+  // hardcoded `openai-completions`, so a profile configured for Responses
+  // still reached its gateway through the Chat conversion — losing reasoning
+  // items and the tool-call semantics for nothing. `protocol` is the more
+  // precise declaration and wins; a profile that declares neither keeps the
+  // historical Chat wire.
+  for (const [patch, expected] of [
+    [{}, 'openai-completions'],
+    [{ codexApi: 'chat-completions' }, 'openai-completions'],
+    // `codexApi` is the Codex selector; it must not flip the DSH route onto a
+    // wire 42 of 星流's 59 models do not implement.
+    [{ codexApi: 'responses' }, 'openai-completions'],
+    [{ protocol: 'openai-chat' }, 'openai-completions'],
+    [{ protocol: 'openai-responses' }, 'openai-responses'],
+    [{ protocol: 'anthropic-messages' }, 'anthropic-messages'],
+    [{ protocol: 'openai-chat', codexApi: 'responses' }, 'openai-completions'],
+  ]) {
+    const { bridge, providers } = bridgeContext([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] }]);
+    await bridge.applyProfiles({ profiles: [{ ...reasoner, ...patch }] });
+    assert.equal(providers['agentkit-studio-reasoner'].api, expected, JSON.stringify(patch));
+  }
 });
 
 test('an OpenAI profile routes only OpenAI-legal wire values into DSH', async () => {
@@ -241,7 +265,8 @@ test('the portable bridge publishes the same declaration', async () => {
   assert.equal(value.reasoning, 'high');
   // Kspmas rejects the `developer` role pi-ai would otherwise send for a
   // reasoning model, so every Studio route keeps the system role.
-  assert.deepEqual(value.compat, { supportsDeveloperRole: false });
+  assert.equal(value.api, 'openai-completions', 'an undeclared profile keeps the Chat wire');
+  assert.deepEqual(value.compat, { supportsDeveloperRole: false, supportsStore: false });
   assert.deepEqual(value.models[0].reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
 
   await syncPortableModelProfiles({ settings, profiles: [{
