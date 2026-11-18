@@ -4,6 +4,7 @@ import { dshModelSelection } from './agent-preset-admission.mjs';
 import { portableError } from './portable-resources.mjs';
 import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { studioReasoning } from './model-reasoning.mjs';
+import { providerWireApi } from './model-profile-contract.mjs';
 
 const OPERATING_MAX_OUTPUT_TOKENS = 8192;
 
@@ -30,7 +31,7 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
     routes.add(route);
     const reasoning = studioReasoning(profile);
     const facts = await profileCapabilities(profile, resolveCapabilities);
-    const value = { displayName: `${profile.provider} · ${profile.modelName}`, api: 'openai-completions', apiKeyEnv: profile.credentialName,
+    const value = { displayName: `${profile.provider} · ${profile.modelName}`, api: providerWireApi(profile), apiKeyEnv: profile.credentialName,
       baseURL: profile.baseUrl,
       // Kspmas validates message roles and answers
       // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends the

@@ -40,3 +40,29 @@ export function modelRuntimeOptions(profile) {
   return Object.fromEntries(MODEL_RUNTIME_OPTION_KEYS.filter(key => profile[key] !== undefined)
     .map(key => [key, structuredClone(profile[key])]));
 }
+
+/**
+ * The wire a profile speaks to its model gateway.
+ *
+ * A profile has two routes to the same gateway — the Codex loopback proxy and
+ * the DSH provider — and both have to agree on the wire. The Codex side already
+ * honours `codexApi` (`src/providers/codex-configured-models.mjs`); the DSH
+ * side hardcoded `openai-completions`, so a profile configured for Responses
+ * still reached the gateway through the Chat conversion, losing reasoning items
+ * and the tool-call semantics for nothing.
+ *
+ * `protocol` is the configuration-level spelling of the same fact and wins
+ * because it is the more precise declaration. A profile that declares neither
+ * keeps the historical Chat wire, so an existing configuration does not change
+ * behaviour by being read.
+ *
+ * @param {object} profile - the resolved model profile.
+ * @returns {'openai-completions' | 'openai-responses' | 'anthropic-messages'}
+ */
+export function providerWireApi(profile) {
+  const protocol = String(profile?.protocol ?? '').trim();
+  if (protocol === 'openai-responses') return 'openai-responses';
+  if (protocol === 'anthropic-messages') return 'anthropic-messages';
+  if (protocol === 'openai-chat') return 'openai-completions';
+  return profile?.codexApi === 'responses' ? 'openai-responses' : 'openai-completions';
+}

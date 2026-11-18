@@ -781,9 +781,9 @@ export function createModelSettingsSection({
           h('summary', null, '连接与思考模式'),
           h('div', { className: 'ms-grid ms-grid-2' },
             h('label', { className: 'ms-field studio-srow' },
-              h('span', { className: 'ms-label' }, 'Codex 连接协议'),
+              h('span', { className: 'ms-label' }, '连接协议'),
               h('select', {
-                className: 'ms-select', 'aria-label': 'Codex 连接协议',
+                className: 'ms-select', 'aria-label': '连接协议',
                 value: selected.codexApi || 'responses',
                 onChange: event => setProfile(selectedIndex, 'codexApi', event.target.value),
               }, h('option', { value: 'responses' }, 'Responses'), h('option', { value: 'chat-completions' }, 'Chat Completions'))),

@@ -199,6 +199,28 @@ test('a default profile without a reasoning declaration clears a stale default e
   assert.deepEqual(defaultOps.find(op => op.path[0] === 'reasoningEffort'), { op: 'unset', path: ['reasoningEffort'] });
 });
 
+test('the DSH route speaks the wire the profile declares', async () => {
+  // The Codex loopback proxy already honours `codexApi`; the DSH provider
+  // hardcoded `openai-completions`, so a profile configured for Responses
+  // still reached its gateway through the Chat conversion — losing reasoning
+  // items and the tool-call semantics for nothing. `protocol` is the more
+  // precise declaration and wins; a profile that declares neither keeps the
+  // historical Chat wire.
+  for (const [patch, expected] of [
+    [{}, 'openai-completions'],
+    [{ codexApi: 'chat-completions' }, 'openai-completions'],
+    [{ codexApi: 'responses' }, 'openai-responses'],
+    [{ protocol: 'openai-chat' }, 'openai-completions'],
+    [{ protocol: 'openai-responses' }, 'openai-responses'],
+    [{ protocol: 'anthropic-messages' }, 'anthropic-messages'],
+    [{ protocol: 'openai-chat', codexApi: 'responses' }, 'openai-completions'],
+  ]) {
+    const { bridge, providers } = bridgeContext([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] }]);
+    await bridge.applyProfiles({ profiles: [{ ...reasoner, ...patch }] });
+    assert.equal(providers['agentkit-studio-reasoner'].api, expected, JSON.stringify(patch));
+  }
+});
+
 test('an OpenAI profile routes only OpenAI-legal wire values into DSH', async () => {
   const providers = [];
   const ctx = { remote: {
@@ -239,6 +261,7 @@ test('the portable bridge publishes the same declaration', async () => {
   }] });
   const value = providers['agentkit-studio-portable'];
   assert.equal(value.reasoning, 'high');
+  assert.equal(value.api, 'openai-completions', 'an undeclared profile keeps the Chat wire');
   // Kspmas rejects the `developer` role pi-ai would otherwise send for a
   // reasoning model, so every Studio route keeps the system role.
   assert.deepEqual(value.compat, { supportsDeveloperRole: false });
