@@ -16,7 +16,7 @@ import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } fro
 
 /** Runtimes that run in their own process behind the stream seam. */
 import { dshModelFailure } from '../model-failure.mjs';
-import { createCodexToolRecorder } from './codex-tool-events.mjs';
+import { createCodexToolRecorder, createResponsesToolRecorder } from './codex-tool-events.mjs';
 import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
@@ -895,6 +895,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           ];
         }
       }
+      const toolRecorder = routed?.source === 'agentengine-managed-runtime' ? createResponsesToolRecorder(toolAgent?.session) : null;
       try {
         const upstream = await cloudClient.streamAction('RunAgent', {
           AgentId: agentId,
@@ -906,7 +907,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           ...(businessUserId ? { UserId: businessUserId } : {}),
         }, { signal: options.signal });
         let assistantText = '';
-        for await (const frame of cloudFrames(upstream.body, options.signal)) {
+        for await (const frame of cloudFrames(upstream.body, options.signal, { onEvent: toolRecorder?.observe })) {
           if (frame?.type === 'text-delta') assistantText += String(frame.text || '');
           yield frame;
         }
@@ -944,7 +945,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           }).catch(() => {});
         }
         throw error;
-      }
+      } finally { toolRecorder?.close(); }
     },
   };
   if (bridge) {

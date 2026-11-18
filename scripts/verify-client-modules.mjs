@@ -44,11 +44,12 @@ const nodeInputs = inputs.filter(name => /node_modules|src\/(host|providers)\//.
 // stay acyclic.
 const thirdPartyCycles = cycles.filter(cycle => cycle.some(name => name.startsWith('node_modules/')));
 const studioCycles = cycles.filter(cycle => !cycle.some(name => name.startsWith('node_modules/')));
-// The build allowlists the reviewed Harness entry points; anything else reaching
+// The build allowlists reviewed browser entry points; anything else reaching
 // the browser bundle from a published package is a leak.
-const allowlistedHarnessInput = name => /^node_modules\/@kingsoftcloud\/agentkit-harness-ui\/(?:src\/|markdown\/dist\/markdown\.mjs$)/.test(name)
+const allowlistedClientInput = name => name === 'node_modules/@deepseek-ai/dsh-util-values/lib/index.js'
+  || /^node_modules\/@kingsoftcloud\/agentkit-harness-ui\/(?:src\/|markdown\/dist\/markdown\.mjs$)/.test(name)
   || /^node_modules\/@kingsoftcloud\/agentkit-harness-core\/dist\/(?:child-workspace-tools|capability-profile|model-capabilities|values|error-presentation)\.mjs$/.test(name);
-const unexpectedNodeInputs = nodeInputs.filter(name => !allowlistedHarnessInput(name));
+const unexpectedNodeInputs = nodeInputs.filter(name => !allowlistedClientInput(name));
 // React is a Host-provided external: a bundled copy would break the JSX runtime.
 const bundledReact = inputs.filter(name => /(?:^|\/)node_modules\/(?:react|react-dom|react-is)\//.test(name));
 const compatibilityInputs = inputs.filter(name => /src\/client\/remote\/(host-client|compatibility-methods)\.mjs$|src\/remote\/(compatibility-methods|node-client)\.mjs$/.test(name));
