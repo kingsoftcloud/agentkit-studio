@@ -216,9 +216,9 @@ async function applyProof(ctx, options) {
           }
         }
         const runtime = rows.find(row => row.name === '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin'
-          && row.config?.nativeEngineContract === 'agentkit.native-dsh-turn/v1');
+          && row.config?.runtime === 'native-engine');
         if (!runtime) throw Error('Production Native preset was not admitted');
-        if (options.mcpUrl && !runtime.config.toolContracts.some(tool => tool.mcpResourceId === 'native-schema-fixture')) {
+        if (options.mcpUrl && !runtime.config.toolContracts?.some(tool => tool.mcpResourceId === 'native-schema-fixture')) {
           throw Error('A removed MCP hid the remaining working MCP contract');
         }
       }
