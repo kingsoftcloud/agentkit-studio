@@ -9,7 +9,6 @@ import { createAgentSelector } from "./dsh/agent-selector.mjs";
 import { createCloudPermissionPresentation } from './dsh/cloud-permission.mjs';
 import { createCloudSessionStatus } from "./dsh/cloud-status.mjs";
 import { createNativeChildPanel } from "./dsh/native-children.mjs";
-import { createNativeApprovalPanel } from './dsh/native-approval.mjs';
 import { createNavigation } from "./components/navigation.mjs";
 import { createRuntimeCatalogPage } from "./pages/runtime-catalog.mjs";
 import { createNativeAuthoringButton } from "./dsh/native-authoring.mjs";
@@ -58,8 +57,8 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   const { SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction } = createStudioPrimitives({ React, ReactDOM });
   const { inputStyle, buttonStyle, pagerButtonStyle } = createFormStyles(BRAND);
   const ResourceDialog = createResourceDialog({ React, buttonStyle });
-  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button, RiskConfirmation } = primitives;
-  const ui = { React, ReactDOM, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button, RiskConfirmation };
+  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button } = primitives;
+  const ui = { React, ReactDOM, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button };
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = readProductVersions(window.__AGENTKIT_STUDIO__);
   const connectionOwner = createConnectionOwner();
   const hostRemote = createProductClient(connectionOwner.connection, { window });
@@ -86,7 +85,6 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.NativeChildPanel = createNativeChildPanel({ ui, hostRemote }, harnessUI?.createNativeChildPanel);
   ui.installHarnessTimeline = harnessUI?.installTaskTimeline;
   ui.harnessUIError = harnessUIError;
-  ui.NativeApprovalPanel = createNativeApprovalPanel({ ui, hostRemote });
   ui.RuntimeCatalogPage = createRuntimeCatalogPage({ ui, hostRemote, window, CustomEvent });
   ui.DomainPage = createDomainPage({ ui });
   Object.assign(ui, createResourceDialogs({ ui, hostRemote, window, CustomEvent }));

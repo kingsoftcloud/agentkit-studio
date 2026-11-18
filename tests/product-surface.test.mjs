@@ -107,6 +107,10 @@ test('parent Studio mounting preserves local composer services and never install
   });
   assert.ok(registered.some(entry => entry.name === 'conversation.hero.agentPreset'), 'native authoring entry remains installed');
   assert.ok(registered.some(entry => entry.name === 'main' && entry.key === 'studio-overview'), 'declared panel remains installed');
+  const headerActions = registered.filter(entry => entry.name === 'conversation.session.header.actions').map(entry => entry.id);
+  assert.ok(headerActions.includes('agentkit-studio-cloud-status'));
+  assert.ok(headerActions.includes('agentkit-studio-native-children'));
+  assert.ok(!headerActions.includes('agentkit-studio-native-approval'), 'the conversation header must not poll the retired approval API');
   assert.equal(injected.includes('conversation.input.left'), false);
   assert.equal(registered.some(entry => entry.name === 'conversation.input.left' || entry.id === 'studio.assistant.attachment'), false);
   assert.equal(ctx.conversation, composer);
