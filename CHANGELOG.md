@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.0.18 - 2026-11-19
+
+### 功能：模型线路与推理档位
+
+- 模型设置新增「DSH 接口」探测：星流的 `/v1/models` 不声明任何能力位（没有 `native_endpoints`，没有 Responses 支持标记），所以表单改为**问一下**——「探测接口」按钮发一个最小的 Responses 请求，**只把 404 判为「只支持 Chat」**，超时 / 401 / 5xx 一律「无结论」，绝不可达的网关写成事实。判定后给出「让 DSH 走 Responses」或「改回 Chat Completions」的一键应用，探测本身只读、不写配置。配套 `scripts/verify-model-wire.mjs` 报告整个网关。
+- `providerWireApi()` 让 DSH 路由跟随 profile 的 `protocol` 声明。**`codexApi` 刻意不参与**：它是「Codex 模型接口」选择器且默认 `responses`，拿它定 DSH 线路会把所有 profile 翻到 42/59 模型 404 的线上——这正是这个方向之前被回退的原因。
+- 推理档位表按实测修正：`ksyun` / `deepseek` 从 `low/high/max` 改为 `low/medium/high/xhigh/max`（7 个模型 × 2 条线实测，`low` 到 `max` 全部 200），选择器补上「中」「极高」。`minimal` 明确排除——`glm-5.3` 把它当「关闭思考」直接拒，`kimi-k3.1-pro` 在 Chat 线接受、Responses 线拒绝。
+- 新增 `scripts/verify-model-efforts.mjs` 逐模型逐档探测实际可用的推理级别。
+- profile `compat` 补上 `supportsStore: false`：代理是无状态的（`previous_response_id` 直接被拒），只实现旧请求形状的网关（LiteLLM 一类）可以白拿这个键的移除。
+
+### 修复
+
+- **不再把 `developer` 角色发给网关**：OpenAI 接受两种拼写，但多数 OpenAI 兼容网关只实现 `system`，收到 `developer` 回 `400 Invalid request: role 'developer' is not allowed`。代理在发送前统一改写，DSH provider 声明 `compat: { supportsDeveloperRole: false }` 让 pi-ai 一开始就发 `system`。
+- **路由默认值不再落到目录里的 sibling 模型**：目录路由把每个模型都发布成 sibling，而 DSH 把路由级 `reasoning` 默认值应用到全部模型；配过 `reasoning: max` 的 profile 切到 `kimi-k3.1-pro-highspeed` 这类模型时，每一轮都在请求离开 DSH 之前以 `UNSUPPORTED_REASONING_EFFORT` 失败。默认值现在只写给独占路由，且默认思考等级写到「默认模型选择」而不是继承上一个 profile 残留的值。
+- 注册 `models/probe` 与 `models/wire` 两个控制端点：`models/wire` 一路实现到 RPC 却没进白名单，按钮点下去只回「无效 Server Action」；`models/probe`（「读取模型」）从引入起就一直没注册过。
+- 恢复原生会话里的 Codex 工具卡片。
+- 恢复 ManagedRuntime Agent 的云端会话，并把 Harness 引擎启动契约转发给 Host 子进程。
+- Studio 卸载时取消默认 bundle 的定时器；首次引导中的 profile 不再被默认 bundle 对齐抢写。
+
+### 测试
+
+- 新增 `control-endpoint-registration`：对比浏览器 `studioCall` 字面量与 `STUDIO_OPERATION_IDS`，把「调用了但没注册」变成门禁失败（手动回滚注册验证过两个用例都会红）。
+- 新增 `verify-studio-model-settings-web.mjs`：真实浏览器打开隔离 Studio web，断言推理档位选择器渲染全部五档、「探测接口」按钮可达、判定回显、无 console 错误（7/7）。
+- 生命周期验收改在 `AGENTKIT_STUDIO_DEFAULT_BUNDLES=0` 下跑，默认 bundle 对齐不再是插件自有状态。
+
+### 已知问题
+
+- 星流 59 个模型里只有 17 个实现 `/v1/responses`，其余 42 个（图像 / 视频 / 语音 / embedding）会 404；`providerWireApi` 因此只按显式 `protocol` 走 Responses，未声明的 profile 保持 Chat Completions 不变。
+- `qwen3.7-plus` 拒绝 `xhigh` / `max`，但它的 400 报文含 `reasoning_effort`，会命中代理的自动降级重试；精确档位请用 `scripts/verify-model-efforts.mjs` 逐模型确认。
+- 桌面端自动更新在有运行中任务时，第一次安装可能被 Squirrel 的 ShipIt 以 `App Still Running Error` 放弃；升级前先停掉运行中的任务。
+
 ## 0.0.17 - 2026-11-17
 
 ### 修复：恢复 0.0.16 丢失的功能
