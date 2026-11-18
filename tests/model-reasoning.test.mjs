@@ -9,12 +9,12 @@ import { createModelBridge } from '../src/client/dsh/model-bridge.mjs';
 import { syncPortableModelProfiles } from '../src/portable-model-bridge.mjs';
 
 test('the capability table is the single source of provider levels and wire values', () => {
-  assert.deepEqual(REASONING_PROFILES.ksyun.levels, ['low', 'high', 'max']);
-  assert.deepEqual(REASONING_PROFILES.ksyun.wire, { low: 'low', high: 'high', max: 'max' });
+  assert.deepEqual(REASONING_PROFILES.ksyun.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(REASONING_PROFILES.ksyun.wire, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
   assert.equal(REASONING_PROFILES.ksyun.default, 'high');
 
-  assert.deepEqual(REASONING_PROFILES.deepseek.levels, ['low', 'high', 'max']);
-  assert.deepEqual(REASONING_PROFILES.deepseek.wire, { low: 'low', high: 'high', max: 'max' });
+  assert.deepEqual(REASONING_PROFILES.deepseek.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(REASONING_PROFILES.deepseek.wire, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
   assert.equal(REASONING_PROFILES.deepseek.default, 'high');
 
   assert.deepEqual(REASONING_PROFILES.openai.levels, ['low', 'medium', 'high']);
@@ -32,10 +32,10 @@ test('the capability table is the single source of provider levels and wire valu
 
 test('an enabled profile publishes only the levels its provider accepts', () => {
   assert.deepEqual(studioReasoning({ provider: 'ksyun', reasoningEfforts: true }), {
-    efforts: { low: 'low', high: 'high', max: 'max' }, defaultEffort: 'high',
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' }, defaultEffort: 'high',
   });
   assert.deepEqual(studioReasoning({ provider: 'deepseek', reasoningEfforts: true }), {
-    efforts: { low: 'low', high: 'high', max: 'max' }, defaultEffort: 'high',
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' }, defaultEffort: 'high',
   });
   assert.deepEqual(studioReasoning({ provider: 'openai', reasoningEfforts: true }), {
     efforts: { low: 'low', medium: 'medium', high: 'high' }, defaultEffort: 'medium',
@@ -167,7 +167,7 @@ test('a gateway catalog route never declares a route default its siblings cannot
   // route it cannot detect as non-standard.
   assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
   const routed = provider.models.find(model => model.id === 'deepseek-v4.1-flash-1017');
-  assert.deepEqual(routed.reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
+  assert.deepEqual(routed.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
   // The sibling catalog entry must not inherit a capability its profile never
   // declared, or picking it would promise reasoning the gateway cannot do.
   assert.equal(provider.models.find(model => model.id === 'seedream-5.0').reasoningEfforts, undefined);
@@ -184,7 +184,7 @@ test('a route serving this profile model alone keeps the concrete route default'
   const provider = providers['agentkit-studio-reasoner'];
   assert.equal(provider.reasoning, 'high');
   assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
-  assert.deepEqual(provider.models[0].reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
+  assert.deepEqual(provider.models[0].reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
 });
 
 test('a default profile without a reasoning declaration clears a stale default effort', async () => {
@@ -267,7 +267,7 @@ test('the portable bridge publishes the same declaration', async () => {
   // reasoning model, so every Studio route keeps the system role.
   assert.equal(value.api, 'openai-completions', 'an undeclared profile keeps the Chat wire');
   assert.deepEqual(value.compat, { supportsDeveloperRole: false, supportsStore: false });
-  assert.deepEqual(value.models[0].reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
+  assert.deepEqual(value.models[0].reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
 
   await syncPortableModelProfiles({ settings, profiles: [{
     id: 'plain', provider: 'ksyun', modelName: 'seedream-5.0',
