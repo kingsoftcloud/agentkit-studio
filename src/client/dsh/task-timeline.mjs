@@ -1,5 +1,5 @@
 import { installTaskTimeline as install } from '@kingsoftcloud/agentkit-harness-ui/host/task-timeline';
-import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
+import { agentFromSessionPreset, cloudAgentIdFromSessionPreset } from '../state/conversation-agent.mjs';
 import { HARNESS_SERVICE_PRESET_SUFFIX } from '../../harness-service-preset.mjs';
 
 const deliveryUrl = params => 'api/agentkit.native-web-delivery?' + new URLSearchParams(params);
@@ -39,11 +39,14 @@ export function installTaskTimeline(ctx, options) {
   return install(ctx, { ...options, loadDeliveryEvidence, resolveWebDelivery: (...args) => resolveWebDelivery(ctx, ...args),
     isIndependentPreset: presetId => typeof presetId === 'string' && presetId.endsWith(HARNESS_SERVICE_PRESET_SUFFIX),
     resolveAgentFromPreset: (presetId, agents) => {
-    const id = agentFromSessionPreset(presetId, agents);
-    if (!id && typeof presetId === 'string' && presetId.startsWith('agentkit-studio-agent-'))
-      throw Error('当前会话的智能体配置暂不可用，请重试读取');
-    return id;
-  } });
+      const id = agentFromSessionPreset(presetId, agents);
+      if (id) return id;
+      // Cloud history uses the DSH presentation after a local catalog miss.
+      if (cloudAgentIdFromSessionPreset(presetId)) return null;
+      if (typeof presetId === 'string' && presetId.startsWith('agentkit-studio-agent-'))
+        throw Error('当前会话的智能体配置暂不可用，请重试读取');
+      return null;
+    } });
 }
 
 /** The chat dependency is loaded before Studio. Never silently run the DSH
