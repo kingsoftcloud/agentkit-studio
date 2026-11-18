@@ -77,6 +77,31 @@ test('managed Harness boots with a service binding and no model credentials in S
   assert.equal(withUnusedModel.env.OPENAI_BASE_URL, undefined);
 });
 
+test('managed launch forwards the bundled Harness engine launch contract to the child Host', async t => {
+  const f = await fixture(t);
+  const raw = stringify({ ...parse(f.raw), framework: 'harness', runtime: { name: 'harness', version: 'studio-test.1' } });
+  await writeFile(f.manifest, raw);
+  const env = { ...f.env, AGENTENGINE_MANAGED_RUNTIME_NAME: 'harness', AGENTENGINE_MANIFEST_SHA256: hash(raw),
+    AGENTKIT_ENGINE_COMMAND: '/opt/agentkit/runtime/node_modules/.bin/agentkit-engine', AGENTKIT_ENGINE_ARGS: '["--fixture"]' };
+  const plan = await prepareManagedRuntimeHost({ ...f, env });
+  // The engine executable and its arguments are deployment-owned: the child Host
+  // only sees them because the launcher forwards them, and the image has no
+  // default to fall back on.
+  assert.equal(plan.env.AGENTKIT_ENGINE_COMMAND, env.AGENTKIT_ENGINE_COMMAND);
+  assert.equal(plan.env.AGENTKIT_ENGINE_ARGS, env.AGENTKIT_ENGINE_ARGS);
+  // A service-bound Host owns the engine transport and must not inherit a
+  // conflicting local executable.
+  const serviceEnv = { ...env,
+    AGENTKIT_ENGINE_SERVICE_URL: 'https://harness.test:8787', AGENTKIT_ENGINE_SERVICE_TOKEN: 'fixture-harness-service-token',
+    AGENTKIT_ENGINE_SERVICE_CA_FILE: '/var/run/agentkit-harness/ca.crt',
+    AGENTKIT_ENGINE_SERVICE_WORKSPACE: join(f.env.AGENTKIT_USER_HOME, 'workspace') };
+  delete serviceEnv.OPENAI_BASE_URL;
+  delete serviceEnv.AGENTKIT_MODEL_API_KEY;
+  const service = await prepareManagedRuntimeHost({ ...f, env: serviceEnv });
+  assert.equal(service.env.AGENTKIT_ENGINE_COMMAND, undefined);
+  assert.equal(service.env.AGENTKIT_ENGINE_ARGS, undefined);
+});
+
 test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or persisted model secrets', async t => {
   const f = await fixture(t), plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTKIT_RUNTIME_TIMEOUT_MS: '1200000' } });
   assert.match(plan.entry, /@deepseek-ai\/dsh\/lib\/bin.js$/);
