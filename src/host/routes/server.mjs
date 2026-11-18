@@ -13,6 +13,10 @@ export function createServerActionRoutes({ serverClientPromise, models, syncMode
                 return { ok: true, value: await models.catalog(String(body.profileId || '')) };
             if (action === 'models/probe')
                 return { ok: true, value: await models.probe(body) };
+            // The settings form's「探测接口」button. Read-only: it reports a
+            // wire and never writes the profile.
+            if (action === 'models/wire')
+                return { ok: true, value: await models.probeWire(body) };
             if (action === 'models/sync-credential')
                 return { ok: true, value: await syncModelCredential() };
             if (action === 'models/credential-status')
