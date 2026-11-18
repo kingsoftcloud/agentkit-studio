@@ -58,6 +58,27 @@ export function createModelBridge({ hostRemote }) {
         if (!baseUrl) throw new Error(`模型 ${modelName} 需要填写 API 地址`);
         const credentialName = modelCredentialName(profile, index);
         const reasoning = studioReasoning(profile);
+        // Kspmas model metadata is multimodal, but custom DSH routes fall
+        // back to text-only unless the capability is declared explicitly.
+        // Keep the input contract on each profile so read_image and native
+        // image messages are admitted consistently with the upstream model.
+        const models = (catalogs[index]?.items?.length ? catalogs[index].items : [{ id: modelName, name: modelName, input: profile.input || ['text'] }])
+          .map(model => {
+            const capability = admitModelCapabilities({ ...profile, input: model.id === modelName ? profile.input : undefined }, model);
+            return { id: model.id, name: model.name || model.id, contextWindow: capability.contextWindow,
+              maxTokens: capability.maxOutputTokens, input: capability.input,
+              ...(reasoning && model.id === modelName ? { reasoningEfforts: reasoning.efforts } : {}) };
+          });
+        // A route default is applied to every model the route serves, and the
+        // gateway catalog arrives as sibling models whose reasoning capability
+        // Studio cannot know (they declare no `reasoningEfforts`, so DSH reads
+        // them as non-reasoning). Declaring the default anyway makes every turn
+        // on a sibling fail with `UNSUPPORTED_REASONING_EFFORT` before the
+        // request leaves DSH — this is exactly how switching to
+        // `kimi-k3.1-pro-highspeed` broke after a `reasoning: max` profile.
+        // Keep the default only for a route that serves this profile's model
+        // alone; on a catalog route the session-level choice carries it.
+        const dedicated = models.length === 1 && models[0].id === modelName;
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
           displayName: `${provider} · ${modelName}`, api: 'openai-completions', apiKeyEnv: credentialName,
           baseURL: baseUrl,
@@ -70,18 +91,8 @@ export function createModelBridge({ hostRemote }) {
           // A concrete route default keeps fresh sessions on a thinking level
           // instead of DSH's "provider default" row, which would omit the
           // parameter and leave thinking to the gateway's own default.
-          ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}),
-          // Kspmas model metadata is multimodal, but custom DSH routes fall
-          // back to text-only unless the capability is declared explicitly.
-          // Keep the input contract on each profile so read_image and native
-          // image messages are admitted consistently with the upstream model.
-          models: (catalogs[index]?.items?.length ? catalogs[index].items : [{ id: modelName, name: modelName, input: profile.input || ['text'] }])
-            .map(model => {
-              const capability = admitModelCapabilities({ ...profile, input: model.id === modelName ? profile.input : undefined }, model);
-              return { id: model.id, name: model.name || model.id, contextWindow: capability.contextWindow,
-                maxTokens: capability.maxOutputTokens, input: capability.input,
-                ...(reasoning && model.id === modelName ? { reasoningEfforts: reasoning.efforts } : {}) };
-            }),
+          ...(reasoning && dedicated ? { reasoning: reasoning.defaultEffort } : {}),
+          models,
         } } };
       });
       const response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, [
@@ -93,8 +104,16 @@ export function createModelBridge({ hostRemote }) {
       const defaultNamespace = (await describe()).namespaces?.find(item => item.ns === DSH_DEFAULT_MODEL_SETTINGS_NS);
       if (!defaultNamespace) throw new Error('DSH 默认模型设置不可用，无法让新会话使用该模型');
       const first = operations[0];
+      // The default effort belongs to the default model: a level left behind by
+      // an earlier profile makes every fresh session fail with
+      // `UNSUPPORTED_REASONING_EFFORT` for a level this model never declared,
+      // so a profile without a reasoning declaration must clear the field.
+      const defaultEffort = studioReasoning(valid[0])?.defaultEffort;
       const defaultResponse = await ctx.remote.settings.mutate(DSH_DEFAULT_MODEL_SETTINGS_NS, [
         { op: 'set', path: ['provider'], value: first.route }, { op: 'set', path: ['model'], value: first.modelName },
+        defaultEffort
+          ? { op: 'set', path: ['reasoningEffort'], value: defaultEffort }
+          : { op: 'unset', path: ['reasoningEffort'] },
       ], defaultNamespace.revision);
       checkActive();
       if (!defaultResponse?.ok) throw new Error(defaultResponse?.error?.message || 'DSH 默认模型保存失败');

@@ -120,7 +120,8 @@ test('a 400 naming reasoning_effort can be downgraded exactly once', () => {
   assert.equal(applyReasoningFallback({ model: 'gpt' }, 'high'), undefined);
 });
 
-test('the client bridge declares reasoning on the routed model only', async () => {
+/** A fake DSH Settings/credential remote that records every write. */
+function bridgeContext(catalog) {
   const providers = {}, writes = [];
   const ctx = { remote: {
     settings: {
@@ -136,21 +137,31 @@ test('the client bridge declares reasoning on the routed model only', async () =
     },
     credentials: { set: async () => ({ ok: true }) },
   } };
-  const bridge = createModelBridge({ hostRemote: {
-    modelCatalog: async () => ({ items: [
-      { id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] },
-      { id: 'seedream-5.0', name: 'Seedream', input: ['text', 'image'] },
-    ] }),
-  } }).createDshModelBridge(ctx, { isActive: () => true });
+  const bridge = createModelBridge({ hostRemote: { modelCatalog: async () => ({ items: catalog }) } })
+    .createDshModelBridge(ctx, { isActive: () => true });
+  return { bridge, providers, writes };
+}
 
-  await bridge.applyProfiles({ profiles: [{
-    id: 'reasoner', provider: 'ksyun', modelName: 'deepseek-v4.1-flash-1017',
-    baseUrl: 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY',
-    reasoningEfforts: true, defaultReasoningEffort: 'high',
-  }] });
+const reasoner = {
+  id: 'reasoner', provider: 'ksyun', modelName: 'deepseek-v4.1-flash-1017',
+  baseUrl: 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY',
+  reasoningEfforts: true, defaultReasoningEffort: 'high',
+};
+
+test('a gateway catalog route never declares a route default its siblings cannot take', async () => {
+  const { bridge, providers, writes } = bridgeContext([
+    { id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] },
+    { id: 'seedream-5.0', name: 'Seedream', input: ['text', 'image'] },
+  ]);
+  await bridge.applyProfiles({ profiles: [reasoner] });
 
   const provider = providers['agentkit-studio-reasoner'];
-  assert.equal(provider.reasoning, 'high');
+  // DSH applies a route default to every model the route serves, and catalog
+  // siblings declare no `reasoningEfforts`. A route default there makes every
+  // turn on a sibling fail with UNSUPPORTED_REASONING_EFFORT before the
+  // request leaves DSH — the `reasoning: max` + `kimi-k3.1-pro-highspeed`
+  // combination this route used to publish.
+  assert.equal(provider.reasoning, undefined);
   // Kspmas answers `400 Invalid request: role 'developer' is not allowed`, and
   // pi-ai sends the system prompt as `developer` to every reasoning model on a
   // route it cannot detect as non-standard.
@@ -160,7 +171,32 @@ test('the client bridge declares reasoning on the routed model only', async () =
   // The sibling catalog entry must not inherit a capability its profile never
   // declared, or picking it would promise reasoning the gateway cannot do.
   assert.equal(provider.models.find(model => model.id === 'seedream-5.0').reasoningEfforts, undefined);
+  // Default thinking now rides the default selection, which names this very
+  // model, instead of a route default every sibling must also accept.
+  const [, defaultOps] = writes.find(([ns]) => ns === 'agent-default-model');
+  assert.deepEqual(defaultOps.find(op => op.path[0] === 'reasoningEffort'), { op: 'set', path: ['reasoningEffort'], value: 'high' });
   assert.equal(writes.filter(([ns]) => ns === 'llm-pi-ai').length, 1);
+});
+
+test('a route serving this profile model alone keeps the concrete route default', async () => {
+  const { bridge, providers } = bridgeContext([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] }]);
+  await bridge.applyProfiles({ profiles: [reasoner] });
+  const provider = providers['agentkit-studio-reasoner'];
+  assert.equal(provider.reasoning, 'high');
+  assert.deepEqual(provider.compat, { supportsDeveloperRole: false });
+  assert.deepEqual(provider.models[0].reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
+});
+
+test('a default profile without a reasoning declaration clears a stale default effort', async () => {
+  const { bridge, writes } = bridgeContext([{ id: 'seedream-5.0', name: 'Seedream', input: ['text', 'image'] }]);
+  await bridge.applyProfiles({ profiles: [{
+    id: 'painter', provider: 'ksyun', modelName: 'seedream-5.0',
+    baseUrl: 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY',
+  }] });
+  const [, defaultOps] = writes.find(([ns]) => ns === 'agent-default-model');
+  // A level left behind by an earlier profile would fail every fresh session
+  // for an effort this model never declared.
+  assert.deepEqual(defaultOps.find(op => op.path[0] === 'reasoningEffort'), { op: 'unset', path: ['reasoningEffort'] });
 });
 
 test('an OpenAI profile routes only OpenAI-legal wire values into DSH', async () => {
@@ -203,6 +239,8 @@ test('the portable bridge publishes the same declaration', async () => {
   }] });
   const value = providers['agentkit-studio-portable'];
   assert.equal(value.reasoning, 'high');
+  // Kspmas rejects the `developer` role pi-ai would otherwise send for a
+  // reasoning model, so every Studio route keeps the system role.
   assert.deepEqual(value.compat, { supportsDeveloperRole: false });
   assert.deepEqual(value.models[0].reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
 
