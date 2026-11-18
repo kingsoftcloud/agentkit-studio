@@ -77,10 +77,10 @@ function dropdownFixture() {
     close: () => effects.forEach(effect => effect.cleanup?.()) };
 }
 
-test('a switching cloud image presents the Local picker modes and persists the chosen mode', async () => {
+test('a managed deployment presents its declared default and persists the chosen mode', async () => {
   const f = dropdownFixture(), a = target('ar-owned'), modes = ['read-only', 'workspace-write', 'danger-full-access'];
   assert.equal(f.render(a).type, 'button');
-  f.reads[0].resolve({ agentId: 'ar-owned', executionPolicy: { ...policy, permissionMode: 'workspace-write' }, allowedPermissionModes: modes, executionModeSwitching: true, selectedPermissionMode: null });
+  f.reads[0].resolve({ agentId: 'ar-owned', defaultPermissionMode: 'workspace-write', allowedPermissionModes: modes, executionModeSwitching: true, selectedPermissionMode: null });
   await settle();
   let view = f.render(a);
   assert.equal(view.type, 'span');
@@ -94,7 +94,7 @@ test('a switching cloud image presents the Local picker modes and persists the c
   items[2].props.onSelect();
   assert.equal(f.writes[0].id, 'ar-owned'); assert.equal(f.writes[0].mode, 'danger-full-access');
   assert.equal(f.render(a).children[0].props.anchor.children[0].children[0], '正在切换…');
-  f.writes[0].resolve({ agentId: 'ar-owned', selectedPermissionMode: 'danger-full-access', allowedPermissionModes: modes, executionPolicy: policy });
+  f.writes[0].resolve({ agentId: 'ar-owned', selectedPermissionMode: 'danger-full-access', allowedPermissionModes: modes });
   await settle();
   view = f.render(a);
   assert.equal(view.children[0].props.anchor.children[0].children[0], '云端 · 完全权限');
