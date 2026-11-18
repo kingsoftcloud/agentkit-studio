@@ -13,7 +13,7 @@ export class LocalMcpStoreError extends Error {
 }
 
 function idOf(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
-function safeId(value) { return /^mcp-local-[a-f0-9]{16}$/.test(value); }
+export function isLocalMcpId(value) { return /^mcp-local-[a-f0-9]{16}$/.test(value); }
 const CREDENTIAL_REFERENCE = /^env:\/\/[A-Za-z_][A-Za-z0-9_./:-]{0,127}$/;
 function validatePublicConfiguration(server) {
   for (const [name, value] of Object.entries(server.headers || {})) if (!/^(?:x-request-source|x-skill-version|x-.*-client|x-.*-surface|accept|content-type)$/i.test(name) || /\$\{/.test(String(value))) throw new LocalMcpStoreError('MCP_HEADER_REQUIRES_REFERENCE', `Header ${name} 请使用凭证引用配置`);
@@ -57,7 +57,7 @@ export function createLocalMcpStore({ storeDir } = {}) {
   if (!storeDir) throw new TypeError('storeDir is required');
   async function ensureDir() { await mkdir(storeDir, { recursive: true, mode: 0o700 }); }
   function pathFor(resourceId) {
-    if (!safeId(resourceId)) throw new LocalMcpStoreError('MCP_ID_INVALID', '本地 MCP 资源 ID 无效', { resourceId });
+    if (!isLocalMcpId(resourceId)) throw new LocalMcpStoreError('MCP_ID_INVALID', '本地 MCP 资源 ID 无效', { resourceId });
     return join(storeDir, `${resourceId}.json`);
   }
   async function save(record) {
@@ -85,8 +85,17 @@ export function createLocalMcpStore({ storeDir } = {}) {
     }
     return items.slice(0, Math.max(1, Number(limit) || 200));
   }
-  async function get(resourceId) {
-    try { return normalize(JSON.parse(await readFile(pathFor(idOf(resourceId)), 'utf8'))); } catch { return null; }
+  async function get(resourceId, { strict = false } = {}) {
+    const id = idOf(resourceId);
+    if (!isLocalMcpId(id)) return null;
+    try {
+      const record = normalize(JSON.parse(await readFile(pathFor(id), 'utf8')));
+      if (strict && record?.resourceId !== id) throw new LocalMcpStoreError('MCP_RECORD_INVALID', '本地 MCP 配置无法读取', { resourceId: id });
+      return record;
+    } catch (error) {
+      if (!strict || error.code === 'ENOENT') return null;
+      throw new LocalMcpStoreError('MCP_RECORD_INVALID', '本地 MCP 配置无法读取', { resourceId: id });
+    }
   }
   async function create(payload = {}) {
     const server = payload.server && typeof payload.server === 'object' ? payload.server : {};
@@ -148,7 +157,6 @@ export function createLocalMcpStore({ storeDir } = {}) {
   }
   async function remove(resourceId) {
     const id = idOf(resourceId);
-    if (!safeId(id)) throw new LocalMcpStoreError('MCP_ID_INVALID', '本地 MCP 资源 ID 无效', { resourceId: id });
     await rm(pathFor(id), { force: true });
     return { resourceId: id, deleted: true };
   }

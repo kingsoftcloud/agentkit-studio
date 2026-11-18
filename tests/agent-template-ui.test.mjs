@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { createAgentForm } from '../src/client/pages/agent-form.mjs';
 import { createExpertCatalog } from '../packages/expert-catalog/src/catalog.mjs';
 const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
-function formHarness(props = {}) {
-  const states = []; let cursor = 0;
+function formHarness(props = {}, hostRemote = {}) {
+  const states = [], effects = []; let cursor = 0, mounted = false;
   const useState = initial => { const index = cursor++; if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial; return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; };
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
-  const Form = createAgentForm({ ui: { React: { createElement: h, useState, useEffect() {}, Fragment: 'fragment' }, BRAND: {}, ALLOWED_RUNTIME_TYPES: ['dsh-native', 'harness', 'codex'], RUNTIME_LABELS: {}, buttonStyle: () => ({}), inputStyle: () => ({}), SectionHeading: 'heading', PlatformResourcePicker: 'platform', Pill: 'pill' }, hostRemote: {} });
-  const render = () => { cursor = 0; return walk(Form(props)); };
+  const useEffect = effect => { if (!mounted && hostRemote.resources) effects.push(effect); };
+  const Form = createAgentForm({ ui: { React: { createElement: h, useState, useEffect, Fragment: 'fragment' }, BRAND: {}, ALLOWED_RUNTIME_TYPES: ['dsh-native', 'harness', 'codex'], RUNTIME_LABELS: {}, buttonStyle: () => ({}), inputStyle: () => ({}), SectionHeading: 'heading', PlatformResourcePicker: 'platform', Pill: 'pill' }, hostRemote });
+  const render = () => { cursor = 0; const tree = walk(Form(props)); mounted = true; effects.splice(0).forEach(effect => effect()); return tree; };
   const chooseResearch = () => render().find(node => node.type === 'button' && JSON.stringify(node.children).includes('研究助手')).props.onClick();
   const prompt = () => render().find(node => node.type === 'textarea' && node.props.placeholder === '描述 Agent 的身份、边界和回答方式');
   return { chooseResearch, prompt, render };
@@ -21,6 +22,31 @@ test('manual configuration treats templates as an optional collapsed section', (
   assert.equal(Boolean(templates.props.open), false);
   assert.ok(walk(templates).some(node => node.type === 'summary' && node.children.includes('使用提示词模板（可选）')));
   assert.ok(nodes.some(node => node.type === 'heading' && node.props.title === '手动配置 Agent'));
+});
+
+test('editing and saving an Agent can remove an MCP absent from its catalog', async () => {
+  const deleted = 'mcp-local-0000000000000001', active = 'mcp-local-0000000000000002';
+  const binding = { resourceId: active, region: 'test-region' };
+  const initialAgent = { source: 'local-studio', metadata: { id: 'ar-local-agent', name: 'Agent', revision: 3 },
+    spec: { runtime: { type: 'dsh-native' }, bindings: { modelProfileId: 'model', mcpServers: [binding, { resourceId: deleted }] } } };
+  const saved = [];
+  const form = formHarness({ initialAgent, onCreated() {} }, {
+    resources: async kind => ({ items: kind === 'model' ? [{ resourceId: 'model' }] : kind === 'mcp' ? [{ resourceId: active }] : [] }),
+    updateAgent: async (id, spec, revision) => { saved.push({ id, spec, revision }); return { metadata: { id, revision: revision + 1 } }; },
+  });
+  const step = label => form.render().find(node => node.props.className === 'af-step' && node.children.includes(label));
+  step('绑定能力').props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  const unavailable = form.render().find(node => node.props.title === '当前目录未返回此资源，可取消绑定');
+  assert.ok(walk(unavailable).some(node => node.type === 'strong' && node.children.includes(deleted)));
+  const checkbox = walk(unavailable).find(node => node.type === 'input');
+  assert.equal(checkbox.props.checked, true);
+  assert.equal(checkbox.props.disabled, false);
+  checkbox.props.onChange({ target: { checked: false } });
+  step('策略与确认').props.onClick();
+  await form.render().find(node => node.type === 'button' && node.children.includes('保存 Agent')).props.onClick();
+  assert.deepEqual(saved[0].spec.bindings.mcpServers, [binding]);
+  assert.equal(saved[0].revision, 3);
 });
 
 test('manual form places the back link above the heading without changing navigation', () => {

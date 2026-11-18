@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSkillDiscovery, parseFrontmatter, skillSlug } from '../src/skill-discovery.mjs';
+import { createResourceRoutes } from '../src/host/routes/resources.mjs';
+import { createResourceDialogs } from '../src/client/components/resource-dialogs.mjs';
 
 test('strict imported manifests reject malformed YAML while local-display scalar recovery remains available', () => {
   const bad = '---\nname: sample\ndescription: valid\nbroken: [\n---\nbody';
@@ -117,6 +119,73 @@ test('preview and commit reject path escapes outside the scanned directory', asy
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test('legacy local Skills can be overwritten in place, rescanned by source and removed through the resource route', async t => {
+  const home = await makeHome();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const store = join(home, 'library'), source = join(home, 'custom', 'research');
+  const installed = join(store, 'research');
+  await Promise.all([mkdir(source, { recursive: true }), mkdir(installed, { recursive: true })]);
+  const manifest = version => `---\nname: research\ndescription: Demo\nversion: ${version}\n---\nRevision ${version}\n`;
+  await writeFile(join(installed, 'SKILL.md'), manifest('1.0.0'));
+  await writeFile(join(installed, 'removed.txt'), 'file removed from the source');
+  await writeFile(join(source, 'SKILL.md'), manifest('2.0.0'));
+  const skills = createSkillDiscovery({ home, storeDir: store });
+  assert.equal((await skills.discover([], { fromInstalled: true })).unknownSourceCount, 1);
+  const report = await skills.discover([source]);
+  const { candidateId } = report.candidates[0];
+  const update = () => skills.commitDiscovered(report.inspectionToken, candidateId, true);
+  await writeFile(join(source, 'SKILL.md'), manifest('3.0.0'));
+  await assert.rejects(update(), { code: 'SKILL_SOURCE_CHANGED' });
+  assert.equal(await readFile(join(installed, 'SKILL.md'), 'utf8'), manifest('1.0.0'));
+  await writeFile(join(source, 'SKILL.md'), manifest('2.0.0'));
+  const updated = await update();
+  assert.equal(updated.resourceId, 'skill-research-1.0.0');
+  assert.deepEqual((await skills.previewInstalled(updated.resourceId)).files.map(file => file.path), ['SKILL.md']);
+  await writeFile(join(source, 'SKILL.md'), manifest('3.0.0'));
+  const reopened = createSkillDiscovery({ home, storeDir: store });
+  const rescanned = await reopened.discover([], { fromInstalled: true });
+  assert.equal(rescanned.unknownSourceCount, 0);
+  assert.equal(rescanned.candidates[0].version, '3.0.0');
+  assert.equal((await reopened.commitDiscovered(rescanned.inspectionToken, candidateId, true)).resourceId, updated.resourceId);
+  assert.equal((await reopened.listInstalled()).items[0].version, '3.0.0');
+  const route = createResourceRoutes({ skillDiscoveryPromise: Promise.resolve(reopened) });
+  const remove = (resourceId, scope) => route('resources/delete', { kind: 'skill', resourceId, scope });
+  await assert.rejects(remove(updated.resourceId, 'cloud'), { code: 'SKILL_SCOPE_INVALID' });
+  await assert.rejects(remove(`${updated.resourceId}/../other`, 'local'), { code: 'SKILL_NOT_INSTALLED' });
+  assert.equal((await remove(updated.resourceId, 'local')).value.deleted, true);
+  assert.equal((await reopened.listInstalled()).items.length, 0);
+  assert.equal(await readFile(join(source, 'SKILL.md'), 'utf8'), manifest('3.0.0'));
+});
+
+test('Skill discovery selects all eligible items and only overrides confirmed conflicts', async () => {
+  let cursor = 0, imported = 0;
+  const state = [], commits = [];
+  const useState = initial => {
+    const index = cursor++;
+    if (!(index in state)) state[index] = initial;
+    return [state[index], value => { state[index] = typeof value === 'function' ? value(state[index]) : value; }];
+  };
+  const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat().filter(Boolean) });
+  const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
+  const { SkillDiscoveryDialog: Dialog } = createResourceDialogs({ ui: { React: { createElement: h, useState }, ResourceDialog: 'dialog', Pill: 'pill', buttonStyle: () => ({}), inputStyle: () => ({}) },
+    hostRemote: { discoverSkills: async (paths, options) => {
+      assert.deepEqual(paths, []);
+      assert.equal(options.fromInstalled, true);
+      return { inspectionToken: 'scan', candidates: [['update', 'conflict'], ['new', 'ready'], ['invalid', 'invalid']]
+        .map(([name, status]) => ({ name, status, candidateId: name })) };
+    }, commitDiscoveredSkill: async (...args) => { commits.push(args); } } });
+  const nodes = () => { cursor = 0; return walk(Dialog({ onImported: () => { imported++; }, onClose() {} })); };
+  const button = name => nodes().find(node => node.type === 'button' && node.children.includes(name));
+  await button('扫描已导入来源').props.onClick();
+  button('全选可导入或更新项').props.onClick();
+  assert.equal(button('导入并更新').props.disabled, true);
+  const confirm = nodes().find(node => node.type === 'input' && node.props.type === 'checkbox' && !node.props['aria-label']);
+  confirm.props.onChange({ target: { checked: true } });
+  await button('导入并更新').props.onClick();
+  assert.deepEqual(commits, [['scan', 'update', true], ['scan', 'new', false]]);
+  assert.equal(imported, 1);
 });
 
 test('explicit scan directories outside home can be previewed and imported, including a Skill root', async () => {

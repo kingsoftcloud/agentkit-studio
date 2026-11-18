@@ -78,3 +78,8 @@ export function managedResourceCredentialNames(resources) {
   const refs = validateManagedResources(resources);
   return [...new Set((refs.mcp_servers || []).flatMap(item => Object.values(item.env_refs || {})))].sort();
 }
+
+export function validManagedMcpCredential(value) {
+  return typeof value === 'string' && Boolean(value.trim()) && value.length <= 8192
+    && /^[\x20-\x7e]+$/.test(value) && !value.includes('****');
+}

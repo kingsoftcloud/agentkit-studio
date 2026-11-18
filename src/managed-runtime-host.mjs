@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { loadManagedRuntimeDefinition } from './managed-runtime-definition.mjs';
-import { managedResourceCredentialNames } from './managed-resource-contract.mjs';
+import { managedResourceCredentialNames, validManagedMcpCredential } from './managed-resource-contract.mjs';
 import { managedResourceServerRoot, managedResourcesNeedServer } from './managed-resource-client.mjs';
 import { privateRuntimeDirectory, inspectRuntimeInstallation, prepareRuntimeProfile, runtimeProfileArgs,
   RUNTIME_PROFILE } from './runtime-host-installation.mjs';
@@ -284,7 +284,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   for (const name of credentialNames) {
     const value = env[name];
     if (typeof value !== 'string' || !value.trim()) fail('MCP_CREDENTIAL_MISSING', '声明的 MCP 部署凭证未注入');
-    if (value.length > 8192 || !/^[\x20-\x7e]+$/.test(value) || value.includes('****') || value.includes('\u2022\u2022')) fail('MCP_CREDENTIAL_INVALID', '声明的 MCP 部署凭证不可用');
+    if (!validManagedMcpCredential(value)) fail('MCP_CREDENTIAL_INVALID', '声明的 MCP 部署凭证不可用');
   }
   const { modules, entry, dshVersion } = await inspectRuntimeInstallation(installation, 'MANAGED_HOST');
   const directory = path => privateRuntimeDirectory(path, 'MANAGED_HOST');

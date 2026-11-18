@@ -122,3 +122,13 @@ test('local rows expose one build or deploy next step and keep conversation bind
   const nodes = render([{ metadata: { id: 'blocked' }, deployment: { available: false } }]);
   assert.equal(nodes.find(node => node.type === 'button' && node.children.includes('对话')).props.disabled, true);
 });
+
+test('cloud deployment rows focus the owning local Agent and the clicked instance', () => {
+  const routes = [], events = [];
+  const agent = { source: 'studio-deployment', metadata: { id: 'ar-cloud-b' }, deployment: { id: 'dep-b', agentId: 'ar-local-b', state: 'READY' } };
+  const window = { dispatchEvent: event => events.push(event) };
+  const nodes = render([agent], '', { tab: 'cloud', onNavigate: route => routes.push(route) }, [], false, 'ready', window);
+  nodes.find(node => node.type === 'button' && node.children.includes('管理部署')).props.onClick({ stopPropagation() {} });
+  assert.deepEqual(routes, ['studio-operations']);
+  assert.deepEqual(events[0].detail, { tab: 'delivery', agentId: 'ar-local-b', deploymentId: 'dep-b', section: 'deploy' });
+});

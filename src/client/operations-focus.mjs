@@ -7,16 +7,16 @@ export function readOperationsFocus(window) {
   } catch { return null; }
 }
 
-export function focusOperations({ window, agentId, section, onNavigate }) {
-  const focus = { tab: 'delivery', agentId, section };
+export function focusOperations({ window, agentId, section, deploymentId, onNavigate }) {
+  const focus = { tab: 'delivery', agentId, section, ...(deploymentId ? { deploymentId } : {}) };
   try { window.localStorage.setItem(OPERATIONS_FOCUS_KEY, JSON.stringify(focus)); } catch { /* Navigation still works without browser storage. */ }
   window.dispatchEvent(new (window.CustomEvent || globalThis.CustomEvent)(OPERATIONS_FOCUS_KEY, { detail: focus }));
-  onNavigate('studio-operations');
+  onNavigate?.('studio-operations');
 }
 
 export function consumeOperationsFocus(window, focus) {
   const stored = readOperationsFocus(window);
-  if (stored?.agentId === focus?.agentId && stored?.section === focus?.section) {
+  if (stored?.agentId === focus?.agentId && stored?.section === focus?.section && stored?.deploymentId === focus?.deploymentId) {
     try { window.localStorage.removeItem(OPERATIONS_FOCUS_KEY); } catch { /* Browser storage can be disabled. */ }
   }
 }

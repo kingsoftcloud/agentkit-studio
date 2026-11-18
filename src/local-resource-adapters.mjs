@@ -1,4 +1,5 @@
 import { hostFetch } from './http-fetch.mjs';
+import { isLocalMcpId } from './local-mcp-store.mjs';
 /** Host-owned adapters for resources bound to a local Agent revision. */
 import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport, SSEClientTransport, StdioClientTransport, getDefaultEnvironment } from '../dist/native-mcp-client.mjs';
@@ -167,9 +168,18 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const key = resourceId(binding);
     if (!key) throw new LocalResourceError('MCP_ID_MISSING', 'MCP 资源 ID 不能为空');
     const config = binding && typeof binding === 'object' ? binding : {};
-    const detail = config.endpoint || config.endpointUrl || config.url || config.server?.endpointUrl || config.server?.command
-      ? config
-      : (await resourceStore?.get(key)) || (await serverClient.action('GetMCP', { Id: key })).data || {};
+    const missing = () => new LocalResourceError('MCP_NOT_FOUND', `MCP ${key} 已不在资源目录，请在 Agent 编辑页取消绑定`, { resourceId: key });
+    let detail = config.endpoint || config.endpointUrl || config.url || config.server?.endpointUrl || config.server?.command
+      ? config : await resourceStore?.get(key, { strict: true });
+    if (!detail) {
+      if (resourceStore && isLocalMcpId(key)) throw missing();
+      try { detail = (await serverClient.action('GetMCP', { Id: key })).data; }
+      catch (error) {
+        if (error?.code === 'MCP_NOT_FOUND' || (error?.code === 'SERVER_ACTION_FAILED' && error?.status === 404)) throw missing();
+        throw error;
+      }
+      if (!detail) throw new LocalResourceError('MCP_RECORD_INVALID', 'MCP 目录未返回有效配置', { resourceId: key });
+    }
     const server = detail.server && typeof detail.server === 'object' ? detail.server : {};
     const endpoint = detail.mcp_endpoint || detail.private_mcp_endpoint || detail.endpointUrl || detail.url || server.endpointUrl || detail.endpoint;
     const transport = server.transport || detail.transport || 'http';

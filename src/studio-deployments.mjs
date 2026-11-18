@@ -1,5 +1,5 @@
 /** Node orchestration for Studio-owned ManagedRuntime deployments. */
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { stringify } from 'yaml';
 import { createDeploymentStore } from './deployment-store.mjs';
 import { createDeploymentImages } from './deployment-images.mjs';
@@ -7,7 +7,7 @@ import { createKs3BundleStore, ks3BundleEndpoint, planKs3BundleUpload } from './
 import { createContainerDeploymentEnvironment } from './container-deployment-env.mjs';
 import { resolveDeploymentCredentials, PLATFORM_CREDENTIAL_NAMES } from './deployment-credentials.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
-import { portableError, sha256 } from './portable-resources.mjs';
+import { mcpDeploymentCredentialName, portableError, sha256 } from './portable-resources.mjs';
 import { resolveMcpConnection } from './local-resource-adapters.mjs';
 import { managedRuntimeModelConfig } from './managed-runtime-model.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
@@ -15,6 +15,7 @@ import { currentDeployment, pendingRollout, publicDeployment as publicRecord, ve
   cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymentStorage } from './deployment-storage.mjs';
+import { validManagedMcpCredential, validateManagedResources } from './managed-resource-contract.mjs';
 
 const cloudId = value => /^ar-(?!local-)[A-Za-z0-9-]+$/.test(value || '');
 const untrustedTls = error => [error, error?.cause, error?.cause?.cause].some(value => /^(?:CERT_|ERR_TLS_|UNABLE_TO_(?:GET|VERIFY)_|SELF_SIGNED_CERT|DEPTH_ZERO_SELF_SIGNED_CERT)/.test(value?.code || ''));
@@ -127,9 +128,14 @@ async function buildManagedRuntimeDelivery({ frozen, definition, manifest, runti
     const connection = await resolveMcpConnection(detail, credentials, env);
     const envRefs = {};
     for (const [header, value] of Object.entries(connection.headers || {})) {
-      if (managedMcpHeaderNames.has(header.toLowerCase())) continue;
-      if (typeof value !== 'string' || !value.trim()) throw portableError('MCP_CREDENTIAL_MISSING', 'ManagedRuntime MCP 缺少有效凭证');
-      const envName = `MCP_STUDIO_${sha256(`${detail.resourceId}:${header.toLowerCase()}`).slice(0, 16).toUpperCase()}_TOKEN`;
+      if (managedMcpHeaderNames.has(header.toLowerCase())) {
+        if (Object.keys(detail.envRefs || {}).some(name => name.toLowerCase() === header.toLowerCase())) {
+          throw portableError('MANAGED_RUNTIME_MCP_HEADER_INVALID', `MCP Header ${header} 由传输层管理，请更换凭证 Header`);
+        }
+        continue;
+      }
+      if (!validManagedMcpCredential(value)) throw portableError('MCP_CREDENTIAL_INVALID', `MCP Header ${header} 的凭证格式无效，请更新本地凭证后重新检查部署`);
+      const envName = mcpDeploymentCredentialName(detail.resourceId, header);
       envRefs[header] = envName;
       const previous = environment.get(envName);
       if (previous && previous !== value) throw portableError('DEPLOYMENT_ENV_CONFLICT', '多个 MCP 绑定生成了冲突的凭证环境变量');
@@ -142,6 +148,8 @@ async function buildManagedRuntimeDelivery({ frozen, definition, manifest, runti
       ...(Object.keys(envRefs).length ? { env_refs: envRefs } : {}) });
   }
   if (mcpServers.length) resources.mcp_servers = mcpServers;
+  try { validateManagedResources(resources); }
+  catch { throw portableError('MANAGED_RESOURCE_INVALID', '云部署资源配置无效，请检查 MCP 地址、Header 名称及资源数量（每个 MCP 最多 16 个 Header）'); }
 
   const primaryProfile = manifest.resources.profiles.find(profile => profile.default) || manifest.resources.profiles[0];
   if (!primaryProfile?.modelName) throw portableError('MANAGED_RUNTIME_MODEL_INVALID', 'ManagedRuntime 运行包缺少默认模型');
@@ -159,13 +167,13 @@ async function buildManagedRuntimeDelivery({ frozen, definition, manifest, runti
     modelConfig: managedRuntimeModelConfig(primaryProfile.modelName),
     componentConfig: Object.keys(componentConfig).length ? componentConfig : undefined,
     environment: [...environment.entries()].map(([Key, Value]) => ({ Key, Value, IsSensitive: true })),
-    resourceCounts: { models: manifest.resources.profiles.length, mcps: manifest.resources.mcps.length, skills: manifest.resources.skills.length, remote: manifest.resources.remote.length },
-    mcpServers,
+    resourceCounts: { models: manifest.resources.profiles.length, mcps: mcpServers.length, skills: manifest.resources.skills.length, remote: manifest.resources.remote.length },
   };
 }
 
 export function createStudioDeployments({ storeDir, build, portableBundles, models, adapters, credentials, configuration,
   client, operations, fetchImpl = fetch, env = process.env, storageFactory = createKs3BundleStore }) {
+  const previewKey = randomBytes(32);
   const store = createDeploymentStore({ storeDir }), images = createDeploymentImages({ client, configuration });
   const active = new Map(), locks = new Map();
   function exclusive(id, work) {
@@ -219,7 +227,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       deploymentType, ...(managed ? { bundleUploadId } : {}), runtimeVersion: image.version, managedManifest: managedDelivery?.manifest || null,
       managedManifestSha256: managedDelivery?.manifest ? sha256(managedDelivery.manifest) : null,
       managedModelConfig: managedDelivery?.modelConfig || null, managedComponentConfig: managedDelivery?.componentConfig || null,
-      managedEnvironment: managedDelivery?.environment || [], bundleArtifact: managed && bundleRequired ? {
+      bundleArtifact: managed && bundleRequired ? {
         Format: 'agentkit.ks3-bundle/v1', Bucket: source.bucket, ObjectKey: source.objectKey, Region: catalog.region,
         SHA256: source.sha256, Bytes: source.bytes, AgentId: source.agentId, BuildId: source.buildId, BundleId: source.bundleId,
       } : null,
@@ -227,7 +235,12 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       identity: { kind: identity.kind, accountId: identity.accountId, userUuid: identity.userUuid, userName: identity.userName },
       resourceCounts: managedDelivery?.resourceCounts || { models: manifest.resources.profiles.length, mcps: manifest.resources.mcps.length, skills: manifest.resources.skills.length, remote: manifest.resources.remote.length },
       bundleRequired };
-    return { plan, zip, resolved, values, fingerprint: sha256(JSON.stringify(plan)) };
+    const managedEnvironment = managedDelivery?.environment || [];
+    // Bind confirmation to the credentials inspected by this Host without
+    // putting their values or an unkeyed digest on disk or in the Renderer.
+    const fingerprint = managed ? createHmac('sha256', previewKey).update(JSON.stringify([plan, managedEnvironment])).digest('hex')
+      : sha256(JSON.stringify(plan));
+    return { plan, zip, resolved, managedEnvironment, values, fingerprint };
   }
   async function prepare(input) {
     await store.preflight();
@@ -288,7 +301,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       if (credentialScope(values) !== record.plan.credentialScope) throw portableError('DEPLOYMENT_ACCOUNT_CHANGED', '云端配置已变化，已停止创建');
       const { image, resources, runtime, name, deploymentType } = record.plan;
       const environment = deploymentType === 'ManagedRuntime'
-        ? record.plan.managedEnvironment
+        ? prepared.managedEnvironment
         : createContainerDeploymentEnvironment({ zip: prepared.zip, expectedSha256: source.sha256,
           runtimeToken: randomBytes(32).toString('hex'), credentials: prepared.resolved, bundleSource: source })
           .filter(item => !PLATFORM_CREDENTIAL_NAMES.has(item.Key));

@@ -4,8 +4,12 @@ export function createSkillRoutes({ skillDiscoveryPromise }) {
         if (endpoint === 'skills/discover' || endpoint === 'skills/preview-discovered' || endpoint === 'skills/commit-discovered' || endpoint === 'skills/list' || endpoint === 'skills/preview-installed') {
             const skills = await skillDiscoveryPromise;
             try {
-                if (endpoint === 'skills/discover')
-                    return { ok: true, value: await skills.discover(Array.isArray(payload?.scanPaths) ? payload.scanPaths : null) };
+                if (endpoint === 'skills/discover') {
+                    const scanPaths = Array.isArray(payload?.scanPaths) ? payload.scanPaths : null;
+                    const value = payload?.fromInstalled === true
+                        ? await skills.discover(scanPaths, { fromInstalled: true }) : await skills.discover(scanPaths);
+                    return { ok: true, value };
+                }
                 if (endpoint === 'skills/preview-discovered')
                     return { ok: true, value: await skills.previewDiscovered(payload?.inspectionToken, payload?.candidateId, String(payload?.path || '')) };
                 if (endpoint === 'skills/commit-discovered')

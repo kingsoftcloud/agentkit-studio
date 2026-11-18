@@ -30,7 +30,7 @@ export function createResourceServices(ctx, { storeDir: studioStoreDir, portable
             ...(item.env_refs ? { envRefs: item.env_refs } : {}),
         }]));
         const resourceStore = {
-            get: async id => managedMcpServers.get(String(id)) || await portableRuntime?.resourceStore?.get(id) || await localMcpStore.get(id),
+            get: async (id, options) => managedMcpServers.get(String(id)) || await portableRuntime?.resourceStore?.get(id) || await localMcpStore.get(id, options),
         };
         // MCP invocation identity is on by default. A third-party MCP server
         // with hand-written strict request validation can be admitted with

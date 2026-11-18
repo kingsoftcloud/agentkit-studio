@@ -6,18 +6,32 @@ import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
 import { nativeVisionProfileId } from './native-vision-model.mjs';
 import { modelRuntimeOptions } from './model-profile-contract.mjs';
 import { isStudioRuntimeType } from './runtime-contract.mjs';
+import { LOCAL_SKILL_INSTALLATION_FILE } from './skill-discovery.mjs';
 
 export const portableError = (code, message) => Object.assign(new Error(message), { code });
 export const sha256 = data => createHash('sha256').update(data).digest('hex');
 const idOf = value => String(value?.resourceId || value?.id || value || '');
 const refName = value => String(value || '').replace(/^env:\/\//, '');
 const validEnv = value => /^[A-Za-z_][A-Za-z0-9_]{0,159}$/.test(value);
+const reservedEnv = name => /^(?:NODE_|DSH_|CODEX_|AGENTKIT_(?!(?:MODEL_API_KEY(?:_[A-Z0-9_]+)?$|BUNDLE_(?:MODEL|MCP)_))|XDG_|LD_|DYLD_|npm_|pnpm_)/i.test(name)
+  || ['HOME', 'PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(name);
+
+export function mcpDeploymentCredentialName(resourceId, header) {
+  return `MCP_STUDIO_${sha256(`${resourceId}:${header.toLowerCase()}`).slice(0, 16).toUpperCase()}_TOKEN`;
+}
+
+function portableMcpCredentialName(resourceId, header, ref) {
+  const name = refName(ref);
+  // Host credential labels may include namespaces, while a bundle needs a
+  // valid OS environment name. Resolve the value via its bound Header on Host.
+  return validEnv(name) && !reservedEnv(name) && !/^KSYUN_(?:ACCESS_KEY|SECRET_KEY|SESSION_TOKEN)$/i.test(name)
+    ? name : mcpDeploymentCredentialName(resourceId, header);
+}
 
 export function validatePortableCredentialNames(requirements) {
   // Settings generate suffixed model keys; these and bundle model/MCP keys
   // are resource credentials, while other AGENTKIT_* names remain Host controls.
-  const reserved = requirements.find(item => /^(?:NODE_|DSH_|CODEX_|AGENTKIT_(?!(?:MODEL_API_KEY(?:_[A-Z0-9_]+)?$|BUNDLE_(?:MODEL|MCP)_))|XDG_|LD_|DYLD_|npm_|pnpm_)/i.test(item.name)
-    || ['HOME', 'PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(item.name));
+  const reserved = requirements.find(item => reservedEnv(item.name));
   if (reserved) {
     throw portableError('BUNDLE_HOST_CREDENTIAL_RESERVED', `资源凭证名称不能覆盖 Host 启动配置：${reserved.name}。请调整模型或 MCP 的凭证引用`);
   }
@@ -46,6 +60,7 @@ export function rejectInlineSecrets(value) {
 async function collectDirectory(root, prefix, files, limits, depth = 0) {
   if (depth > 20 || !(await lstat(root)).isDirectory()) throw portableError('PORTABLE_SKILL_PATH_INVALID', 'Skill 文件目录无效或嵌套过深');
   for (const name of (await readdir(root)).sort()) {
+    if (depth === 0 && name === LOCAL_SKILL_INSTALLATION_FILE) continue;
     if (/^(?:\.env(?:\..*)?|credentials(?:\.json|\.ya?ml)?|auth\.json)$/i.test(name)) throw portableError('PORTABLE_SKILL_SECRET_FILE', 'Skill 目录含凭证文件，请移出目录并改用目标 Host 的环境变量');
     if (/[\\\0]/.test(name)) throw portableError('PORTABLE_SKILL_PATH_INVALID', 'Skill 文件名无效');
     const path = join(root, name), info = await lstat(path), archiveName = `${prefix}/${name}`;
@@ -114,15 +129,16 @@ export async function capturePortableResources({ record, models, adapters, confi
     const inline = Object.entries(detail.headers || {});
     for (const [header, value] of inline) {
       if (/^(accept|content-type|mcp-protocol-version)$/i.test(header)) { headers[header] = String(value); continue; }
-      const name = `MCP_STUDIO_${sha256(`${detail.resourceId}:${header.toLowerCase()}`).slice(0, 16).toUpperCase()}_TOKEN`;
-      envRefs[header] = requireEnv(name, detail.resourceId, `MCP header ${header}`);
+      envRefs[header] = requireEnv(mcpDeploymentCredentialName(detail.resourceId, header), detail.resourceId, `MCP header ${header}`);
     }
     for (const [header, ref] of Object.entries(detail.envRefs || {})) {
       if (inline.some(([key, value]) => key.toLowerCase() === header.toLowerCase() && String(value).trim())) continue;
-      envRefs[header] = requireEnv(refName(ref), detail.resourceId, `MCP header ${header}`);
+      envRefs[header] = requireEnv(portableMcpCredentialName(detail.resourceId, header, ref), detail.resourceId, `MCP header ${header}`);
     }
     if ((detail.apiKey || detail.credentialRef) && ![...Object.keys(headers), ...Object.keys(envRefs)].some(key => key.toLowerCase() === 'authorization')) {
-      envRefs.Authorization = requireEnv(!detail.apiKey && refName(detail.credentialRef) || `MCP_STUDIO_${sha256(detail.resourceId).slice(0, 16).toUpperCase()}_TOKEN`, detail.resourceId, 'MCP Authorization');
+      const name = detail.apiKey ? `MCP_STUDIO_${sha256(detail.resourceId).slice(0, 16).toUpperCase()}_TOKEN`
+        : portableMcpCredentialName(detail.resourceId, 'Authorization', detail.credentialRef);
+      envRefs.Authorization = requireEnv(name, detail.resourceId, 'MCP Authorization');
     }
     mcps.push({ resourceId: detail.resourceId, endpointUrl: endpoint(detail.endpoint), headers, envRefs });
   }

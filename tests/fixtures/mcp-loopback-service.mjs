@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
-export async function createMcpLoopbackService({ transport, getCredential, onCall }) {
+export async function createMcpLoopbackService({ transport, getCredential, credentialHeader = 'authorization', onCall }) {
   const sessions = new Map(), servers = new Set();
   const receipt = `EXCLUSIVE_${transport}_${randomUUID()}`;
   const toolName = `probe_${transport}`;
@@ -30,7 +30,8 @@ export async function createMcpLoopbackService({ transport, getCredential, onCal
   const http = createServer(async (req, res) => {
     try {
       counts.requests++;
-      if (req.headers.authorization !== `Bearer ${getCredential()}`) { res.writeHead(401).end(); return; }
+      const expected = credentialHeader === 'authorization' ? `Bearer ${getCredential()}` : getCredential();
+      if (req.headers[credentialHeader] !== expected || (credentialHeader !== 'authorization' && req.headers.authorization)) { res.writeHead(401).end(); return; }
       counts.authenticated++;
       const url = new URL(req.url, 'http://127.0.0.1');
       if (transport === 'sse') {

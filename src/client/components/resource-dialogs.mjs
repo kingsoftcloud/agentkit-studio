@@ -249,17 +249,42 @@ export function createResourceDialogs({
     const [scanPaths, setScanPaths] = useState('');
     const [discovery, setDiscovery] = useState(null);
     const [selected, setSelected] = useState([]);
+    const [overwrite, setOverwrite] = useState(false);
+    const [fromInstalled, setFromInstalled] = useState(false);
     const [preview, setPreview] = useState(null);
     const [previewFile, setPreviewFile] = useState(null);
     const [status, setStatus] = useState('idle');
     const [error, setError] = useState('');
     const candidates = Array.isArray(discovery?.candidates) ? discovery.candidates : [];
-    const scan = async () => {
-      setStatus('scanning'); setError(''); setPreview(null); setPreviewFile(null); setSelected([]);
-      try { setDiscovery(await hostRemote.discoverSkills(scanPaths.split(',').map(item => item.trim()).filter(Boolean))); setStatus('ready'); }
+    const selectable = candidates.filter(candidate => ['ready', 'conflict'].includes(candidate.status));
+    const nameCounts = new Map();
+    for (const { name } of selectable) nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+    const unique = selectable.filter(candidate => nameCounts.get(candidate.name) === 1);
+    const selectedCandidates = selectable.filter(candidate => selected.includes(candidate.candidateId));
+    const conflicts = selectedCandidates.filter(candidate => candidate.status === 'conflict');
+    const busy = status === 'scanning' || status === 'committing';
+    const allSelected = unique.length ? unique.every(candidate => selected.includes(candidate.candidateId)) : selected.length > 0;
+    const canCommit = selectedCandidates.length > 0 && !busy && (!conflicts.length || overwrite);
+    const scan = async installed => {
+      setFromInstalled(installed);
+      setStatus('scanning'); setError(''); setDiscovery(null); setPreview(null); setPreviewFile(null); setSelected([]); setOverwrite(false);
+      try {
+        const paths = installed ? [] : scanPaths.split(',').map(item => item.trim()).filter(Boolean);
+        setDiscovery(await hostRemote.discoverSkills(paths, { fromInstalled: installed }));
+        setStatus('ready');
+      }
       catch (reason) { setStatus('error'); setError(reason?.message || 'Skill 扫描失败'); }
     };
-    const toggle = id => setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+    const toggle = candidate => {
+      setOverwrite(false);
+      setSelected(current => current.includes(candidate.candidateId) ? current.filter(id => id !== candidate.candidateId)
+        : [...current.filter(id => !selectable.some(item => item.candidateId === id && item.name === candidate.name)), candidate.candidateId]);
+    };
+    const toggleAll = () => {
+      setOverwrite(false);
+      if (allSelected) { setSelected([]); return; }
+      setSelected(current => [...new Set([...current, ...unique.map(candidate => candidate.candidateId)])]);
+    };
     const showPreview = async candidate => {
       try { const files = await hostRemote.previewDiscoveredSkill(discovery.inspectionToken, candidate.candidateId); setPreview({ title: candidate.displayName || candidate.name, files, candidate }); setPreviewFile(null); }
       catch (reason) { setError(reason?.message || 'Skill 预览失败'); }
@@ -270,17 +295,51 @@ export function createResourceDialogs({
       catch (reason) { setError(reason?.message || 'Skill 文件读取失败'); }
     };
     const commit = async () => {
-      if (!discovery?.inspectionToken || !selected.length || status === 'committing') return;
+      if (!discovery?.inspectionToken || !canCommit) return;
       setStatus('committing'); setError('');
-      try { for (const id of selected) await hostRemote.commitDiscoveredSkill(discovery.inspectionToken, id, false); onImported?.(); onClose(); }
-      catch (reason) { setStatus('error'); setError(reason?.message || 'Skill 导入失败；冲突项需要重新扫描后确认覆盖。'); }
+      const imported = new Set(), failures = [];
+      for (const candidate of selectedCandidates) {
+        try {
+          await hostRemote.commitDiscoveredSkill(discovery.inspectionToken, candidate.candidateId, candidate.status === 'conflict' && overwrite);
+          imported.add(candidate.candidateId);
+        } catch (reason) { failures.push(`${candidate.displayName || candidate.name}：${reason?.message || '导入失败'}`); }
+      }
+      if (imported.size) onImported?.();
+      if (!failures.length) { onClose(); return; }
+      setDiscovery(current => ({ ...current, candidates: candidates.map(candidate => imported.has(candidate.candidateId)
+        ? { ...candidate, status: 'imported' } : candidate) }));
+      setSelected(current => current.filter(id => !imported.has(id)));
+      setOverwrite(false);
+      setStatus('ready');
+      setError([imported.size ? `已更新 ${imported.size} 项。` : '', ...failures].filter(Boolean).join(' '));
     };
-    return h(ResourceDialog, { title: '发现本地 Skill', detail: '扫描默认目录或指定目录，预览后确认导入。', onClose },
+    const candidateRow = candidate => h('div', { key: candidate.candidateId, style: { display: 'flex', alignItems: 'center', gap: '9px', padding: '10px', border: '1px solid ' + BRAND.border, borderRadius: '9px', background: BRAND.surface } },
+      h('input', { type: 'checkbox', checked: selected.includes(candidate.candidateId), disabled: busy || !selectable.includes(candidate),
+        onChange: () => toggle(candidate), 'aria-label': `选择 ${candidate.displayName || candidate.name}` }),
+      h('div', { style: { flex: 1, minWidth: 0 } },
+        h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, candidate.displayName || candidate.name),
+        h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${candidate.path || '—'} · ${candidate.version || '未知版本'} · ${candidate.fileCount || 0} 文件`),
+        candidate.risk?.requiresReview ? h('span', { style: { color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '10px' } }, '包含脚本或网络标记，需人工复核') : null,
+        candidate.diagnostics?.length ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, candidate.diagnostics[0]) : null),
+      h(Pill, { tone: candidate.status === 'ready' ? 'accent' : 'signal' }, ({ conflict: '可覆盖', invalid: '无效', imported: '已导入' })[candidate.status] || '可导入'),
+      h('button', { type: 'button', disabled: busy, onClick: () => void showPreview(candidate), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '预览'));
+    return h(ResourceDialog, { title: '发现本地 Skill', detail: '扫描源目录，批量导入或覆盖更新资源库副本。', onClose: busy ? () => {} : onClose },
       h('div', { style: { display: 'grid', gap: '12px' } },
-        h('div', { style: { display: 'flex', gap: '8px', alignItems: 'end' } }, h('label', { style: { flex: 1, display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '扫描目录（逗号分隔）', h('input', { value: scanPaths, onChange: event => setScanPaths(event.target.value), placeholder: '留空扫描 skills, .agents/skills, .codex/skills, .claude/skills', style: inputStyle() })), h('button', { type: 'button', disabled: status === 'scanning', onClick: scan, style: buttonStyle() }, status === 'scanning' ? '扫描中…' : '扫描')),
+        h('div', { style: { display: 'flex', gap: '8px', alignItems: 'end', flexWrap: 'wrap' } },
+          h('label', { style: { flex: 1, display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '扫描目录（逗号分隔）',
+            h('input', { value: scanPaths, disabled: busy, onChange: event => setScanPaths(event.target.value), placeholder: '留空扫描 skills, .agents/skills, .codex/skills, .claude/skills', style: inputStyle() })),
+          h('button', { type: 'button', disabled: busy, onClick: () => scan(false), style: buttonStyle() }, status === 'scanning' && !fromInstalled ? '扫描中…' : '扫描目录'),
+          h('button', { type: 'button', disabled: busy, onClick: () => scan(true), style: buttonStyle() }, status === 'scanning' && fromInstalled ? '扫描中…' : '扫描已导入来源')),
         error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
-        candidates.length ? h('div', { style: { display: 'grid', gap: '7px', maxHeight: '330px', overflow: 'auto' } }, candidates.map(candidate => h('div', { key: candidate.candidateId, style: { display: 'flex', alignItems: 'center', gap: '9px', padding: '10px', border: '1px solid ' + BRAND.border, borderRadius: '9px', background: BRAND.surface } }, h('input', { type: 'checkbox', checked: selected.includes(candidate.candidateId), disabled: candidate.status === 'invalid', onChange: () => toggle(candidate.candidateId), 'aria-label': `选择 ${candidate.displayName || candidate.name}` }), h('div', { style: { flex: 1, minWidth: 0 } }, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, candidate.displayName || candidate.name), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${candidate.path || '—'} · ${candidate.version || '未知版本'} · ${candidate.fileCount || 0} 文件`), candidate.risk?.requiresReview ? h('span', { style: { color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '10px' } }, '包含脚本或网络标记，需人工复核') : null), h(Pill, { tone: candidate.status === 'ready' ? 'accent' : 'signal' }, candidate.status === 'conflict' ? '已安装' : candidate.status === 'invalid' ? '无效' : '可导入'), h('button', { type: 'button', onClick: () => void showPreview(candidate), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '预览')))) : status === 'ready' ? h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '22px 0', textAlign: 'center' } }, '安全扫描目录中没有发现 Skill。') : null,
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '3px' } }, h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, discovery ? `发现 ${candidates.length} 个候选 · 已选择 ${selected.length}` : '请先扫描'), h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'button', disabled: !selected.length || status === 'committing', onClick: commit, style: { ...buttonStyle(), color: !selected.length || status === 'committing' ? BRAND.inkMuted : BRAND.primaryText, background: !selected.length || status === 'committing' ? BRAND.accentSoft : BRAND.primaryFill, borderColor: !selected.length || status === 'committing' ? BRAND.border : 'transparent' } }, status === 'committing' ? '导入中…' : '导入选中 Skill')))),
+        discovery?.unknownSourceCount ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, `有 ${discovery.unknownSourceCount} 个旧 Skill 未记录来源。指定原目录扫描并覆盖一次即可同步。`) : null,
+        selectable.length ? h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '11px' } },
+          h('button', { type: 'button', disabled: busy || (!unique.length && !selected.length), onClick: toggleAll, style: buttonStyle() }, allSelected ? '取消全选' : '全选可导入或更新项'),
+          selectable.length !== unique.length ? h('span', null, '同名的多个源目录请手动选择一个。') : null) : null,
+        candidates.length ? h('div', { style: { display: 'grid', gap: '7px', maxHeight: '330px', overflow: 'auto' } }, candidates.map(candidateRow))
+          : status === 'ready' ? h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '22px 0', textAlign: 'center' } }, '扫描目录中没有发现 Skill。') : null,
+        conflicts.length ? h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px' } },
+          h('input', { type: 'checkbox', checked: overwrite, disabled: busy, onChange: event => setOverwrite(event.target.checked) }), `确认覆盖资源库中的 ${conflicts.length} 个同名 Skill`) : null,
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '3px' } }, h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, discovery ? `发现 ${candidates.length} 个候选 · 已选择 ${selected.length}` : '请先扫描'), h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { type: 'button', disabled: busy, onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'button', disabled: !canCommit, onClick: commit, style: { ...buttonStyle(), color: canCommit ? BRAND.primaryText : BRAND.inkMuted, background: canCommit ? BRAND.primaryFill : BRAND.accentSoft, borderColor: canCommit ? 'transparent' : BRAND.border } }, status === 'committing' ? '处理中…' : conflicts.length ? '导入并更新' : '导入选中 Skill')))),
         preview ? h(SkillPreviewDialog, { title: preview.title, preview: preview.files, onClose: () => setPreview(null), onSelect: async path => { await selectFile(path); }, file: previewFile }) : null);
   }
 

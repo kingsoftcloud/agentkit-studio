@@ -33,6 +33,10 @@ export function createResourceRoutes({
       const resourceId = String(payload?.resourceId || '').trim();
       return { ok: true, value: await (await mcpProbePromise).probe(resourceId) };
     }
+    if (endpoint === 'resources/delete' && payload?.kind === 'skill') {
+      if (payload.scope !== 'local') throw Object.assign(new Error('只支持移除本地导入的 Skill'), { code: 'SKILL_SCOPE_INVALID' });
+      return { ok: true, value: await (await skillDiscoveryPromise).removeInstalled(payload.resourceId) };
+    }
     if (endpoint === 'mcp/delete' || endpoint === 'resources/delete') {
       const { deleteStudioMcp } = await import('../../resource-lifecycle.mjs');
       return { ok: true, value: await deleteStudioMcp(payload, { localStore: await localMcpStorePromise, serverClient: await serverClientPromise }) };

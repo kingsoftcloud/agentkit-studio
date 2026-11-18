@@ -36,6 +36,7 @@ import { createThinkingDisplayProof } from './native-thinking-display-proof.mjs'
 import { artifactToolDefinitions, deliveryToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
+  'mcp-admission-only': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
   'workspace-repair': { type: 'boolean', default: false },
@@ -63,6 +64,7 @@ assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source
 assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
   '--installation requires --archive --mount-host and owns the complete dependency graph');
 assert.ok(!values['mcp-schema'] || values['mount-host'], '--mcp-schema requires --mount-host');
+assert.ok(!values['mcp-admission-only'] || values['mcp-schema'], '--mcp-admission-only requires --mcp-schema');
 assert.ok(!values.commands || !values['mcp-schema'], '--commands and --mcp-schema are separate proofs');
 assert.ok(!values.frozen || values['mount-host'], '--frozen requires --mount-host');
 assert.ok(!values.automation || values['mount-host'] && values.commands && !values.frozen, '--automation requires --mount-host --commands without --frozen');
@@ -424,7 +426,15 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (sessionWorkspaceProof) {
+  if (values['mcp-admission-only']) {
+    await harness.session('native-studio-session').setWorkingDirectory(options.cwd);
+    const probes = await jsonRows(join(root, 'mounted-host-http.jsonl'));
+    assert.equal(probes.length, 1);
+    assert.equal(probes[0].unauthorizedStatus, 401);
+    assert.equal(probes[0].compatible, true);
+    assert.equal(requests.length, 0);
+    console.log('Mounted DSH Host admitted a session from an Agent with a deleted MCP and retained the working MCP contract.');
+  } else if (sessionWorkspaceProof) {
     await sessionWorkspaceProof.run({ harness, DeepSeekHarness, options, root, installed, requests, failures });
     harness = null;
   } else if (conversationRewindProof) {

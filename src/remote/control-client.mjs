@@ -212,7 +212,7 @@ export function createProductClient(connection, { window = globalThis.window } =
             return result.value;
         }
         const bridgeByEndpoint = {
-            'skills/discover': scanPaths => request('/api/v1/catalog/skills:discover', { method: 'POST', body: JSON.stringify({ scanPaths: Array.isArray(scanPaths) ? scanPaths : [] }) }),
+            'skills/discover': payload => request('/api/v1/catalog/skills:discover', { method: 'POST', body: JSON.stringify(payload) }),
             'skills/preview-discovered': ({ inspectionToken, candidateId, path }) => request('/api/v1/catalog/skills/discoveries/' + encodeURIComponent(inspectionToken) + '/candidates/' + encodeURIComponent(candidateId) + '/files' + (path ? '?path=' + encodeURIComponent(path) : '')),
             'skills/commit-discovered': ({ inspectionToken, candidateId, overwrite }) => request('/api/v1/catalog/skills/discoveries/' + encodeURIComponent(inspectionToken) + ':commit', { method: 'POST', body: JSON.stringify({ candidateId, overwrite }) }),
             'skills/preview-installed': ({ resourceId, path }) => request('/api/v1/catalog/skills/' + encodeURIComponent(resourceId) + '/files' + (path ? '?path=' + encodeURIComponent(path) : '')),
@@ -418,17 +418,20 @@ export function createProductClient(connection, { window = globalThis.window } =
             : request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId), { method: 'PUT', body: JSON.stringify(payload) }),
         createModelResource: payload => bridgeAvailable() ? studioBridgeOperation('models/create', payload) : request('/api/v1/catalog/model-profiles', { method: 'POST', body: JSON.stringify(payload) }),
         createToolResource: payload => request('/api/v1/catalog/tools', { method: 'POST', body: JSON.stringify(payload) }),
-        deleteResource: (resourceId, scope = 'local') => bridgeAvailable()
-            ? studioBridgeOperation('resources/delete', { resourceId, scope })
-            : scope === 'cloud' ? Promise.reject(new Error('删除云端 MCP 需要连接 Studio Host'))
-                : request('/api/v1/catalog/resources/' + encodeURIComponent(resourceId), { method: 'DELETE' }),
+        deleteResource: (resourceId, scope = 'local', kind) => bridgeAvailable()
+            ? studioBridgeOperation('resources/delete', { resourceId, scope, ...(kind ? { kind } : {}) })
+            : kind === 'skill' ? Promise.reject(new Error('移除本地 Skill 需要连接 Studio Host'))
+                : scope === 'cloud' ? Promise.reject(new Error('删除云端 MCP 需要连接 Studio Host'))
+                    : request('/api/v1/catalog/resources/' + encodeURIComponent(resourceId), { method: 'DELETE' }),
         probeMcpResource: (resourceId, timeoutSeconds = 15) => (bridgeAvailable() && (localMcpId(resourceId) || directServer()))
             ? studioBridgeOperation('mcp/probe', { resourceId, timeoutSeconds })
             : request('/api/v1/catalog/mcp-servers/' + encodeURIComponent(resourceId) + ':probe?timeoutSeconds=' + encodeURIComponent(timeoutSeconds), { method: 'POST' }),
         // Skill discovery runs locally inside the plugin Node host over the
         // same authenticated bridge; the legacy Studio Host REST routes are
         // kept for a local-Host deployment only.
-        discoverSkills: (scanPaths = []) => skillBridgeCall('skills/discover', { scanPaths: Array.isArray(scanPaths) ? scanPaths : [] }),
+        discoverSkills: (scanPaths = [], { fromInstalled = false } = {}) => skillBridgeCall('skills/discover', {
+            scanPaths: Array.isArray(scanPaths) ? scanPaths : [], ...(fromInstalled ? { fromInstalled: true } : {}),
+        }),
         previewDiscoveredSkill: (inspectionToken, candidateId, path = '') => skillBridgeCall('skills/preview-discovered', { inspectionToken, candidateId, path }),
         commitDiscoveredSkill: (inspectionToken, candidateId, overwrite = false) => skillBridgeCall('skills/commit-discovered', { inspectionToken, candidateId, overwrite }),
         previewInstalledSkill: (resourceId, path = '') => skillBridgeCall('skills/preview-installed', { resourceId, path }),

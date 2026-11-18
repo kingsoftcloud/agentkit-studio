@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioBuild } from '../src/studio-build.mjs';
-import { createPortableBundles } from '../src/portable-bundle.mjs';
+import { createPortableBundles, verifyPortableBundle } from '../src/portable-bundle.mjs';
 import { createOperationManager } from '../src/studio-operations.mjs';
 import { createStudioDeployments } from '../src/studio-deployments.mjs';
 import { createDeploymentStore } from '../src/deployment-store.mjs';
@@ -15,16 +15,38 @@ import { sha256 } from '../src/portable-resources.mjs';
 import { createRuntimeResponsesContract } from '../src/runtime-responses-contract.mjs';
 import { createRuntimeResponsesStream } from '../src/runtime-responses-stream.mjs';
 import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
+import { createLocalMcpStore } from '../src/local-mcp-store.mjs';
+import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
+import { createSkillDiscovery } from '../src/skill-discovery.mjs';
+import { parseManagedRuntimeManifest } from '../src/managed-runtime-manifest.mjs';
+import { managedResourceBindings } from '../src/managed-resource-contract.mjs';
+import { createMcpLoopbackService } from './fixtures/mcp-loopback-service.mjs';
 
-async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', bindings: bindingOverrides = {}, createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
+async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', bindings: bindingOverrides = {}, createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0, customMcp } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-deploy-')); t.after(() => rm(root, { force: true, recursive: true }));
   const agentId = 'ar-local-1234567890abcdef', cloudAgentId = 'ar-cloud-test';
   const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: deploymentType === 'ManagedRuntime' ? '' : 'private-test' };
   const configuration = { resolve: async () => ({ values }) };
   const profile = { id: 'model', provider: 'ksyun', modelName: 'bound-model', baseUrl: 'https://model.example/v1', credentialName, apiKey: 'model-private' };
   const mcp = { resourceId: 'search', endpoint: 'https://search.example/mcp', apiKey: 'search-private' };
-  const models = { profile: async () => profile }, adapters = { describeMcp: async () => mcp };
+  const models = { profile: async () => profile };
   const build = createStudioBuild({ storeDir: root }), bindings = { modelProfileId: 'model', mcpServers: ['search'], ...bindingOverrides };
+  let adapters = { describeMcp: async () => mcp }, credentials;
+  if (customMcp) {
+    const resourceStore = createLocalMcpStore({ storeDir: join(root, 'mcps') });
+    const record = await resourceStore.create({ server: { name: 'custom-header-mcp', endpointUrl: customMcp.endpoint,
+      envRefs: { 'X-Service-Token': 'env://team/services.mcp' } } });
+    const skillDiscovery = createSkillDiscovery({ storeDir: join(root, 'skills') }), skillSource = join(root, 'source');
+    await mkdir(skillSource);
+    await writeFile(join(skillSource, 'SKILL.md'), '---\nname: demo-skill\ndescription: Deployment fixture\n---\nDemo\n');
+    const scan = await skillDiscovery.discover([skillSource]);
+    const skill = await skillDiscovery.commitDiscovered(scan.inspectionToken, scan.candidates[0].candidateId);
+    bindings.mcpServers = [record.resourceId];
+    bindings.skills = [skill.resourceId];
+    credentials = { resolve: async name => name === 'team/services.mcp' ? { value: customMcp.value } : null };
+    adapters = createLocalResourceAdapters({ resourceStore, skillDiscovery, credentials });
+    t.after(() => adapters.close());
+  }
   const built = await build.build({ agentId, revision: 2, metadata: { id: agentId, name: 'Agent', local: true, revision: 2 }, spec: { runtime: { type: runtime }, bindings }, bindings });
   const portableBundles = createPortableBundles({ storeDir: root, build, models, adapters, configuration });
   const release = { id: '0.0.1-test', version: '0.0.1-test', label: 'Test', channel: 'preview', enabled: true, runtimeIdentity: true, image: `hub-vpc-cn-beijing-6.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`,
@@ -75,7 +97,7 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
       };
     },
   };
-  const options = { storeDir: join(root, 'deployments'), build, portableBundles, models, adapters, configuration, client,
+  const options = { storeDir: join(root, 'deployments'), build, portableBundles, models, adapters, credentials, configuration, client,
     operations: createOperationManager({ storeDir: join(root, 'operations') }),
     storageFactory: () => ({ upload: async (zip, reference) => {
       calls.push(['upload', reference]);
@@ -200,6 +222,46 @@ test('ManagedRuntime delivery skips KS3 for prompt and direct MCP-only bindings'
   assert.equal((await f.service.get(created.id)).state, 'READY');
   const cloud = await f.service.agents.get('ar-cloud-test');
   assert.equal(cloud.deployment.model, 'bound-model');
+});
+
+for (const deploymentType of ['ManagedRuntime', 'Container']) test(`${deploymentType} ships custom MCP Headers with a local Skill bundle using only sensitive environment values`, async t => {
+  const customMcp = { value: 'fixture-only-service-value' };
+  const loopback = await createMcpLoopbackService({ transport: 'http', credentialHeader: 'x-service-token', getCredential: () => customMcp.value });
+  t.after(() => loopback.close());
+  customMcp.endpoint = loopback.endpoint;
+  const f = await fixture(t, { deploymentType, customMcp });
+  assert.equal(f.preview.resourceCounts.mcps, 1);
+  assert.equal(f.preview.resourceCounts.skills, 1);
+  assert.ok(!JSON.stringify(f.preview).includes(customMcp.value));
+  const bundle = await f.options.portableBundles.download(f.input.agentId, f.input.buildId, f.preview.bundleId);
+  const archive = verifyPortableBundle(Buffer.from(bundle.base64, 'base64'));
+  assert.ok(!archive.files.some(file => file.name.endsWith('.studio-installation.json')));
+  assert.ok(!JSON.stringify(archive.manifest).includes('team/services.mcp'));
+  if (deploymentType === 'ManagedRuntime') {
+    const original = customMcp.value;
+    customMcp.value = 'fixture-only-rotated-value';
+    await assert.rejects(f.service.create(f.request), { code: 'DEPLOYMENT_PREVIEW_STALE' });
+    assert.deepEqual(f.calls, []);
+    customMcp.value = original;
+  }
+  const created = await f.service.create(f.request);
+  await f.settled();
+  const payload = f.calls.find(([action]) => action === 'create')[1];
+  const manifestConfig = payload.ManagedRuntimeConfig;
+  const binding = manifestConfig
+    ? managedResourceBindings(parseManagedRuntimeManifest(manifestConfig.Manifest, { runtimeName: manifestConfig.RuntimeName, runtimeVersion: manifestConfig.RuntimeVersion }).resources).mcpServers[0]
+    : archive.manifest.resources.mcps[0];
+  const envName = binding.envRefs['X-Service-Token'];
+  assert.match(envName, /^MCP_STUDIO_[A-F0-9]+_TOKEN$/);
+  const environment = payload.Advanced.EnvironmentVariables;
+  assert.deepEqual(environment.find(row => row.Key === envName), { Key: envName, Value: customMcp.value, IsSensitive: true });
+  assert.ok(!JSON.stringify(manifestConfig || {}).includes(customMcp.value));
+  assert.ok(!(await readFile(join(f.root, 'deployments', `${created.id}.json`), 'utf8')).includes(customMcp.value));
+  const served = createLocalResourceAdapters({ credentials: { resolve: async name => ({ value: environment.find(row => row.Key === name)?.Value }) } });
+  try { assert.equal((await served.callMcpTool(binding, loopback.toolName, {}))[0].text, loopback.receipt); }
+  finally { await served.close(); }
+  assert.equal(loopback.counts.authenticated, loopback.counts.requests);
+  assert.equal((await f.service.refresh(created.id)).state, 'READY');
 });
 
 test('Studio streams a managed deployment through public Responses with the observed runtime identity', async t => {
