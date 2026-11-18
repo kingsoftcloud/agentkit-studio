@@ -52,13 +52,16 @@ const result = await build({
 });
 // Run the linked browser script through the same semantics-preserving
 // compressor so dependency upgrades remain within the approved size budget.
+const dshValuesLicense = (await readFile(resolve(root, 'node_modules/@deepseek-ai/dsh-util-values/LICENSE'), 'utf8')).trim();
 const { code: output } = await minify(result.outputFiles[0].text, {
   ecma: 2022, compress: { passes: 2 },
+  format: { preamble: `/*! @deepseek-ai/dsh-util-values\n${dshValuesLicense}\n*/` },
 });
 if (!output) throw new Error('Studio browser compression produced no code');
 if (!output.includes('window.__ModuleLoader__.load({')) throw new Error('client bundle lost the DSH ModuleLoader registration');
 if (!output.includes('@kingsoftcloud/agentkit-studio')) throw new Error('client bundle lost the Studio module id');
 for (const input of Object.keys(result.metafile.inputs)) {
+  if (input === 'node_modules/@deepseek-ai/dsh-util-values/lib/index.js') continue;
   if (/^node_modules\/@kingsoftcloud\/agentkit-harness-ui\/(?:src\/|markdown\/dist\/markdown\.mjs$)/.test(input)) continue;
   if (/^node_modules\/@kingsoftcloud\/agentkit-harness-core\/dist\/(?:child-workspace-tools|capability-profile|model-capabilities|values|error-presentation)\.mjs$/.test(input)) continue;
   if (/^(?:src\/(?:host|providers)\/|packages\/agentkit-harness\/|node_modules\/)/.test(input)) throw new Error(`Unexpected browser dependency: ${input}`);

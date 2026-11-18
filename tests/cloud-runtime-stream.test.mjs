@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
+import { bindDshAgentRoute, createDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
+import { CODEX_TOOL_EVENT } from '../src/providers/codex-tool-events.mjs';
 import { createRuntimeResponsesStream } from '../src/runtime-responses-stream.mjs';
 
 async function project(events, newline = '\n') {
@@ -26,6 +27,52 @@ test('cloud message completion snapshots preserve interleaved text and reasoning
   assert.deepEqual(chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block), [
     { type: 'text', text: '开始。' }, { type: 'reasoning', text: '检查' }, { type: 'text', text: '失败。' },
   ]);
+});
+
+test('API-created managed agents persist remote tool cards through RunAgent', async () => {
+  for (const runtime of ['codex', 'dsh-native']) {
+    const frames = [];
+    const writer = createRuntimeResponsesStream({ runId: 'run_managed_tools' }, (_type, event) => frames.push(event));
+    writer.start();
+    for (const [callId, phase] of [['lookup', 'completed'], ['read', 'failed'], ['pending', 'started']]) {
+      const call = { callId, name: callId, arguments: JSON.stringify({ key: callId }) };
+      const toolEvent = (type, data) => writer.frame({ kind: 'event', value: { type, data } });
+      const content = [{ type: 'text', text: `${callId} result` }];
+      if (runtime === 'codex') {
+        toolEvent(CODEX_TOOL_EVENT, { ...call, phase: 'started' });
+        if (phase !== 'started') toolEvent(CODEX_TOOL_EVENT, { ...call, phase, content });
+      } else {
+        toolEvent('tool/call', call);
+        if (phase !== 'started') toolEvent('tool/result', { message: { source: { callId }, content, isError: phase === 'failed' } });
+      }
+    }
+    writer.complete({ output: '云端回答' });
+    const sessionId = `managed-tool-session-${runtime}`;
+    const facts = [];
+    const release = bindDshAgentRoute(sessionId, { agentId: 'ar-managed-tools', source: 'agentengine-managed-runtime', runtime,
+      agent: { session: { append: (...args) => facts.push(args) } } });
+    try {
+      const adapter = createDshRuntimeAdapter({ cloudClient: { async streamAction(action, request) {
+        assert.equal(action, 'RunAgent');
+        assert.equal(request.SessionId, sessionId);
+        return { body: new Response(frames.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')).body };
+      } }, cloudRuntime: () => assert.fail('API-managed route must use RunAgent') });
+      const chunks = [];
+      for await (const chunk of adapter.stream({ sessionId, messages: [{ role: 'user', content: '检索' }] })) chunks.push(chunk);
+      assert.ok(facts.every(([type, , options]) => type === CODEX_TOOL_EVENT && options.ignorable === true && !options.surfaceOp));
+      assert.deepEqual(facts.map(([, data]) => [data.name, data.phase]), [
+        ['lookup', 'started'], ['lookup', 'completed'], ['read', 'started'], ['read', 'failed'], ['pending', 'started'], ['pending', 'failed'],
+      ]);
+      assert.equal(facts[1][1].callId, facts[0][1].callId);
+      assert.equal(facts[1][1].arguments, '{"key":"lookup"}');
+      assert.equal(facts[1][1].content[0].text, 'lookup result');
+      assert.equal(facts[3][1].content[0].text, 'read result');
+      assert.equal(facts[5][1].error.code, 'CLOUD_TOOL_OUTCOME_UNKNOWN');
+      assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), '云端回答');
+      assert.equal(chunks.some(chunk => chunk.type === 'reasoning-delta' || chunk.blockType === 'tool-call'), false);
+      assert.equal(chunks.at(-1).reason.kind, 'stop');
+    } finally { release(); }
+  }
 });
 
 test('identical text in different cloud content parts is not deduplicated', async () => {

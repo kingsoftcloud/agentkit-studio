@@ -278,6 +278,9 @@ jobs:
             echo "STUDIO_VERIFY_PROFILE=studio-refactor"
             echo "STUDIO_VERIFY_CHROME=$(node --input-type=module -e 'import { chromium } from "@playwright/test"; console.log(chromium.executablePath())')"
           } >> "$GITHUB_ENV"
+      - name: Verify Codex tool cards with the pinned DSH UI
+        timeout-minutes: 2
+        run: node scripts/verify-dsh-codex-tool-cards.mjs
       - name: Verify the real frozen Host MCP turn
         timeout-minutes: 12
         run: node scripts/verify-studio-frozen-host.mjs .artifacts/frozen-host.json

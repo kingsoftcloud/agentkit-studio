@@ -150,6 +150,7 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-util-values": "0.2.2-rc.1",
     "@electron/asar": "3.4.1",
     "@playwright/test": "1.58.2",
     "esbuild": "0.27.7",

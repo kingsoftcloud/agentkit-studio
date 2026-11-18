@@ -1,3 +1,5 @@
+import { PartialArguments } from '@deepseek-ai/dsh-util-values';
+
 export const codexToolDefinition = {
   kind: 'agentkit-codex-tool', target: 'chat',
   match(event) {
@@ -22,13 +24,15 @@ export const codexToolDefinition = {
     // DSH-native command. The persisted event keeps its original wire name
     // (`codex/command`) for observability and model history.
     const displayName = data.name === 'codex/command' ? 'bash' : data.name;
+    const argsRaw = typeof data.arguments === 'string' ? data.arguments : '';
+    const args = PartialArguments.fromText(argsRaw);
     const root = data.phase === 'started' && !interrupted ? {
-      phase: 'start', callId: data.callId, name: displayName, argsRaw: data.arguments,
+      phase: 'start', callId: data.callId, name: displayName, argsRaw, args,
       turn: location.kind === 'step' || location.kind === 'turn' ? location.turn.turn : 0,
       step: location.kind === 'step' ? location.step.step : 0, time: first.event.time, subCalls: [],
     } : {
       kind: 'tool-result', seq: latest.event.seq, time: latest.event.time,
-      callId: data.callId, call: { name: displayName, argsRaw: data.arguments }, callTime: first.event.time,
+      callId: data.callId, name: displayName, args, call: { name: displayName, argsRaw }, callTime: first.event.time,
       content: data.content || [], isError: data.phase === 'failed' || Boolean(interrupted),
       ...(interrupted ? { error: { name: 'Interrupted', code: 'CODEX_TOOL_OUTCOME_UNKNOWN', reason: '未收到工具完成结果' } } : data.error ? { error: data.error } : {}),
       subCalls: [],

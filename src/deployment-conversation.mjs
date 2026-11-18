@@ -3,7 +3,7 @@ import { CLOUD_PROVIDER } from './deployment-agents.mjs';
 import { clampExecutionMode } from './execution-policy.mjs';
 import { sha256, portableError } from './portable-resources.mjs';
 import { cloudFrames } from './providers/dsh-runtime.mjs';
-import { createCodexToolRecorder } from './providers/codex-tool-events.mjs';
+import { createResponsesToolRecorder } from './providers/codex-tool-events.mjs';
 import { sanitizeResourceCheck } from './resource-checks.mjs';
 
 export function createDeploymentConversation({ agents, fetchImpl = fetch, observability, permissionModeFor }) {
@@ -33,8 +33,6 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
     }
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'text/event-stream',
       ...(permissionMode ? { 'x-agentkit-permission-mode': permissionMode } : {}) };
-    const calls = new Map(), items = new Map();
-    const recorder = createCodexToolRecorder(options.session, { label: '云端', code: 'CLOUD' });
     let responseId, verified = false, response, complete = false;
     const startedAt = new Date().toISOString(), events = [], resourceChecks = [];
     const bindings = agent.spec?.bindings || {}, ids = values => (values || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).filter(Boolean);
@@ -42,6 +40,7 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
       platform: (bindings.plugins || []).map(item => item.config?.binding?.resource).filter(Boolean).map(item => ({ kind: item.kind, id: item.id || item.resourceId })) };
     let status = 'failed';
     const recordEvent = (event_type, payload) => events.push({ event_type, at: new Date().toISOString(), session_id: options.sessionId, run_id: responseId, payload });
+    const toolRecorder = createResponsesToolRecorder(options.session, recordEvent);
     const onEvent = event => {
       const type = event.type || event.event;
       if (['response.created', 'response.in_progress', 'response.completed'].includes(type)) {
@@ -74,29 +73,10 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
         }
         return false;
       }
-      if (type === 'response.output_item.added' && event.item?.type === 'function_call') {
-        const item = event.item;
-        calls.set(item.call_id, item); items.set(item.id, item);
-        recordEvent('tool.started', { callId: item.call_id, name: item.name });
-        recorder?.record({ type: 'tool', id: item.call_id, name: item.name, arguments: item.arguments, phase: 'started' });
-        return Boolean(recorder);
+      if (type === 'response.output_item.done' && event.item?.type !== 'function_call' && event.item?.status === 'incomplete') {
+        throw portableError('CLOUD_STREAM_INCOMPLETE', '云端推理尝试未完成，请检查运行结果');
       }
-      if (type === 'response.function_call_arguments.done') {
-        const item = items.get(event.item_id); if (item) item.arguments = event.arguments;
-        return Boolean(recorder);
-      }
-      if (type === 'response.tool_result') {
-        const item = calls.get(event.call_id);
-        recordEvent(event.is_error ? 'tool.failed' : 'tool.completed', { callId: event.call_id, name: item?.name });
-        if (item) recorder?.record({ type: 'tool', id: item.call_id, name: item.name, arguments: item.arguments,
-          phase: event.is_error ? 'failed' : 'completed', result: { content: event.output } });
-        return Boolean(recorder);
-      }
-      if (type === 'response.output_item.done') {
-        if (event.item?.type === 'function_call') return Boolean(recorder); // Wait for the actual tool result.
-        if (event.item?.status === 'incomplete') throw portableError('CLOUD_STREAM_INCOMPLETE', '云端推理尝试未完成，请检查运行结果');
-      }
-      return false;
+      return toolRecorder.observe(event);
     };
     try {
       response = await fetchImpl(`${endpoint}/v1/responses`, { method: 'POST', headers, body: JSON.stringify(request), redirect: 'error', signal: options.signal });
@@ -111,7 +91,7 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
       if (error?.code) throw error;
       throw portableError('DEPLOYMENT_CONNECTION_FAILED', '云端对话连接失败，请检查网络和运行状态');
     } finally {
-      recorder?.close();
+      toolRecorder.close();
       if (verified) await observability?.syncTrace({ traceId: `cloud_${sha256(JSON.stringify([options.agentId, responseId]))}`, sessionId: options.sessionId,
         agentId: options.agentId, agentName: agent.metadata?.name, executionLocation: 'cloud', status, startedAt,
         completedAt: new Date().toISOString(), events, provenance: { cloudAgentId: options.agentId, agentId: agent.deployment.agentId,

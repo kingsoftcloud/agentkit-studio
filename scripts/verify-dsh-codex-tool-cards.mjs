@@ -1,4 +1,4 @@
-/** Real pinned DSH loop and Chat assembler; synthetic Codex stream, no model cost. */
+/** Real pinned DSH loop, Chat assembler and tool cards with a deterministic Codex stream. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
@@ -17,16 +17,19 @@ const load = name => import(pathToFileURL(require.resolve(name)).href);
 const { Context } = await load('@deepseek-ai/cordis');
 const { default: LlmRuntime, LlmAdapter, createUserMessage } = await load('@deepseek-ai/dsh-llm');
 const { default: SessionStore, SessionId } = await load('@deepseek-ai/dsh-session');
-const { defineContentToolFixture } = await load('@deepseek-ai/dsh-tools');
+const { defineContentToolFixture } = await load('@deepseek-ai/dsh-tool-testkit');
 const persistenceRequire = createRequire(join(root, 'packages/session/session-persistence-jsonl/package.json'));
-const { default: JsonlPersistence } = await import(pathToFileURL(persistenceRequire.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href);
+const JsonlPersistence = await import(pathToFileURL(persistenceRequire.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href);
 const histories = [];
 const cases = ['lookup', 'codex/command'].flatMap(toolName => ['completed', 'failed', 'canceled'].map(outcome => ({ toolName, outcome })));
 for (const { toolName, outcome } of cases) {
   const toolArgs = toolName === 'lookup' ? { card: 'P7' } : { command: 'python3 scripts/check.py', cwd: '/imported/skill' };
   const ctx = new Context();
   await ctx.plugin(LlmRuntime); await ctx.plugin(SessionStore);
-  for (const name of ['session-projection', 'system-prompt', 'tools', 'agent', 'agent-loop']) await ctx.plugin((await load(`@deepseek-ai/dsh-${name}`)).default, name === 'agent-loop' ? { agents: [] } : undefined);
+  for (const name of ['session-projection', 'system-prompt', 'tools']) await ctx.plugin((await load(`@deepseek-ai/dsh-${name}`)).default);
+  await ctx.plugin(await load('@deepseek-ai/dsh-tool-executor-native'));
+  await ctx.plugin((await load('@deepseek-ai/dsh-agent')).default);
+  await ctx.plugin((await load('@deepseek-ai/dsh-agent-loop')).default, { agents: [] });
   let executions = 0, streamed = 0;
   ctx.tools.register(defineContentToolFixture({ name: 'lookup', description: 'Must never dispatch from DSH', parameters: {}, execute: async () => { executions++; return [{ type: 'text', text: 'incorrect execution' }]; } }));
   const adapter = createDshRuntimeAdapter({ AdapterBase: LlmAdapter, codexRuntime: { async *stream({ messages }) {
@@ -52,7 +55,8 @@ for (const { toolName, outcome } of cases) {
     await agent.whenIdle();
     const events = agent.session.snapshotEvents();
     const tools = events.filter(event => event.type === 'agentkit/codex-tool');
-    assert.equal(streamed, 1); assert.equal(executions, 0, 'Codex calls must not dispatch through DSH again');
+    assert.equal(streamed, 1, JSON.stringify(events.findLast(event => event.type === 'turn/end')?.data.reason));
+    assert.equal(executions, 0, 'Codex calls must not dispatch through DSH again');
     assert.equal(tools.length, 2); assert.equal(tools[1].data.phase, outcome === 'canceled' ? 'failed' : outcome);
     if (outcome === 'canceled') assert.equal(tools[1].data.error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
     assert.equal(events.some(event => event.type === 'tool/call' || event.type === 'tool/result'), false);
@@ -86,7 +90,7 @@ for (const { toolName, outcome } of cases) {
         } finally { await reader.close(); }
       } finally { await readerContext.fiber.dispose(); }
     } finally { await rm(disk, { recursive: true, force: true }); }
-    histories.push({ outcome, toolArgs, events: seed });
+    histories.push({ outcome, toolName, toolArgs, events: seed });
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Recall the previous tool result without executing it again' }], source: { kind: 'user' } }));
     await agent.whenIdle();
     assert.equal(streamed, 2);
@@ -149,33 +153,82 @@ const temp = await mkdtemp(join(tmpdir(), 'studio-codex-cards-'));
 const fixture = join(temp, 'events.json');
 await writeFile(fixture, JSON.stringify(histories));
 const definitionModule = fileURLToPath(new URL('../src/client/dsh/codex-tool.mjs', import.meta.url));
-const probe = join(root, 'scripts', `.studio-codex-cards-${process.pid}.spec.ts`);
+const probe = join(root, 'packages', 'client', 'ui-tool', 'tests', `studio-codex-cards-${process.pid}.client.spec.ts`);
 await writeFile(probe, `
+// @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
+import { createElement } from 'react'
+import { render, fireEvent } from '@testing-library/react'
 import { expect, it } from 'vitest'
-import { ConversationNodeAssembler } from '../packages/client/ui-conversation/src/client/index.ts'
-import { chatViewDefinition } from '../packages/client/ui-chat/src/client/conversation-nodes/chat-snapshot-builder.ts'
+import { Context } from '@deepseek-ai/cordis'
+import { contextMenuHook } from '@deepseek-ai/dsh-client-test-runtime'
+import { ConversationNodeAssembler, UiConversation } from '../../ui-conversation/src/client/index.ts'
+import { registerConversationNodes } from '../../ui-chat/src/client/conversation-nodes/register.ts'
+import { useDisclosure } from '../../ui-chat/src/client/chat/use-disclosure.ts'
+import { ToolCallTree } from '../src/client/tool/ToolCallTree.tsx'
+import { BashRow } from '../src/client/tool/toolviews/bash-sample.tsx'
 import { codexToolDefinition as definition } from ${JSON.stringify(definitionModule)}
 const histories = JSON.parse(readFileSync(${JSON.stringify(fixture)}, 'utf8'))
-it('uses the official Chat tool payload live, after JSON replay, and with a result-only window', () => {
-  for (const { outcome, toolArgs, events } of histories) {
-    const assembler = new ConversationNodeAssembler({ entries: () => [definition], fallbackEntry: () => undefined }, { entries: () => [chatViewDefinition] })
-    assembler.activateTarget('chat')
-    const tools = events.filter(event => event.type === 'agentkit/codex-tool')
-    const prefix = events.filter(event => event.seq <= tools[0].seq)
-    assembler.replaceWindow(prefix.map(event => ({ type: 'event', event })), false)
+function toolView(node) {
+  const sessionId = 'codex-card-fixture'
+  const t = key => key
+  return createElement(ToolCallTree, {
+    node, sessionId, useDisclosure, t,
+    useHostInfo: select => select({}), useContextMenu: contextMenuHook,
+    renderSlot(_slot, props, { entryKey, fallback }) {
+      return entryKey === 'bash' ? createElement(BashRow, {
+        ...props, sessionId, t, useSessions: select => select({ byId: {} }),
+      }) : fallback
+    },
+  })
+}
+const entry = event => ({ type: 'event', event })
+it.each(histories)('renders the $toolName card live and after $outcome on reopen', async ({ outcome, toolName, toolArgs, events }) => {
+  const ctx = new Context()
+  const conversation = new UiConversation(ctx, {} as never)
+  registerConversationNodes(ctx)
+  const { events: registry, views, groups } = conversation
+  registry.register(definition)
+  const assembler = new ConversationNodeAssembler(registry, views, groups)
+  const toolCard = () => {
+    const cards = assembler.snapshot('chat').nodes.values().filter(node => node.kind === 'tool-call')
+    expect(cards).toHaveLength(1)
+    return cards[0]
+  }
+  const tools = events.filter(event => event.type === 'agentkit/codex-tool')
+  assembler.replaceWindow(events.filter(event => event.seq < tools[0].seq).map(entry), false)
+  assembler.activateTarget('chat')
+  let screen
+  try {
+    assembler.append(entry(tools[0]))
     assembler.flush()
-    expect([...assembler.snapshot('chat').nodes.values()][0].data.root.phase).toBe('start')
-    for (const window of [events, events.filter(event => event.seq >= tools[1].seq)]) {
-      assembler.replaceWindow(window.map(event => ({ type: 'event', event })), false)
-      assembler.flush()
-      const cards = [...assembler.snapshot('chat').nodes.values()]
-      expect(cards).toHaveLength(1)
-      expect(cards[0].kind).toBe('tool-call')
-      expect(cards[0].data.root.call.argsRaw).toBe(JSON.stringify(toolArgs))
-      expect(cards[0].data.root.isError).toBe(outcome !== 'completed')
-      if (outcome !== 'canceled') expect(cards[0].data.root.content[0].text).toBe('result-canary')
+    const running = toolCard()
+    screen = render(toolView(running))
+    expect(screen.container.querySelector('[data-state="running"]')).not.toBeNull()
+    expect(screen.container.textContent).toContain(toolName === 'codex/command' ? toolArgs.command : toolName)
+    for (const event of events.filter(event => event.seq > tools[0].seq)) assembler.append(entry(event))
+    assembler.flush()
+    const settled = toolCard()
+    expect(settled.key).toBe(running.key)
+    const assertSettledCard = node => {
+      expect(node.data.root.call.argsRaw).toBe(JSON.stringify(toolArgs))
+      expect(node.data.root.isError).toBe(outcome !== 'completed')
+      screen.rerender(toolView(node))
+      expect(screen.container.querySelector('[data-state="' + (outcome === 'completed' ? 'ok' : 'error') + '"]')).not.toBeNull()
+      fireEvent.click(screen.container.querySelector('[aria-expanded="false"]'))
+      expect(screen.container.querySelector('[aria-expanded="true"]')).not.toBeNull()
+      if (outcome !== 'canceled') expect(screen.container.textContent).toContain('result-canary')
+      fireEvent.click(screen.container.querySelector('[aria-expanded="true"]'))
     }
+    assertSettledCard(settled)
+    for (const window of [events, events.filter(event => event.seq >= tools[1].seq)]) {
+      assembler.replaceWindow(window.map(entry), false)
+      assembler.flush()
+      assertSettledCard(toolCard())
+    }
+  } finally {
+    screen?.unmount()
+    await ctx.fiber.dispose()
   }
 })
 `);

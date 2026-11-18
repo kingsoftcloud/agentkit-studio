@@ -52,9 +52,11 @@ test('native Chat payload restores failures and standalone result windows; close
   context.state = definition.start(context, context.start);
   const running = definition.buildViewNode(context);
   assert.equal(running.data.root.phase, 'start');
+  assert.equal(running.data.root.args.text('query'), started.arguments.query);
   context.state = definition.update(context, match(events[1]));
   const complete = definition.buildViewNode(context);
   assert.equal(complete.kind, 'tool-call');
+  assert.equal(complete.data.root.args.text('query'), started.arguments.query);
   assert.equal(complete.data.root.error.reason, 'upstream rejected');
   assert.deepEqual(JSON.parse(complete.data.root.call.argsRaw), started.arguments);
   context.start = match(events[1]);
