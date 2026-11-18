@@ -177,6 +177,9 @@ export function createModelSettingsSection({
     });
     const [modelStatus, setModelStatus] = useState({});
     const [modelCatalogs, setModelCatalogs] = useState({});
+    // Whether each profile's model implements `/v1/responses`. Read-only: the
+    // probe reports a recommendation and never writes the profile by itself.
+    const [wireProbes, setWireProbes] = useState({});
     const [connectionStatus, setConnectionStatus] = useState({});
     const [cloudStatus, setCloudStatus] = useState({ configured: false, source: 'missing' });
     const [dshStatus, setDshStatus] = useState({ configured: false, model: '', credentialConfigured: false });
@@ -480,6 +483,31 @@ export function createModelSettingsSection({
     const profileCatalogKey = profile => String(profile.id || profile.credentialName || 'default');
     const catalogItemsFor = profile => modelCatalogs[profileCatalogKey(profile)] || [];
     const connectionFor = profile => connectionStatus[profileCatalogKey(profile)] || {};
+    const wireProbeFor = profile => wireProbes[profileCatalogKey(profile)] || {};
+
+    /**
+     * Ask the Host which wire this model speaks.
+     *
+     * 星流's `/v1/models` declares no capability flag, so the form cannot
+     * know statically; asking is the only honest answer. The call is
+     * read-only — it returns a recommendation and the operator decides
+     * whether to write `protocol`.
+     */
+    const probeWireFor = async profile => {
+      const key = profileCatalogKey(profile);
+      const modelName = String(profile.modelName || '').trim();
+      if (!modelName) {
+        setWireProbes(current => ({ ...current, [key]: { state: 'error', message: '先选择或填写模型名' } }));
+        return;
+      }
+      setWireProbes(current => ({ ...current, [key]: { state: 'probing' } }));
+      try {
+        const result = await hostRemote.probeModelWire({ baseUrl: profile.baseUrl, modelName, credentialName: profile.credentialName });
+        setWireProbes(current => ({ ...current, [key]: { state: 'done', wire: String(result?.wire || 'unknown') } }));
+      } catch (failure) {
+        setWireProbes(current => ({ ...current, [key]: { state: 'error', message: String(failure?.message || failure) } }));
+      }
+    };
     const candidateFor = profile => {
       // 尚未保存的请求头也要随探测一起发送，否则「先填 Key 再读目录」的流程会在
       // 按 Header 鉴权的网关上失败。
@@ -794,12 +822,42 @@ export function createModelSettingsSection({
           h('summary', null, '连接与思考模式'),
           h('div', { className: 'ms-grid ms-grid-2' },
             h('label', { className: 'ms-field studio-srow' },
-              h('span', { className: 'ms-label' }, '连接协议'),
+              h('span', { className: 'ms-label' }, 'Codex 连接协议'),
               h('select', {
-                className: 'ms-select', 'aria-label': '连接协议',
+                className: 'ms-select', 'aria-label': 'Codex 连接协议',
                 value: selected.codexApi || 'responses',
                 onChange: event => setProfile(selectedIndex, 'codexApi', event.target.value),
               }, h('option', { value: 'responses' }, 'Responses'), h('option', { value: 'chat-completions' }, 'Chat Completions'))),
+            h('label', { className: 'ms-field studio-srow' },
+              h('span', { className: 'ms-label' }, 'DSH 接口'),
+              h('span', { className: 'ms-inline', 'data-wire-probe': wireProbeFor(selected).state || 'idle' },
+                h('button', {
+                  type: 'button', className: 'ms-btn', 'data-size': 'sm', 'data-wire-probe-button': true,
+                  disabled: wireProbeFor(selected).state === 'probing' || !String(selected.modelName || '').trim(),
+                  onClick: () => { void probeWireFor(selected); },
+                }, wireProbeFor(selected).state === 'probing' ? '探测中…' : '探测接口'),
+                wireProbeFor(selected).state === 'done'
+                  ? h('span', { className: 'ms-hint', 'data-wire-probe-result': wireProbeFor(selected).wire },
+                    wireProbeFor(selected).wire === 'openai-responses'
+                      ? ' ✅ 支持 Responses '
+                      : wireProbeFor(selected).wire === 'openai-completions'
+                        ? ' ➖ 只支持 Chat Completions '
+                        : ' ❓ 无结论 ',
+                    (wireProbeFor(selected).wire === 'openai-responses' && selected.protocol !== 'openai-responses')
+                      ? h('button', {
+                        type: 'button', className: 'ms-btn', 'data-size': 'sm', 'data-wire-probe-apply': true,
+                        onClick: () => setProfile(selectedIndex, 'protocol', 'openai-responses'),
+                      }, '让 DSH 走 Responses')
+                      : null,
+                    (wireProbeFor(selected).wire === 'openai-completions' && selected.protocol === 'openai-responses')
+                      ? h('button', {
+                        type: 'button', className: 'ms-btn', 'data-size': 'sm', 'data-wire-probe-apply': true,
+                        onClick: () => setProfile(selectedIndex, 'protocol', undefined),
+                      }, '改回 Chat Completions')
+                      : null)
+                  : wireProbeFor(selected).state === 'error'
+                    ? h('span', { className: 'ms-hint' }, ` ⚠️ ${wireProbeFor(selected).message}`)
+                    : null)),
             h('label', { className: 'ms-field studio-srow' },
               h('span', { className: 'ms-label' }, 'Native 思考模式'),
               h('select', {
@@ -812,7 +870,7 @@ export function createModelSettingsSection({
                   setProfile(selectedIndex, 'parameters', parameters);
                 },
               }, h('option', { value: 'default' }, '服务默认'), h('option', { value: 'enabled' }, '开启'), h('option', { value: 'disabled' }, '关闭')))),
-          h('p', { className: 'ms-hint' }, '连接协议同时决定 Codex 与 DSH 两条路线的上游接口；不确定时保持 Chat Completions —— 星流 59 个模型里只有 17 个实现 Responses。思考模式需要服务支持，界面只展示模型实际返回的思考。')),
+          h('p', { className: 'ms-hint' }, '「Codex 连接协议」只影响 Codex 运行时；「DSH 接口」由探测结果决定 —— 星流 59 个模型里只有 17 个实现 Responses，未声明时 DSH 保持 Chat Completions。思考模式需要服务支持，界面只展示模型实际返回的思考。')),
         requestBudget));
 
     const modelPanel = mode !== 'cloud' ? h('section', { className: 'ms-model' },

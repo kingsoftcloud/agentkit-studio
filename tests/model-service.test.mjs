@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { createModelService } from '../src/model-service.mjs';
 
 function configuration(values) {
@@ -122,4 +123,50 @@ test('an admitted gateway model survives catalog expiry but still refreshes cred
     values.modelProfiles.push({ ...gateway, id: 'disabled-model', modelName: 'directory-model', enabled: false });
     await assert.rejects(service.profile('directory-model', { admittedModel }), { code: 'MODEL_NOT_FOUND' });
   } finally { Date.now = originalNow; }
+});
+
+test('the wire probe resolves the stored credential and never writes configuration', async () => {
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      requests.push({ url: request.url, authorization: request.headers.authorization });
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ id: 'resp', status: 'completed', output: [] }));
+    });
+  });
+  const requests = [];
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let updated = 0;
+  try {
+    const service = createModelService({
+      configuration: { ...configuration({ modelProfiles: [] }), update: async () => { updated += 1; } },
+      credentials: { resolve: async name => ({ value: name === 'GATEWAY_KEY' ? 'sk-stored' : '', source: 'env' }), set: async () => {} },
+    });
+    const result = await service.probeWire({
+      baseUrl: `http://127.0.0.1:${server.address().port}/v1/`,
+      modelName: 'kimi-k3.1-pro',
+      credentialName: 'GATEWAY_KEY',
+    });
+    assert.deepEqual(result, {
+      baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+      modelName: 'kimi-k3.1-pro',
+      wire: 'openai-responses',
+    });
+    // The stored credential is used, and the probe is read-only.
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].authorization, 'Bearer sk-stored');
+    assert.equal(requests[0].url, '/v1/responses');
+    assert.equal(updated, 0, 'a probe must never write configuration');
+  } finally {
+    await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+  }
+});
+
+test('the wire probe rejects an incomplete candidate before touching the network', async () => {
+  const service = createModelService({
+    configuration: configuration({ modelProfiles: [] }),
+    credentials: { resolve: async () => ({ value: 'sk', source: 'env' }), set: async () => {} },
+  });
+  await assert.rejects(() => service.probeWire({ baseUrl: 'https://gw.test/v1', modelName: '  ' }), { code: 'MODEL_PROBE_INPUT_INVALID' });
+  await assert.rejects(() => service.probeWire({ baseUrl: '', modelName: 'm' }), { code: 'MODEL_PROBE_INPUT_INVALID' });
 });

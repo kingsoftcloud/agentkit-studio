@@ -951,6 +951,16 @@ export default String.raw`
   }
 }
 
+/* Wire probe: a button plus its verdict, on one line that wraps on narrow
+   hosts instead of overflowing the settings grid. */
+[data-studio-model-settings] .ms-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-studio-model-settings] .ms-advanced > summary::before {
     transition: none;

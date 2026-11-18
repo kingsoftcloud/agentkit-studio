@@ -5,6 +5,7 @@ import { studioReasoning } from './model-reasoning.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { requestHeaders } from './model-profile-contract.mjs';
+import { probeModelWire } from './model-wire-probe.mjs';
 
 function inputModalities(model = {}) {
   // KSPMAS/OpenAI-compatible gateways expose capabilities under
@@ -141,6 +142,30 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       items,
     };
   }
+  /**
+   * Ask one model which wire it speaks.
+   *
+   * The catalog cannot answer this — 星流's `/v1/models` declares no
+   * `native_endpoints` and no capability flag — so the settings form offers a
+   * probe instead of guessing. The probe never writes configuration: the form
+   * shows the recommendation and the operator decides.
+   *
+   * The credential is resolved from the same store the save path uses, so a
+   * profile that has never had its key re-entered can still be probed.
+   */
+  async function probeWire(candidate = {}) {
+    const baseUrl = String(candidate.baseUrl || '').trim().replace(/\/+$/, '');
+    const modelName = String(candidate.modelName || '').trim();
+    if (!baseUrl || !modelName)
+      throw Object.assign(new Error('探测需要模型地址与模型名'), { code: 'MODEL_PROBE_INPUT_INVALID', status: 400 });
+    let apiKey = String(candidate.apiKey || '').trim();
+    if (!apiKey) {
+      try { apiKey = String((await credentials.resolve(candidate.credentialName || 'AGENTKIT_MODEL_API_KEY'))?.value || '').trim(); }
+      catch { apiKey = ''; }
+    }
+    const wire = await probeModelWire({ baseUrl, modelName, apiKey, headers: requestHeaders(candidate.headers) });
+    return { baseUrl, modelName, wire };
+  }
   async function capabilities(selected, signal) {
     signal?.throwIfAborted();
     let items;
@@ -164,5 +189,5 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     if (!apiKey || !baseUrl) return admitModelCapabilities(candidate);
     return capabilities({ ...candidate, baseUrl, apiKey }, signal);
   }
-  return { settings, save, create, sync, profile, catalog, probe, capabilities, capabilitiesOf };
+  return { settings, save, create, sync, profile, catalog, probe, probeWire, capabilities, capabilitiesOf };
 }
