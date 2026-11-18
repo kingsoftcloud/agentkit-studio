@@ -31,7 +31,14 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
     const reasoning = studioReasoning(profile);
     const facts = await profileCapabilities(profile, resolveCapabilities);
     const value = { displayName: `${profile.provider} · ${profile.modelName}`, api: 'openai-completions', apiKeyEnv: profile.credentialName,
-      baseURL: profile.baseUrl, ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}), models: [{ id: profile.modelName, name: profile.modelName,
+      baseURL: profile.baseUrl,
+      // Kspmas validates message roles and answers
+      // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends the
+      // system prompt as `developer` to every reasoning model on a route it
+      // does not detect as non-standard, and a Studio route is always an
+      // OpenAI-compatible gateway pi-ai cannot know: keep `system`.
+      compat: { supportsDeveloperRole: false },
+      ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}), models: [{ id: profile.modelName, name: profile.modelName,
         contextWindow: facts.contextWindow,
         maxTokens: profile.maxOutputTokens ?? Math.min(facts.maxOutputTokens, OPERATING_MAX_OUTPUT_TOKENS),
         input: facts.input, ...(reasoning ? { reasoningEfforts: reasoning.efforts } : {}) }] };

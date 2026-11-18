@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatToResponses, createResponsesStreamTransformer, responsesToChat, UnsupportedToolsError } from '../src/model-proxy.mjs';
+import { chatToResponses, createResponsesStreamTransformer, normalizeDeveloperRole, responsesToChat, UnsupportedToolsError } from '../src/model-proxy.mjs';
 import { prepareCodexProxyRequest } from '../src/codex-proxy-tools.mjs';
 
 test('Responses request preserves multimodal input and maps Kspmas-compatible fields', () => {
@@ -184,4 +184,47 @@ test('multiple calls without call_id pair with outputs in emission order', () =>
   const outputs = chat.messages.filter(message => message.role === 'tool').map(message => message.tool_call_id);
   assert.deepEqual(calls, ['call_0', 'call_1']);
   assert.deepEqual(outputs, calls);
+});
+
+test('the developer role is renamed to system on both wires', () => {
+  // Kspmas answers `400 Invalid request: role 'developer' is not allowed`.
+  // A rename loses nothing, so the proxy normalizes up front instead of
+  // spending a round-trip to learn which gateways are strict.
+  const responses = { model: 'm', input: [
+    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'Be terse.' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] },
+  ] };
+  assert.equal(normalizeDeveloperRole(responses), 1);
+  assert.deepEqual(responses.input.map(item => item.role), ['system', 'user']);
+  // The rename keeps every other field and the item's key order.
+  assert.deepEqual(Object.keys(responses.input[0]), ['type', 'role', 'content']);
+  assert.deepEqual(responses.input[0].content, [{ type: 'input_text', text: 'Be terse.' }]);
+
+  const chat = { model: 'm', messages: [
+    { role: 'developer', content: 'Be terse.' },
+    { role: 'system', content: 'Already portable.' },
+    { role: 'user', content: 'ping' },
+  ] };
+  assert.equal(normalizeDeveloperRole(chat), 1);
+  assert.deepEqual(chat.messages.map(message => message.role), ['system', 'system', 'user']);
+  assert.equal(chat.messages[0].content, 'Be terse.');
+});
+
+test('a body without a developer role is left byte-identical', () => {
+  const body = { model: 'm', input: [
+    { type: 'message', role: 'system', content: [{ type: 'input_text', text: 'Keep.' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] },
+    { type: 'function_call', call_id: 'call_1', name: 'pwd', arguments: '{}' },
+  ] };
+  const before = JSON.stringify(body);
+  assert.equal(normalizeDeveloperRole(body), 0);
+  assert.equal(JSON.stringify(body), before);
+});
+
+test('a malformed body never throws on the developer rename', () => {
+  assert.equal(normalizeDeveloperRole(undefined), 0);
+  assert.equal(normalizeDeveloperRole(null), 0);
+  assert.equal(normalizeDeveloperRole('body'), 0);
+  assert.equal(normalizeDeveloperRole({ input: 'not-an-array', messages: null }), 0);
+  assert.equal(normalizeDeveloperRole({ input: [null, 'text', 42] }), 0);
 });

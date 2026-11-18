@@ -2,7 +2,7 @@ import { hostFetch } from './http-fetch.mjs';
 /** Authenticated model routes hosted by the public DSH WebServer service. */
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { responsesToChat, chatToResponses, createResponsesStreamTransformer } from './model-proxy.mjs';
+import { responsesToChat, chatToResponses, createResponsesStreamTransformer, normalizeDeveloperRole } from './model-proxy.mjs';
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
@@ -80,6 +80,14 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
       if (convert && input.previous_response_id) throw Object.assign(new Error('请传入完整对话历史；此兼容端点不保存远端 Response ID'), { status: 400, code: 'STATELESS_INPUT_REQUIRED' });
       const toolContext = convert && codexTools ? prepareCodexProxyRequest(input) : undefined;
       const body = convert ? responsesToChat(toolContext?.request || input) : input;
+      // The instructions role has two spellings and only one of them is
+      // portable: OpenAI accepts `developer`, most OpenAI-compatible gateways
+      // implement `system` alone and answer `400 Invalid request: role
+      // 'developer' is not allowed` (Kspmas). A rename loses nothing, so it
+      // happens before the request leaves the proxy — the native Responses
+      // wire forwards items verbatim and would otherwise carry `developer`
+      // straight to the gateway.
+      normalizeDeveloperRole(body);
       // History is built upstream of this proxy (DSH's Responses projection,
       // Codex's own replay, the Responses-to-Chat conversion here), and each of
       // them can leave an assistant turn with neither text nor tool calls. No

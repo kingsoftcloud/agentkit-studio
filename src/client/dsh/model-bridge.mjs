@@ -61,6 +61,12 @@ export function createModelBridge({ hostRemote }) {
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
           displayName: `${provider} · ${modelName}`, api: 'openai-completions', apiKeyEnv: credentialName,
           baseURL: baseUrl,
+          // Kspmas validates message roles and answers
+          // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends
+          // the system prompt as `developer` to every reasoning model on a route
+          // it does not detect as non-standard, and a Studio route is always an
+          // OpenAI-compatible gateway pi-ai cannot know: keep `system`.
+          compat: { supportsDeveloperRole: false },
           // A concrete route default keeps fresh sessions on a thinking level
           // instead of DSH's "provider default" row, which would omit the
           // parameter and leave thinking to the gateway's own default.

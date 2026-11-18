@@ -56,6 +56,39 @@ function chatRole(role) {
   return 'user';
 }
 
+/**
+ * Rename the OpenAI `developer` role to `system` on both wires.
+ *
+ * `developer` is the newer name for the instructions role: OpenAI accepts
+ * either spelling, but most OpenAI-compatible gateways implement only `system`
+ * and answer `400 Invalid request: role 'developer' is not allowed` (Kspmas
+ * does). The two roles carry the same meaning — a rename loses nothing, unlike
+ * dropping a replayed reasoning item — so normalize before the request leaves
+ * the proxy instead of spending a round-trip to learn which gateways are
+ * strict.
+ *
+ * The Chat Completions conversion already routes every role through
+ * `chatRole`, so this is what covers the native Responses wire, which is
+ * forwarded item for item. It rewrites `messages` too for callers that hand
+ * the proxy a Chat body directly.
+ *
+ * @param {object} body - the serialized request body to mutate.
+ * @returns {number} how many items were renamed.
+ */
+export function normalizeDeveloperRole(body) {
+  if (!body || typeof body !== 'object') return 0;
+  let renamed = 0;
+  for (const key of ['input', 'messages']) {
+    if (!Array.isArray(body[key])) continue;
+    for (const item of body[key]) {
+      if (!item || typeof item !== 'object' || item.role !== 'developer') continue;
+      item.role = 'system';
+      renamed += 1;
+    }
+  }
+  return renamed;
+}
+
 function collapseSystem(messages) {
   const system = messages.filter(item => item.role === 'system' && typeof item.content === 'string' && item.content.trim());
   const rest = messages.filter(item => item.role !== 'system' || typeof item.content !== 'string' || !item.content.trim());

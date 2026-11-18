@@ -151,6 +151,10 @@ test('the client bridge declares reasoning on the routed model only', async () =
 
   const provider = providers['agentkit-studio-reasoner'];
   assert.equal(provider.reasoning, 'high');
+  // Kspmas answers `400 Invalid request: role 'developer' is not allowed`, and
+  // pi-ai sends the system prompt as `developer` to every reasoning model on a
+  // route it cannot detect as non-standard.
+  assert.deepEqual(provider.compat, { supportsDeveloperRole: false });
   const routed = provider.models.find(model => model.id === 'deepseek-v4.1-flash-1017');
   assert.deepEqual(routed.reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
   // The sibling catalog entry must not inherit a capability its profile never
@@ -199,6 +203,7 @@ test('the portable bridge publishes the same declaration', async () => {
   }] });
   const value = providers['agentkit-studio-portable'];
   assert.equal(value.reasoning, 'high');
+  assert.deepEqual(value.compat, { supportsDeveloperRole: false });
   assert.deepEqual(value.models[0].reasoningEfforts, { low: 'low', high: 'high', max: 'max' });
 
   await syncPortableModelProfiles({ settings, profiles: [{

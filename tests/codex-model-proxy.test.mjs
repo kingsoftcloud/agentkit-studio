@@ -724,3 +724,34 @@ test('an orphan tool receipt is dropped on the Responses-to-Chat conversion rout
     assert.deepEqual(bodies[0].messages[1].tool_calls.map(call => call.id), ['call_1']);
   } finally { await proxy.close(); }
 });
+
+// Kspmas refuses the newer `developer` spelling of the instructions role
+// (`400 Invalid request: role 'developer' is not allowed`). A rename loses
+// nothing, so the proxy normalizes before the request leaves.
+const DEVELOPER_ROLE_400 = { type: 'Bad Request', message: "Invalid request: role 'developer' is not allowed" };
+const rejectsDeveloperRole = body => (body.input || body.messages || []).some(item => item?.role === 'developer');
+
+test('the native Responses route never forwards the developer role', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (rejectsDeveloperRole(body)) return Response.json({ error: DEVELOPER_ROLE_400 }, { status: 400 });
+      return Response.json({ id: 'resp-renamed', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'Be terse.' }] },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] },
+      ] }) });
+    assert.equal(response.status, 200, 'the rename is a repair, not a failure');
+    assert.equal(bodies.length, 1, 'the rename costs no retry round-trip');
+    assert.deepEqual(bodies[0].input.map(item => item.role), ['system', 'user']);
+    assert.deepEqual(bodies[0].input[0].content, [{ type: 'input_text', text: 'Be terse.' }]);
+  } finally { await proxy.close(); }
+});
