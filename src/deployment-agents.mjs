@@ -1,5 +1,5 @@
 /** Only local deployment receipts establish Studio cloud Agent lineage. */
-import { CLOUD_EXECUTION_POLICY_CAPABILITY, readExecutionMode, readExecutionPolicy } from './execution-policy.mjs';
+import { CLOUD_EXECUTION_POLICY_CAPABILITY, EXECUTION_MODES, readExecutionMode, readExecutionPolicy } from './execution-policy.mjs';
 import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDeploymentVersion,
   cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
@@ -7,9 +7,40 @@ import { portableError, sha256 } from './portable-resources.mjs';
 import { verifyDeploymentStorage } from './deployment-storage.mjs';
 import { frozenModels } from './frozen-models.mjs';
 import { isStudioRuntimeType } from './runtime-contract.mjs';
+import { DSH_MANIFEST_FORMAT } from './managed-runtime-manifest.mjs';
 
 const available = new Set(['READY', 'AVAILABLE_UPDATING']);
 export const CLOUD_PROVIDER = 'agentkit-studio-cloud';
+
+async function inspectManagedDeployment({ remote, record, endpoint, token, fetchImpl }) {
+  const { plan, cloudAgentId } = record;
+  const state = remote.DeploymentState;
+  const runtime = remote.Deployment?.RuntimeConfig || remote.RuntimeConfig;
+  if (state?.Ready !== true || typeof state.ObservedVersionId !== 'string' || !state.ObservedVersionId
+    || state.ObservedVersionId !== state.DesiredVersionId || runtime?.ManifestFormat !== DSH_MANIFEST_FORMAT
+    || runtime.Name !== plan.runtime || runtime.Version !== plan.runtimeVersion
+    || !/^[a-f0-9]{64}$/.test(plan.managedManifestSha256 || '') || runtime.ManifestSha256 !== plan.managedManifestSha256) return null;
+
+  // The public bootstrap asks Server to verify the managed Host with its own runtime credential.
+  const response = await fetchImpl(`${endpoint}/agentengine/api/v1/GetAgentUiBootstrap`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ AgentId: cloudAgentId }), redirect: 'error', signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) { await response.body?.cancel(); return null; }
+  const bootstrap = await response.json().catch(() => null);
+  const data = bootstrap?.Data;
+  if (bootstrap?.Code !== 0 || data?.Agent?.AgentId !== cloudAgentId
+    || !Array.isArray(data.ApiFormats) || !data.ApiFormats.includes('responses')) return null;
+  const policy = data.Capabilities?.ExecutionPolicy;
+  const allowedPermissionModes = policy?.Format === 'agentkit.execution-policy/v1' && Array.isArray(policy.Modes)
+    ? EXECUTION_MODES.filter(mode => policy.Modes.includes(mode)) : [];
+  return {
+    managedIdentity: { agentId: cloudAgentId, versionId: state.ObservedVersionId, manifestSha256: runtime.ManifestSha256 },
+    allowedPermissionModes,
+    defaultPermissionMode: allowedPermissionModes.includes(policy?.DefaultMode) ? policy.DefaultMode : null,
+    executionModeSwitching: allowedPermissionModes.length > 1,
+  };
+}
 
 export function createDeploymentAgents({ store, build, portableBundles, configuration, credentialScope, owned, detail, endpointFor, fetchImpl }) {
   async function records(includeDeleted = false) {
@@ -41,15 +72,20 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
         state: record.state, available: available.has(record.state), model: profile.id, models: models.map(item => item.id),
         environment: record.plan.environment, region: record.plan.region } };
   }
-  async function get(agentId) {
-    const record = (await records(true)).find(row => row.cloudAgentId === agentId);
-    if (!record) throw portableError('DEPLOYMENT_AGENT_NOT_FOUND', '当前账号下没有该 Agent 的 Studio 部署记录');
+  async function getRecord(agentId) {
+    const found = (await records(true)).find(row => row.cloudAgentId === agentId);
+    if (!found) throw portableError('DEPLOYMENT_AGENT_NOT_FOUND', '当前账号下没有该 Agent 的 Studio 部署记录');
+    const record = await owned(found.id);
     if (record.state === 'DELETED') throw portableError('DEPLOYMENT_DELETED', '云端实例已删除；历史对话仍可查看，请选择就绪的部署开启新会话');
-    return project(await owned(record.id));
+    return record;
+  }
+  async function get(agentId) {
+    return project(await getRecord(agentId));
   }
   // Never exposed as a browser RPC: the platform token stays on the Node Host.
   async function connect(agentId) {
-    const agent = await get(agentId), record = await owned(agent.deployment.id);
+    const record = await getRecord(agentId);
+    const agent = await project(record);
     if (!available.has(record.state)) throw portableError('DEPLOYMENT_NOT_READY', '云端部署尚未就绪，请在运行中心刷新状态');
     // A console-side delete leaves this binding stale; take the operator to the
     // recoverable meaning instead of a raw GetAgent 404.
@@ -61,16 +97,21 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
       throw portableError('DEPLOYMENT_CLOUD_DELETED', CLOUD_AGENT_GONE_FAILURE.message);
     }
     const token = remote.QuickAccess?.ApiKey;
-    verifyDeploymentStorage(remote, currentDeployment(record));
+    const current = currentDeployment(record);
+    verifyDeploymentStorage(remote, current);
     if (!['RUNNING', 'UPDATING'].includes(remote.Basic?.Status) || !(remote.Basic?.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_NOT_READY', '云端实例当前不可用，请在运行中心查看状态');
     const endpoint = endpointFor(remote, record);
     if (!endpoint || typeof token !== 'string' || token.length < 24 || token.includes('*')) throw portableError('DEPLOYMENT_NOT_READY', '云端访问配置尚未就绪');
-    const identityRequired = record.activeVersion || currentDeployment(record).plan.image.runtimeIdentity === true;
-    const identity = identityRequired ? await inspectDeploymentVersion({ fetchImpl, endpoint, token,
-      plan: { ...currentDeployment(record).plan, cloudAgentId: record.cloudAgentId }, versionId: deploymentVersionId(record) }) : null;
-    if (identityRequired && !identity) {
-      throw portableError('DEPLOYMENT_NOT_READY', '运行入口尚未确认当前冻结版本，请刷新部署状态后重试');
+    const unverified = () => portableError('DEPLOYMENT_NOT_READY', '运行入口尚未确认当前冻结版本，请刷新部署状态后重试');
+    if (current.plan.deploymentType === 'ManagedRuntime') {
+      const identity = await inspectManagedDeployment({ remote, record: current, endpoint, token, fetchImpl });
+      if (!identity) throw unverified();
+      return { agent, endpoint, token, ...identity };
     }
+    const identityRequired = record.activeVersion || current.plan.image.runtimeIdentity === true;
+    const identity = identityRequired ? await inspectDeploymentVersion({ fetchImpl, endpoint, token,
+      plan: { ...current.plan, cloudAgentId: record.cloudAgentId }, versionId: deploymentVersionId(record) }) : null;
+    if (identityRequired && !identity) throw unverified();
     const capabilities = Array.isArray(identity?.capabilities) ? identity.capabilities : [];
     const allowedPermissionModes = Array.isArray(identity?.allowedPermissionModes)
       ? identity.allowedPermissionModes.map(readExecutionMode).filter(Boolean) : [];

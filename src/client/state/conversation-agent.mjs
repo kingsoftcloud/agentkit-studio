@@ -12,6 +12,12 @@ export function agentFromSessionPreset(presetId, agents) {
   return agent?.metadata?.id || agent?.id || null;
 }
 
+export function cloudAgentIdFromSessionPreset(presetId) {
+  if (typeof presetId !== 'string') return null;
+  const match = /^agentkit-studio-agent-(ar-(?!local-)[A-Za-z0-9_-]+?)-r[1-9]\d*(?:-|_|$)/.exec(presetId);
+  return match?.[1] ?? null;
+}
+
 export function createConversationAgentState({
   storage = () => globalThis.window.localStorage,
   events = globalThis.window,

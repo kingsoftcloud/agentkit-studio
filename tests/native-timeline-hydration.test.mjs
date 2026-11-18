@@ -6,24 +6,31 @@ import { chromium } from 'playwright-core';
 import { resolveNativeBrowserExecutable } from '@kingsoftcloud/agentkit-harness-node/native/browser-availability';
 
 const executablePath = resolveNativeBrowserExecutable();
+const browserTest = { skip: executablePath ? false : 'No installed browser executable', timeout: 30000 };
+
+async function openTimeline(t) {
+  const result = await build({ entryPoints: ['tests/fixtures/native-timeline-hydration-browser.mjs'],
+    bundle: true, platform: 'browser', format: 'iife', write: false,
+    define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent' });
+  const js = result.outputFiles.find(f => f.path.endsWith('.js'))?.text ?? result.outputFiles[0].text;
+  const server = createServer((req, res) => {
+    res.setHeader('Content-Type', req.url === '/fixture.js' ? 'text/javascript' : 'text/html');
+    res.end(req.url === '/fixture.js' ? js : '<!doctype html><meta charset="utf-8"><div id="root"></div><script src="/fixture.js"></script>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections();return new Promise(resolve => server.close(resolve)); });
+  const browser = await chromium.launch({ executablePath, headless: true });t.after(() => browser.close());
+  const page = await browser.newPage(), errors = [];
+  page.setDefaultTimeout(5000);
+  page.on('pageerror', error => errors.push(error.message));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  await page.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
+  return { page, origin, errors };
+}
+
 test('real mounted React never paints the transport footer before Native hydration or after polling/session changes',
-  { skip: executablePath ? false : 'No installed browser executable', timeout: 30000 }, async t => {
-    const result = await build({ entryPoints: ['tests/fixtures/native-timeline-hydration-browser.mjs'],
-      bundle: true, platform: 'browser', format: 'iife', write: false,
-      define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent' });
-    const js = result.outputFiles.find(f => f.path.endsWith('.js'))?.text ?? result.outputFiles[0].text;
-    const server = createServer((req, res) => {
-      res.setHeader('Content-Type', req.url === '/fixture.js' ? 'text/javascript' : 'text/html');
-      res.end(req.url === '/fixture.js' ? js : '<!doctype html><meta charset="utf-8"><div id="root"></div><script src="/fixture.js"></script>');
-    });
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    t.after(() => { server.closeAllConnections();return new Promise(resolve => server.close(resolve)); });
-    const browser = await chromium.launch({ executablePath, headless: true });t.after(() => browser.close());
-    const page = await browser.newPage(), errors = [];
-    page.setDefaultTimeout(5000);
-    page.on('pageerror', error => errors.push(error.message));
-    const origin = 'http://127.0.0.1:' + server.address().port;
-    await page.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
+  browserTest, async t => {
+    const { page, origin, errors } = await openTimeline(t);
     await page.goto(origin);await page.locator('[data-testid="task-observation-loading"]').waitFor();
     assert.equal(await page.locator('[data-testid="studio-task-timeline"]').count(), 0);
     await page.getByRole('button', { name: '释放运行状态', exact: true }).click();
@@ -60,3 +67,19 @@ test('real mounted React never paints the transport footer before Native hydrati
     await beta.waitFor();
     assert.equal(await page.locator('#legacy-paints').textContent(), '0');assert.deepEqual(errors, []);
   });
+
+test('Studio displays cloud conversations when their saved presets are absent from the local catalog', browserTest, async t => {
+  const { page, origin, errors } = await openTimeline(t);
+  const fallback = page.getByText('FOREIGN_RENDERER', { exact: true });
+  const routeError = page.getByTestId('task-runtime-error');
+  for (const preset of ['agentkit-studio-agent-ar-20261118155600-e5f60708-r1',
+    'agentkit-studio-agent-ar-20261118155600-e5f60708-r2-ver_123']) {
+    await page.goto(`${origin}?${new URLSearchParams({ preset })}`);
+    await fallback.or(routeError).waitFor();
+    assert.equal(await fallback.isVisible(), true, await page.locator('#presentation').innerText());
+  }
+  await page.goto(`${origin}?preset=agentkit-studio-agent-ar-local-missing-r1`);
+  await routeError.waitFor();
+  assert.match(await routeError.textContent(), /当前会话的智能体配置暂不可用/);
+  assert.deepEqual(errors, []);
+});

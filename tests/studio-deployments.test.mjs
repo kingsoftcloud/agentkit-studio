@@ -9,6 +9,11 @@ import { createOperationManager } from '../src/studio-operations.mjs';
 import { createStudioDeployments } from '../src/studio-deployments.mjs';
 import { createDeploymentStore } from '../src/deployment-store.mjs';
 import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
+import { createDeploymentConversation } from '../src/deployment-conversation.mjs';
+import { CLOUD_PROVIDER } from '../src/deployment-agents.mjs';
+import { sha256 } from '../src/portable-resources.mjs';
+import { createRuntimeResponsesContract } from '../src/runtime-responses-contract.mjs';
+import { createRuntimeResponsesStream } from '../src/runtime-responses-stream.mjs';
 import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
 async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', bindings: bindingOverrides = {}, createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
@@ -195,6 +200,68 @@ test('ManagedRuntime delivery skips KS3 for prompt and direct MCP-only bindings'
   assert.equal((await f.service.get(created.id)).state, 'READY');
   const cloud = await f.service.agents.get('ar-cloud-test');
   assert.equal(cloud.deployment.model, 'bound-model');
+});
+
+test('Studio streams a managed deployment through public Responses with the observed runtime identity', async t => {
+  const f = await fixture(t, { runtime: 'dsh-native', deploymentType: 'ManagedRuntime' });
+  await f.service.create(f.request);
+  await f.settled();
+  const agentId = f.remote.Basic.AgentId;
+  const versionId = 'managed-target-version-1';
+  const { Manifest } = f.calls.find(([action]) => action === 'create')[1].ManagedRuntimeConfig;
+  const manifestSha256 = sha256(Manifest);
+  Object.assign(f.remote.Deployment.RuntimeConfig, { ManifestFormat: 'agentengine.dsh-manifest/v1', ManifestSha256: manifestSha256 });
+  f.remote.DeploymentState = { DesiredVersionId: versionId, ObservedVersionId: versionId, Ready: true };
+  const identity = { agentId, versionId, manifestSha256 };
+  const requests = [], traces = [];
+  let responseIdentity = identity;
+  const fetchImpl = async (url, init) => {
+    const { pathname } = new URL(url);
+    requests.push(pathname);
+    assert.equal(init.headers.Authorization, `Bearer ${f.remote.QuickAccess.ApiKey}`);
+    assert.equal(init.redirect, 'error');
+    if (pathname === '/v1/agentkit/runtime') return Response.json({ error: { code: 'RUNTIME_UNAUTHORIZED' } }, { status: 401 });
+    if (pathname === '/agentengine/api/v1/GetAgentUiBootstrap') {
+      assert.deepEqual(JSON.parse(init.body), { AgentId: agentId });
+      return Response.json({ Code: 0, Data: { Agent: { AgentId: agentId }, ApiFormats: ['responses'], Capabilities: {
+        ExecutionPolicy: { Format: 'agentkit.execution-policy/v1', Modes: ['read-only', 'workspace-write'], DefaultMode: 'workspace-write' },
+      } } });
+    }
+    assert.equal(pathname, '/v1/responses');
+    assert.equal(init.headers['x-agentkit-permission-mode'], 'workspace-write');
+    const contract = createRuntimeResponsesContract({ agentId: responseIdentity.agentId, versionId: responseIdentity.versionId,
+      definitionId: responseIdentity.manifestSha256, model: 'bound-model', token: 'test-managed-runtime-deployment-token' });
+    const events = [];
+    const writer = createRuntimeResponsesStream(contract.parse(JSON.parse(init.body)), (_type, value) => events.push(value));
+    writer.start();
+    writer.frame({ kind: 'assistant', value: { type: 'chunk', attemptId: 'first', chunk: { type: 'text-delta', index: 0, text: 'OK' } } });
+    writer.frame({ kind: 'assistant', value: { type: 'end', attemptId: 'first', outcome: { kind: 'committed', eventType: 'assistant/message' } } });
+    writer.complete({ output: 'OK' });
+    return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  const service = createStudioDeployments({ ...f.options, fetchImpl });
+  const stream = createDeploymentConversation({ agents: async () => service.agents, fetchImpl,
+    permissionModeFor: async () => 'workspace-write', observability: { syncTrace: async trace => traces.push(trace) } });
+  const deltas = [];
+  const run = async () => {
+    for await (const frame of stream({ agentId, provider: CLOUD_PROVIDER, model: 'bound-model', input: 'Reply OK',
+      userMessage: { id: 'message-1' }, sessionId: 'studio-session' })) {
+      if (frame.type === 'text-delta') deltas.push(frame.text);
+    }
+  };
+  await run();
+  assert.equal(deltas.join(''), 'OK');
+  assert.deepEqual(requests, ['/agentengine/api/v1/GetAgentUiBootstrap', '/v1/responses']);
+  assert.equal(traces[0].provenance.runtimeVersionId, versionId);
+  for (const mismatched of [{ versionId: 'other-version' }, { manifestSha256: 'f'.repeat(64) }, { agentId: 'ar-other' }]) {
+    responseIdentity = { ...identity, ...mismatched };
+    await assert.rejects(run, { code: 'DEPLOYMENT_RESPONSE_MISMATCH' });
+  }
+  assert.deepEqual(deltas, ['OK']);
+  const previousRequests = requests.length;
+  f.remote.DeploymentState.ObservedVersionId = 'stale-version';
+  await assert.rejects(run, { code: 'DEPLOYMENT_NOT_READY' });
+  assert.equal(requests.length, previousRequests);
 });
 
 test('ManagedRuntime maps Skill Center, knowledge base and memory without a bundle artifact', async t => {

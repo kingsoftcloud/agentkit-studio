@@ -1,15 +1,17 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import { installTaskTimeline } from '@kingsoftcloud/agentkit-harness-ui/host/task-timeline';
+import { installTaskTimeline } from '../../src/client/dsh/task-timeline.mjs';
 
 const gates = new Map(), slots = new Map();let current = 'alpha', failReads = false;
+const localAgentId = 'ar-20261118155500-a1b2c3d4';
+const presetId = new URLSearchParams(location.search).get('preset') ?? `agentkit-studio-agent-${localAgentId}-r1`;
 const gate = () => { let resolve;const promise = new Promise(done => { resolve = done; });return { promise, resolve }; };
 const data = sessionId => {
   if (!gates.has(sessionId)) gates.set(sessionId, { status: gate(), children: gate() });
   return gates.get(sessionId);
 };
-const runStatus = sessionId => ({ contract: 'agentkit.studio-native-recovery/v1', agentId: 'agent', sessionId,
+const runStatus = sessionId => ({ contract: 'agentkit.studio-native-recovery/v1', agentId: localAgentId, sessionId,
   runId: 'run-' + sessionId, presentationTurn: 1, state: 'closed', canResume: false, phase: 'failed', outcome: 'failed',
   error: { code: 'NATIVE_EXECUTION_NOT_COMPLETED', message: '模型响应未通过协议校验：' + sessionId } });
 const directory = sessionId => ({ contract: 'agentkit.studio-native-child-history/v1', sessionId, runId: 'run-' + sessionId,
@@ -17,18 +19,21 @@ const directory = sessionId => ({ contract: 'agentkit.studio-native-child-histor
 const context = { theme: { getTheme: () => ({ active: { colorScheme: 'dark' } }) }, on: () => () => {},
   sessions: { refreshProjections: async () => {}, binding: () => ({ eventSource: {} }) }, effect: install => install(),
   sidebarRight: { openTab() {} }, sidebarRightTabs: { register: () => () => {} },
-  slots: { inject: (_name, install) => install(), register: (definition, component) => {
+  slots: { snapshot: name => [{ type: 'slot', name, kind: 'single' }], inject: (_name, install) => install(), register: (definition, component) => {
     const key = definition.name + ':' + (definition.key ?? 'primary');slots.set(key, component);return () => slots.delete(key);
   } } };
 const hostRemote = {
-  agents: async () => ({ items: [{ metadata: { id: 'agent' }, spec: { runtime: { type: 'harness' } } }], total: 1 }),
+  agents: async ({ source }) => {
+    if (source !== 'local') throw Error('云端目录不可用');
+    return { items: [{ metadata: { id: localAgentId }, spec: { runtime: { type: 'harness' } } }], total: 1 };
+  },
   nativeRecoveryStatus: async ({ sessionId }) => {
     if (failReads) throw Error('private read failure');
     await data(sessionId).status.promise;return runStatus(sessionId);
   },
   nativeChildHistory: async ({ sessionId }) => { await data(sessionId).children.promise;return directory(sessionId); },
 };
-installTaskTimeline(context, { ui: { React, ReactDOM }, hostRemote, resolveAgentFromPreset: () => 'agent' });
+installTaskTimeline(context, { ui: { React, ReactDOM }, hostRemote });
 const View = slots.get('conversation.chat.presentation:primary');
 const entry = (seq, type, payload) => ({ type: 'event', event: { seq, type, time: 1000 + seq, data: { turn: 1, step: 1, ...payload } } });
 const windowFor = sessionId => ({ revision: 1, entries: [entry(1, 'turn/start', {}),
@@ -49,7 +54,7 @@ function App() {
     React.createElement('main', { id: 'presentation' }, React.createElement(View, { sessionId, cwd: '/fixture', openFile() {},
       useHarnessEvents: select => select(windowFor(sessionId)),
       useSession: select => select({ running: true, pendingSubmissions: [], openState: 'open' }),
-      useSessions: select => select(manager), useProjection: () => 'native-preset',
+      useSessions: select => select(manager), useProjection: () => presetId,
       fallback: React.createElement('p', null, 'FOREIGN_RENDERER') })),
     React.createElement('output', { id: 'legacy-paints' }, '0'));
 }

@@ -101,6 +101,7 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
             return { ok: true, value: { agentId, buildId: connection.agent.deployment.buildId,
                 executionPolicy: connection.executionPolicy || null,
                 allowedPermissionModes: connection.allowedPermissionModes || [],
+                ...(connection.defaultPermissionMode ? { defaultPermissionMode: connection.defaultPermissionMode } : {}),
                 executionModeSwitching: connection.executionModeSwitching === true,
                 selectedPermissionMode: cloudExecutionModes ? await cloudExecutionModes.get(agentId) : null } };
         }

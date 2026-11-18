@@ -8,7 +8,7 @@ import { sanitizeResourceCheck } from './resource-checks.mjs';
 
 export function createDeploymentConversation({ agents, fetchImpl = fetch, observability, permissionModeFor }) {
   return async function* stream(options) {
-    const { agent, endpoint, token, capabilities, allowedPermissionModes = [], executionModeSwitching } = await (await agents()).connect(options.agentId);
+    const { agent, endpoint, token, capabilities, allowedPermissionModes = [], executionModeSwitching, managedIdentity } = await (await agents()).connect(options.agentId);
     if ((options.cloudVersionId || 'initial') !== (agent.deployment.versionId || 'initial')) {
       throw portableError('DEPLOYMENT_SESSION_VERSION_CHANGED', '云端 Agent 已升级或回滚，请开启新会话使用当前版本；此会话历史仍保留');
     }
@@ -46,8 +46,11 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
       const type = event.type || event.event;
       if (['response.created', 'response.in_progress', 'response.completed'].includes(type)) {
         const current = event.response || event, identity = current.metadata?.agentkit;
-        if (identity?.agentId !== agent.deployment.agentId || identity?.buildId !== agent.deployment.buildId
-          || !/^resp_[a-f0-9]{32}_[a-f0-9]{32}_[a-f0-9]{32}$/.test(current.id || '')
+        const identityMatches = managedIdentity
+          ? identity?.agentId === managedIdentity.agentId && identity.versionId === managedIdentity.versionId
+            && identity.manifestSha256 === managedIdentity.manifestSha256
+          : identity?.agentId === agent.deployment.agentId && identity.buildId === agent.deployment.buildId;
+        if (!identityMatches || !/^resp_[a-f0-9]{32}_[a-f0-9]{32}_[a-f0-9]{32}$/.test(current.id || '')
           || (responseId && current.id !== responseId) || (current.model && current.model !== request.model)) {
           throw portableError('DEPLOYMENT_RESPONSE_MISMATCH', '云端响应与当前 Agent 冻结版本不匹配');
         }
@@ -113,6 +116,7 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
         agentId: options.agentId, agentName: agent.metadata?.name, executionLocation: 'cloud', status, startedAt,
         completedAt: new Date().toISOString(), events, provenance: { cloudAgentId: options.agentId, agentId: agent.deployment.agentId,
           buildId: agent.deployment.buildId, versionId: agent.deployment.versionId || 'initial', responseId, model: request.model, resourceChecks,
+          ...(managedIdentity ? { runtimeVersionId: managedIdentity.versionId, manifestSha256: managedIdentity.manifestSha256 } : {}),
           revision: agent.metadata?.revision, models: agent.deployment.models || [agent.deployment.model], resourceBindings,
           environment: agent.deployment.environment, region: agent.deployment.region } }).catch(() => {});
       if (!complete) {
