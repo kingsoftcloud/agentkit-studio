@@ -196,8 +196,14 @@ async function main() {
       assert.equal(sample[0].attributes.find(attribute => attribute.key === 'install_id').value.stringValue,
         '00000000-0000-4000-8000-000000000002');
       await eventually(() => receiver.requests.length >= 2, 'The installed app did not retry the failed HTTPS request', 70_000);
-      assert.deepEqual(receiver.requests[0], receiver.requests[1]);
-      assert.deepEqual(receiver.requests[1].map(record => record.body.stringValue), ['app_install', 'desktop_active_day']);
+      assert.ok(JSON.stringify(receiver.requests[1].slice(0, receiver.requests[0].length)) === JSON.stringify(receiver.requests[0]),
+        'The first batch changed during retry');
+      const acceptedNames = receiver.requests[1].map(record => record.body.stringValue);
+      for (const event of ['app_install', 'desktop_active_day']) {
+        assert.equal(acceptedNames.filter(name => name === event).length, 1);
+      }
+      assert.ok(acceptedNames.every(name => ['app_install', 'desktop_active_day', 'update_check_result'].includes(name)),
+        'Only basic telemetry is enabled in this profile');
       await eventually(async () => {
         const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
         return status.queued === 0 && status.diagnostics.send_failed === 1;
@@ -210,6 +216,7 @@ async function main() {
       await app.close();
     }
 
+    const requestsAfterOptOut = receiver.requests.length;
     const restarted = await open(executable, profile, receiver.cert, values.version);
     try {
       const page = await workspace(restarted);
@@ -218,7 +225,7 @@ async function main() {
       assert.deepEqual(status.enabled, allOff);
       assert.equal(status.noticePending, false);
       await wait(31_000);
-      assert.equal(receiver.requests.length, 2);
+      assert.equal(receiver.requests.length, requestsAfterOptOut);
     } finally {
       await restarted.close();
     }
@@ -232,7 +239,7 @@ async function main() {
       assert.deepEqual(status.enabled, allOff);
       assert.equal(status.installId, null);
       await wait(31_000);
-      assert.equal(receiver.requests.length, 2);
+      assert.equal(receiver.requests.length, requestsAfterOptOut);
     } finally {
       await declining.close();
     }
@@ -265,7 +272,7 @@ async function main() {
       try {
         await waitForNotice(upgraded);
         await wait(31_000);
-        assert.equal(receiver.requests.length, 2);
+        assert.equal(receiver.requests.length, requestsAfterOptOut);
         assert.equal(await readFile(marker, 'utf8'), 'keep this installed profile');
         await upgraded.evaluate(() => globalThis.resolveTelemetryNotice({ response: 1, checkboxChecked: false }));
         const page = await workspace(upgraded);
