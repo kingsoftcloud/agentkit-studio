@@ -31,7 +31,8 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
     routes.add(route);
     const reasoning = studioReasoning(profile);
     const facts = await profileCapabilities(profile, resolveCapabilities);
-    const value = { displayName: `${profile.provider} · ${profile.modelName}`, api: providerWireApi(profile), apiKeyEnv: profile.credentialName,
+    const wire = providerWireApi(profile);
+    const value = { displayName: `${profile.provider} · ${profile.modelName}`, api: wire, apiKeyEnv: profile.credentialName,
       baseURL: profile.baseUrl,
       // Kspmas validates message roles and answers
       // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends the
@@ -43,7 +44,11 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
       // `previous_response_id` is refused outright), so a gateway that only
       // implements the older request shape — LiteLLM and friends — rejects the
       // key itself, and dropping it costs a stateless route nothing.
-      compat: { supportsDeveloperRole: false, supportsStore: false },
+      //
+      // It is also an `openai-completions`-only key; DSH rejects a route that
+      // sets it while no model speaks that protocol, which is what a profile
+      // declaring `protocol: openai-responses` would otherwise hit.
+      compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
       ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}), models: [{ id: profile.modelName, name: profile.modelName,
         contextWindow: facts.contextWindow,
         maxTokens: profile.maxOutputTokens ?? Math.min(facts.maxOutputTokens, OPERATING_MAX_OUTPUT_TOKENS),

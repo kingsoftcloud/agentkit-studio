@@ -178,6 +178,30 @@ test('a gateway catalog route never declares a route default its siblings cannot
   assert.equal(writes.filter(([ns]) => ns === 'llm-pi-ai').length, 1);
 });
 
+test('a Responses route never sets the chat-only store compat', async () => {
+  const { bridge, providers } = bridgeContext([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] }]);
+  await bridge.applyProfiles({ profiles: [{ ...reasoner, protocol: 'openai-responses' }] });
+  const provider = providers['agentkit-studio-reasoner'];
+  assert.equal(provider.api, 'openai-responses');
+  // DSH answers `provider "…" sets compat "supportsStore", but no model on the
+  // route speaks a protocol that takes it` — the key belongs to
+  // openai-completions alone. Setting it on a Responses route made every
+  // model mutation fail, which is what a profile declaring
+  // `protocol: openai-responses` hit as soon as it switched wires.
+  assert.deepEqual(provider.compat, { supportsDeveloperRole: false });
+  assert.equal(Object.hasOwn(provider.compat, 'supportsStore'), false);
+});
+
+test('a chat route keeps the store compat', async () => {
+  const { bridge, providers } = bridgeContext([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] }]);
+  await bridge.applyProfiles({ profiles: [{ ...reasoner, protocol: 'openai-completions' }] });
+  const provider = providers['agentkit-studio-reasoner'];
+  assert.equal(provider.api, 'openai-completions');
+  // The proxy is stateless, so a gateway that only implements the older
+  // request shape rejects `store` itself and dropping it costs nothing.
+  assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
+});
+
 test('a route serving this profile model alone keeps the concrete route default', async () => {
   const { bridge, providers } = bridgeContext([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] }]);
   await bridge.applyProfiles({ profiles: [reasoner] });
