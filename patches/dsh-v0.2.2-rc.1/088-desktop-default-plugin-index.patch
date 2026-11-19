@@ -1,0 +1,302 @@
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+index 472daf97bd2c60d29bfd868511e7010622fb3d8b..1e03e2ec2b05296671cdefa96d2ca37e7688fcf9 100644
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -21,6 +21,7 @@ import { installOfficeEngineResolution } from './office-engine.ts'
+ import { installOperationDiagnostics } from './operation-diagnostics.ts'
+ import { desktopPackageManager } from './package-manager.ts'
+ import { resolveDesktopWebPort } from './listen-port.ts'
++import { applyDefaultPluginIndex } from './plugin-market-default.ts'
+ 
+ async function main(): Promise<void> {
+   const runId = randomUUID() as PluginOperationRunId
+@@ -130,6 +131,12 @@ async function main(): Promise<void> {
+   })
+   process.once('disconnect', () => { void stop() })
+   const { ctx } = await application
++  // Settings can recompose a settled tree. Finish before the renderer can list sources.
++  try {
++    await applyDefaultPluginIndex(runtimeDir, projectDir, ctx.get('pluginMarket'))
++  } catch (error) {
++    console.warn('Desktop default plugin index setup failed:', error)
++  }
+   installOperationDiagnostics(ctx, record => send({ type: 'plugin-operation', record }), 32, runId)
+   control.updateTasks = installDesktopUpdateTaskControl(ctx)
+   control.quitInspection = installDesktopQuitInspection(ctx)
+diff --git a/apps/desktop-host/src/plugin-market-default.ts b/apps/desktop-host/src/plugin-market-default.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ef40fa697a5698b2624484df412b751276487f8
+--- /dev/null
++++ b/apps/desktop-host/src/plugin-market-default.ts
+@@ -0,0 +1,47 @@
++/** Desktop release defaults persisted through the official plugin market settings. */
++
++import { readFile, writeFile } from 'node:fs/promises'
++import { join } from 'node:path'
++import { readProfileManifest, type ProfileManifest } from '@deepseek-ai/dsh-app-boot'
++
++interface PluginMarket {
++  listIndexes(): { readonly url: string }[]
++  setIndexes(urls: string[]): Promise<void>
++}
++
++/**
++ * Put the packaged index first once per Desktop version and URL for this profile.
++ * @param runtimeDir - The installation's sealed runtime directory.
++ * @param profileDir - The user's external Desktop profile.
++ * @param market - Plugin market service from the fully booted profile.
++ */
++export async function applyDefaultPluginIndex(
++  runtimeDir: string, profileDir: string, market: PluginMarket | undefined,
++): Promise<void> {
++  if (market === undefined) return
++  const runtime = readProfileManifest('dsh desktop', runtimeDir) as ProfileManifest & {
++    dsh?: { profile?: { defaultPluginIndexUrl?: unknown } }
++  }
++  const version = runtime.version
++  const url = runtime.dsh?.profile?.defaultPluginIndexUrl
++  if (typeof url !== 'string' || url === '' || typeof version !== 'string') return
++
++  const marker = join(profileDir, 'desktop-default-plugin-index.json')
++  const previous = await readFile(marker, 'utf8')
++    .then(text => JSON.parse(text) as { url?: unknown; version?: unknown } | null)
++    .catch((error: NodeJS.ErrnoException) => {
++      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
++      return null
++    })
++  if (previous?.url === url && previous.version === version) return
++
++  const indexes = new Map([[url, url]])
++  for (const { url: existing } of market.listIndexes()) {
++    const key = URL.parse(existing)?.href ?? existing
++    // Keep the first position, preferring a canonical spelling when both exist.
++    if (!indexes.has(key) || existing === key) indexes.set(key, existing)
++  }
++  await market.setIndexes([...indexes.values()])
++  // An interrupted or failed settings write must remain eligible on the next launch.
++  await writeFile(marker, `${JSON.stringify({ url, version })}\n`, { mode: 0o600 })
++}
+diff --git a/apps/desktop-host/tests/plugin-market-default.spec.ts b/apps/desktop-host/tests/plugin-market-default.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f7274f0cf81b798dc1590d1c68bf19b223dc0bb2
+--- /dev/null
++++ b/apps/desktop-host/tests/plugin-market-default.spec.ts
+@@ -0,0 +1,75 @@
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, expect, it, vi } from 'vitest'
++import { applyDefaultPluginIndex } from '../src/plugin-market-default.ts'
++
++const productIndex = 'https://market.example.org/studio/index.json'
++const communityIndex = 'http://127.0.0.1:3080/api/agentkit.plugin-market/index.json'
++const userIndex = 'https://user-market.example.org/index.json'
++const roots: string[] = []
++
++function fixture(indexes: string[] = []) {
++  const runtime = mkdtempSync(join(tmpdir(), 'desktop-default-market-'))
++  roots.push(runtime)
++  const profile = join(runtime, 'profile')
++  mkdirSync(profile)
++  function release(version: string, defaultPluginIndexUrl?: string) {
++    writeFileSync(join(runtime, 'package.json'), JSON.stringify({
++      version, dsh: { profile: { defaultPluginIndexUrl } },
++    }))
++  }
++  const market = {
++    listIndexes: () => indexes.map(url => ({ url })),
++    setIndexes: vi.fn(async (urls: string[]) => { indexes = urls }),
++  }
++  return { release, market, apply: () => applyDefaultPluginIndex(runtime, profile, market) }
++}
++
++afterEach(() => {
++  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
++})
++
++it('puts the configured source first on a clean profile and honors removals until the next Desktop release', async () => {
++  const { apply, market, release } = fixture()
++  release('1.2.3', productIndex)
++  await apply()
++  expect(market.setIndexes).toHaveBeenCalledExactlyOnceWith([productIndex])
++  await market.setIndexes([userIndex])
++  market.setIndexes.mockClear()
++  await apply()
++  expect(market.setIndexes).not.toHaveBeenCalled()
++
++  release('1.2.4', productIndex)
++  await apply()
++  expect(market.setIndexes).toHaveBeenCalledExactlyOnceWith([productIndex, userIndex])
++})
++
++it('retains existing sources in order and deduplicates equivalent URLs on upgrade', async () => {
++  const { apply, market, release } = fixture([
++    communityIndex, 'https://USER-market.example.org:443/index.json', 'https://Market.Example.org:443/studio/index.json',
++    userIndex, productIndex, communityIndex,
++  ])
++  release('1.2.4', productIndex)
++  await apply()
++  expect(market.setIndexes).toHaveBeenCalledExactlyOnceWith([productIndex, communityIndex, userIndex])
++
++  const newIndex = 'https://market.example.org/studio/new-index.json'
++  release('1.2.4', newIndex)
++  await apply()
++  expect(market.setIndexes).toHaveBeenLastCalledWith([newIndex, productIndex, communityIndex, userIndex])
++})
++
++it('leaves profiles alone with no configured product source and retries a failed settings write', async () => {
++  const { apply, market, release } = fixture([userIndex])
++  release('1.2.3')
++  await apply()
++  expect(market.setIndexes).not.toHaveBeenCalled()
++
++  release('1.2.4', productIndex)
++  market.setIndexes.mockRejectedValueOnce(new Error('settings unavailable'))
++  await expect(apply()).rejects.toThrow('settings unavailable')
++  await apply()
++  expect(market.setIndexes).toHaveBeenCalledTimes(2)
++  expect(market.setIndexes).toHaveBeenLastCalledWith([productIndex, userIndex])
++})
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index 99cf3b137e1a75bf099d9b2a24cd77bad8626d98..ad7e5c9f241660ca86d715d4238ac012e4963284 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: 127ea90553cb6af7
+   zh: 7b1c5aec8558c684
+ /deepseek-harness-desktop/application-overview:
+-  en: 1667e3d6ffddea4a
+-  zh: 4661a42b9ef4f673
++  en: f62a0a2711d5f7c2
++  zh: 76dfbb097054ab35
+ /deepseek-harness-desktop/terminal-command:
+   en: 5f2d25a1d8472647
+   zh: 2acb5c5d7d1917e2
+@@ -33,11 +33,11 @@
+   en: 372297005b57a08b
+   zh: 074a635ac17e4362
+ /deepseek-harness-desktop/installation-ownership:
+-  en: 49a38fe4ffcb621b
+-  zh: 5d9bcbe89f94a155
++  en: be75d7520921aa8e
++  zh: ee56d9763fa81549
+ /deepseek-harness-desktop/installation-ownership/runtime-and-plugin-activation:
+-  en: 4951cd3ee659eb33
+-  zh: 96bdd6358dad587a
++  en: e4ccc26fa1fe783b
++  zh: 2924f42b32956a83
+ /deepseek-harness-desktop/installation-ownership/host-environment:
+   en: 98cf848762482d48
+   zh: 74f9100a39ec8c2f
+@@ -69,8 +69,8 @@
+   en: db5e898140a73d53
+   zh: 80a9d58c74b4bb24
+ /deepseek-harness-desktop/low-level-development-overrides:
+-  en: 8264b135871e8978
+-  zh: 0939aafb1b2961fc
++  en: cf56453aaaa03319
++  zh: 3f0810ea71a9004d
+ /deepseek-harness-desktop/known-limitations:
+   en: b1eeadfefb338056
+   zh: 28683fbdf1e98685
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index e577e9a2d944efab4113a01935dd070d166e7b7e..62ce6f40f69f0a9f82d436f96b5bd3f1af604a57 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -181,6 +181,8 @@ Before loading a managed Desktop profile with packages, and before plugin packag
+ 
+ Desktop fatal failures use native recovery with Exit, Restart, Disable third-party plugins, back up profile patch, and restart, and Get diagnostic report. See [recovery and diagnostics](docs/diagnostics/README.md) for triggers, report locations and contents, recent operation records, and shutdown limits.
+ 
++An installer can carry a default plugin index URL in its runtime profile. That enables Discover during profile preparation and puts the source first before the Desktop renderer connects. The Host records the setup per profile and Desktop version and preserves distinct sources already configured.
++
+ ### Host environment
+ 
+ macOS and Linux GUI launches inherit only the session manager's environment, without variables exported by shell startup files. Before the first Host starts, Desktop runs the account's login shell (from the user database, not `$SHELL`) once as `<shell> -ilc` and reads its `env -0` output between delimiters, so `~/.zprofile` and `~/.zshrc` (or the shell's equivalents) take effect for the Host, agent shells, terminals, and profile configuration. Reading runs in parallel with profile preparation. The probe has no terminal input and sets `DISABLE_AUTO_UPDATE=true`, `ZSH_TMUX_AUTOSTARTED=true`, and `ZSH_TMUX_AUTOSTART=false` to keep oh-my-zsh and tmux plugins from blocking. Shell values replace inherited values except `PWD`, `OLDPWD`, `SHLVL`, `_`, those probe variables, and launcher-owned `DSH_*` and `ELECTRON_*` names; Desktop resolves paths such as `DSH_HOME` before the read, so the Host keeps the same values. The read completes at the closing delimiter, so background processes started by startup files may keep running with their output discarded. A candidate that fails to start, exits nonzero, prints no delimited output, or exceeds `DSH_DESKTOP_LOGIN_SHELL_TIMEOUT_MS` (integer milliseconds from 1000 through 2147483647, default `10000`; its process group is killed) is logged as a warning, and Desktop tries `/bin/zsh`, `/bin/bash`, and `/bin/sh` in turn; when all fail the Host uses the inherited environment. The dump command uses POSIX syntax, so an account shell such as csh, tcsh, or nushell fails and the Host receives the environment from the first system shell's startup files instead. Quitting Desktop during the read kills the running probe's process group. The result is read once per application process, so changes to shell startup files apply after quitting and reopening Desktop. Windows GUI launches already inherit the user and system environment variables from the registry, so Windows skips this step.
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index d57ad80b6be210dd38a1202ad4dca206e590995a..9d69cada42351bc266888d7db89891598c4da8e1 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -181,6 +181,8 @@ macOS 上自定义菜单保留 Electron 的标准 Window 菜单及应用隐藏
+ 
+ Desktop 的致命故障通过原生恢复对话框提供退出、重启、禁用第三方插件并备份 profile patch 后重启，以及获取诊断报告。触发范围、报告位置与内容、近期操作记录和退出限制见[故障恢复与诊断](docs/diagnostics/README.zh.md)。
+ 
++安装包可以在 runtime profile 中携带默认插件索引的 URL。Desktop 准备 profile 时启用「发现」，Host 在渲染器连接前把该索引放在首位，保留其它索引源。Host 按 profile 和桌面版本记录配置结果。
++
+ ### Host 环境
+ 
+ macOS 和 Linux 从图形界面启动的程序只继承会话管理器提供的环境，不包含 shell 启动文件导出的变量。第一个 Host 启动之前，Desktop 以 `<shell> -ilc` 运行一次账户的登录 shell（取自用户数据库，不看 `$SHELL`），读取定界符之间的 `env -0` 输出，使 `~/.zprofile` 和 `~/.zshrc`（或该 shell 的对应文件）对 Host、agent shell、终端和 profile 配置生效。读取与 profile 准备并行进行。读取进程没有终端输入，并设置 `DISABLE_AUTO_UPDATE=true`、`ZSH_TMUX_AUTOSTARTED=true` 和 `ZSH_TMUX_AUTOSTART=false`，避免 oh-my-zsh 和 tmux 插件阻塞。shell 的值覆盖继承的值，但 `PWD`、`OLDPWD`、`SHLVL`、`_`、上述读取变量以及启动方自有的 `DSH_*` 和 `ELECTRON_*` 除外；Desktop 在读取之前已按 `DSH_HOME` 等变量解析路径，因此 Host 保持相同的值。读取在结束定界符出现时完成，因此启动文件启动的后台进程可以继续运行，其输出被丢弃。候选 shell 无法启动、以非零状态退出、没有输出定界内容或超过 `DSH_DESKTOP_LOGIN_SHELL_TIMEOUT_MS`（1000 到 2147483647 的整数毫秒，默认 `10000`；超时会结束其进程组）时，Desktop 记录一条警告，并依次尝试 `/bin/zsh`、`/bin/bash` 和 `/bin/sh`；全部失败时 Host 使用继承的环境。读取命令使用 POSIX 语法，因此 csh、tcsh 或 nushell 等账户 shell 会失败，Host 改为获得第一个系统 shell 的启动文件所设置的环境。读取期间退出 Desktop 会结束正在运行的读取进程组。每个应用进程只读取一次，因此修改 shell 启动文件后需要退出并重新打开 Desktop。Windows 从图形界面启动的程序已经从注册表继承用户和系统环境变量，因此 Windows 跳过这一步。
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 4091903137cb2db7469bd31dac96538e871e130b..6b14a5c3e82a349722e3f44a5274057f510879b1 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -182,12 +182,15 @@ export class DesktopProjectManager {
+ export function createRuntimeProjectMetadata(projectDir: string, release: DesktopRelease): void {
+   mkdirSync(projectDir, { recursive: true, mode: 0o700 })
+   const packageSet = verifyDesktopCorePackageSet(projectDir, release.version)
++  const defaultPluginIndexUrl = process.env.DSH_DESKTOP_DEFAULT_PLUGIN_INDEX_URL
++  const bundles = new Set([...WEB_PROFILE.bundles, ...configuredPluginBundles()])
++  if (defaultPluginIndexUrl) bundles.add('@deepseek-ai/dsh-experimental-plugin-market-bundle')
+   const manifest = {
+     name: PROJECT_NAME,
+     private: true,
+     version: '0.0.0',
+     dependencies: desktopCorePackageOverrides(packageSet),
+-    dsh: { profile: { bundles: [...WEB_PROFILE.bundles, ...configuredPluginBundles()] } },
++    dsh: { profile: { bundles: [...bundles], ...defaultPluginIndexUrl ? { defaultPluginIndexUrl } : {} } },
+   }
+   writeJson(join(projectDir, 'package.json'), manifest)
+   writeFileSync(
+diff --git a/apps/desktop/tests/core-package-set.spec.ts b/apps/desktop/tests/core-package-set.spec.ts
+index 0b28a2ec3d35799c17322c15366d8bb4b67f7a77..5a47f2a1a18b308e4c8dc6a93efcf8b7826f8f8e 100644
+--- a/apps/desktop/tests/core-package-set.spec.ts
++++ b/apps/desktop/tests/core-package-set.spec.ts
+@@ -1,8 +1,11 @@
+ import { createHash } from 'node:crypto'
+-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
++import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+-import { afterEach, describe, expect, it } from 'vitest'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { DESKTOP_HOST_PROTOCOL_VERSION } from '../src/host-protocol.ts'
++import { createPluginProfile, createRuntimeProjectMetadata, readRuntimeProfileBundles } from '../src/project-manager.ts'
++import { readProfileManifest } from '@deepseek-ai/dsh-app-boot'
+ import {
+   DESKTOP_PACKAGES_DIR,
+   DESKTOP_PACKAGE_SET_FILE,
+@@ -53,10 +56,35 @@ function packageSetProject(): {
+ }
+ 
+ afterEach(() => {
++  vi.unstubAllEnvs()
+   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+ })
+ 
+ describe('desktop core package set', () => {
++  it('carries the configured index and Discover bundle in the packaged runtime profile', () => {
++    const { root } = packageSetProject()
++    const profile = join(root, 'existing-profile')
++    const market = '@deepseek-ai/dsh-experimental-plugin-market-bundle'
++    const index = 'https://market.example.org/index.json'
++    const release = { schemaVersion: 1, version: '1.2.3', hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION,
++      nodeVersion: '24.9.0', pnpmVersion: '11.28.5' } as const
++    vi.stubEnv('DSH_DESKTOP_DEFAULT_PLUGIN_INDEX_URL', '')
++    vi.stubEnv('DSH_DESKTOP_PLUGIN_BUNDLES', '')
++    createRuntimeProjectMetadata(root, release)
++    expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).dsh.profile).not.toHaveProperty('defaultPluginIndexUrl')
++    expect(readRuntimeProfileBundles(root)).not.toContain(market)
++    createPluginProfile(profile, readRuntimeProfileBundles(root))
++
++    vi.stubEnv('DSH_DESKTOP_DEFAULT_PLUGIN_INDEX_URL', index)
++    createRuntimeProjectMetadata(root, release)
++    expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).dsh.profile.defaultPluginIndexUrl).toBe(index)
++    const bundles = readRuntimeProfileBundles(root)
++    for (const location of [profile, join(root, 'fresh-profile')]) {
++      createPluginProfile(location, bundles)
++      expect(readProfileManifest('dsh', location).dsh?.profile?.bundles).toContain(market)
++    }
++  })
++
+   it('pins the direct dsh dependency and every internal package to local tarballs', () => {
+     const { root } = packageSetProject()
+     const packageSet = verifyDesktopCorePackageSet(root, '1.2.3')

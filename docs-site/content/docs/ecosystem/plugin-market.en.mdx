@@ -3,7 +3,7 @@ title: Plugin market
 description: How Studio consumes DSH's official plugin index (format 1) — index sources, request model, the bundled community index, and the install path.
 ---
 
-The plugin market is **DSH's official plugin index**: a static `format: 1` JSON document listing installable bundles with their title, icon, author, versions, `engines.dsh` compatibility range and install source. Studio no longer aggregates anything at request time — it reads the Host's `pluginMarket` service and, when the profile configures no index source at all, adds the community index bundled with the product as the default source.
+The plugin market uses **DSH's official plugin index**, a static `format: 1` JSON document listing installable bundles with titles, icons, authors, versions, `engines.dsh` compatibility ranges, and install sources. Studio reads indexes through the Host's `pluginMarket` service. Desktop builds can configure a product index. The bundled community index can also serve as the default for a profile with no configured sources.
 
 - Bundled community index: `assets/plugin-market/index.json`, served by the Host at `GET /api/agentkit.plugin-market/index.json`.
 - User index sources: they belong to the current profile and are added, removed and switched on the Discover page.
@@ -66,6 +66,14 @@ pnpm check:plugin-index    # offline; validates the committed document
 ```
 
 Inclusion rule: only valid SemVer versions that were published, are not deprecated and are not private, at most 20 per plugin; output is ordered by downloads and then by name and is **deterministic** (no timestamps, no randomness), so a refresh shows up in review as data changes only.
+
+## Desktop default index
+
+Set `desktop.defaultPluginIndexUrl` in `src/product.json` to a directly readable HTTPS index URL without credentials, a query, or a fragment. Both macOS and Windows installers carry this setting. Use `null` to opt out of adding a product index.
+
+On the first launch of a Desktop version carrying the URL, Studio puts it first in the profile, retains the order of other sources, and merges duplicate URLs. Discover opens the first source by default and lets users switch sources. If a user removes the product source, later launches of the same version honor that edit.
+
+Keep the KS3 index URL stable. To publish a plugin or a new version, upload the versioned `.tgz` first, then add the new version and download URL to the same `index.json`. Refresh Discover to read the new document. Index content changes take effect through KS3 without rebuilding the desktop app.
 
 ## Install path
 
