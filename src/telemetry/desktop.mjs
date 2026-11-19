@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  calendarDay, eventCategory, isEventId, maxBatchRecords, maxBodyBytes, replayAgeMs, schemaVersion,
+  calendarDay, desktopTelemetryExample, eventCategory, isEventId, maxBatchRecords, maxBodyBytes, replayAgeMs, schemaVersion,
   telemetryBatch, telemetryCategories, telemetryEndpoint, validEvent, validEventProps,
 } from './contract.mjs';
 
@@ -11,6 +11,7 @@ const maxQueueBytes = 5 * 1024 * 1024;
 const normalDelay = 30_000;
 const retryStatuses = new Set([429, 502, 503, 504]);
 const blankChoices = () => ({ basic: null, crash: null, run: null });
+const blankDiagnostics = () => ({ send_failed: 0, queue_drop: 0, rejected: 0, storage: 0, export: 0 });
 const digest = value => createHash('sha256').update(value).digest('hex');
 const newState = () => ({
   version: 1, receiver: '', policy: '', notice: false, choices: blankChoices(),
@@ -102,7 +103,8 @@ class DesktopTelemetry {
     this.now = options.now ?? Date.now;
     this.random = options.random ?? Math.random;
     this.batchDelay = options.batchDelay ?? normalDelay;
-    this.report = options.onDiagnostic ?? (() => {});
+    this.onDiagnostic = options.onDiagnostic;
+    this.diagnostics = blankDiagnostics();
     this.state = newState();
     this.queue = [];
     this.writes = Promise.resolve();
@@ -122,8 +124,13 @@ class DesktopTelemetry {
       available: this.available, endpoint: this.config.endpoint, noticePending: this.available && !this.state.notice,
       defaultBasic: this.config.defaultBasic, selfHosted: this.config.selfHosted,
       enabled: Object.fromEntries(telemetryCategories.map(key => [key, this.enabled(key)])),
-      installId: this.state.installId, queued: this.queue.length,
+      installId: this.state.installId, queued: this.queue.length, diagnostics: { ...this.diagnostics },
     };
+  }
+
+  report(reason, count = 1) {
+    this.diagnostics[reason] = Math.min(Number.MAX_SAFE_INTEGER, this.diagnostics[reason] + count);
+    this.onDiagnostic?.(reason, count);
   }
 
   async load() {
@@ -211,6 +218,7 @@ class DesktopTelemetry {
     if (clear) {
       this.state.installId = this.state.lastDay = null;
       this.state.firstOpen = false;
+      this.diagnostics = blankDiagnostics();
     }
     await this.save();
     return this.status();
@@ -318,7 +326,7 @@ class DesktopTelemetry {
       && event.occurred_at >= this.now() - replayAgeMs));
   }
 
-  preview() { return this.nextBatch().body; }
+  preview(mode) { return mode === 'example' ? desktopTelemetryExample : this.nextBatch().body; }
 
   schedule() {
     if (this.closed || this.draining || this.flight || !this.queue.length || !this.available || this.persisted !== this.revision) return;
@@ -373,6 +381,7 @@ class DesktopTelemetry {
       this.firstQueuedAt = this.queue.length ? Math.min(this.firstQueuedAt, this.now()) : 0;
       await this.save();
     } else {
+      this.report('send_failed');
       this.retryAt = this.now() + retryDelay(response, this.now(), this.retryCount++, this.random);
       await this.save();
     }

@@ -24,8 +24,14 @@ export function createStudioSettingsSection({
       catch { setError(true); }
       finally { setBusy(false); }
     };
-    const showPreview = async () => {
-      try { setPreview(await bridge.preview()); }
+    const showPreview = async mode => {
+      setError(false);
+      try { setPreview({ mode, body: await bridge.preview(mode) }); }
+      catch { setError(true); }
+    };
+    const refresh = async () => {
+      setError(false);
+      try { setState(await bridge.status()); }
       catch { setError(true); }
     };
     const switchRow = (key, label, detail) => h('div', { className: 'agentkit-settings-row' },
@@ -44,11 +50,18 @@ export function createStudioSettingsSection({
       state?.endpoint && h('div', { className: 'agentkit-form-note' }, `接收方 ${state.endpoint}`),
       state?.installId && h('div', { className: 'agentkit-form-note' }, `安装标识 ${state.installId}`),
       h('div', { className: 'agentkit-form-actions' },
-        h('button', { style: buttonStyle(), disabled: busy || !state?.available, onClick: () => void showPreview() }, '查看待发送数据'),
+        h('button', { style: buttonStyle(), disabled: busy || !state?.available, onClick: () => void showPreview('queued') }, '查看待发送数据'),
+        h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void showPreview('example') }, '查看固定样例'),
         h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void update(() => bridge.stop(false)) }, '停止所有遥测'),
         h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void update(() => bridge.stop(true)) }, '清除本地遥测数据')),
-      preview !== null && h('pre', { tabIndex: 0, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } },
-        preview || '当前没有待发送数据。'),
+      preview && h('div', null,
+        h('div', { className: 'agentkit-form-note' }, preview.mode === 'example' ? '本地固定样例' : '当前待发送数据'),
+        h('pre', { tabIndex: 0, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } },
+          preview.body || '当前没有待发送数据。')),
+      state?.diagnostics && h('details', null,
+        h('summary', null, '本次启动的本地诊断'),
+        h('div', { className: 'agentkit-form-note' }, `待发送 ${state.queued}，发送失败 ${state.diagnostics.send_failed}，队列丢弃 ${state.diagnostics.queue_drop}，服务端拒收 ${state.diagnostics.rejected}，存储错误 ${state.diagnostics.storage}，发送器错误 ${state.diagnostics.export}`),
+        h('button', { style: buttonStyle(), disabled: busy, onClick: () => void refresh() }, '刷新诊断')),
       error && h('div', { role: 'status', className: 'agentkit-form-note' }, '无法读取或保存遥测设置。'));
   }
   function StudioSettingsSection() {

@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createDesktopTelemetry, resolveDesktopTelemetryConfig } from '../src/telemetry/desktop.mjs';
 import { validEventProps } from '../src/telemetry/contract.mjs';
+import { stageDesktopTelemetryInputs } from '../scripts/desktop-telemetry-inputs.mjs';
 
 const endpoint = 'https://telemetry.example.test/v1/logs';
 const release = { endpoint, defaultBasic: true, policyRevision: 'test-1' };
@@ -32,6 +33,21 @@ test('release policy gates basic by package and first-party receiver', () => {
   assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true, selfHosted: endpoint }).defaultBasic, false);
   assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true, disabled: '0' }).disabled, true);
   assert.equal(resolveDesktopTelemetryConfig({ release, selfHosted: 'https://user:pass@example.test/v1/logs' }).endpoint, null);
+});
+
+test('the workflow policy is validated and written as a package resource', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-telemetry-release-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const inline = JSON.stringify(release);
+  const staged = await stageDesktopTelemetryInputs(directory, { AGENTKIT_TELEMETRY_RELEASE_POLICY: inline });
+  assert.deepEqual(JSON.parse(await readFile(join(staged.directory, 'policy.json'), 'utf8')), release);
+  await staged.dispose();
+  await assert.rejects(stageDesktopTelemetryInputs(directory, {
+    AGENTKIT_TELEMETRY_RELEASE_POLICY: JSON.stringify({ ...release, endpoint: 'http://telemetry.example.test/v1/logs' }),
+  }), /Invalid desktop telemetry release policy/);
+  await assert.rejects(stageDesktopTelemetryInputs(directory, {
+    AGENTKIT_TELEMETRY_RELEASE_POLICY: inline, AGENTKIT_TELEMETRY_RELEASE_FILE: 'second-policy.json',
+  }), /Use one desktop telemetry release policy input/);
 });
 
 test('no allocation before notice, one consent-gated event per Beijing day', async t => {
@@ -62,6 +78,19 @@ test('no allocation before notice, one consent-gated event per Beijing day', asy
   assert.deepEqual(eventNames(restarted.preview()), ['desktop_active_day']);
   assert.equal(restarted.status().installId, telemetry.status().installId);
   await restarted.drain();
+});
+
+test('the fixed sample is local and independent of policy, queue and installation identity', async t => {
+  const { telemetry, directory, fetches } = await fixture(t, {
+    config: resolveDesktopTelemetryConfig({ release: {}, packaged: true }),
+  });
+  const example = telemetry.preview('example');
+  assert.deepEqual(eventNames(example), ['desktop_active_day']);
+  assert.equal(telemetry.preview('example'), example);
+  assert.deepEqual(eventNames(telemetry.preview('queued')), []);
+  assert.equal(telemetry.status().installId, null);
+  assert.equal(fetches.length, 0);
+  await assert.rejects(access(join(directory, 'outbox.jsonl')));
 });
 
 test('address or policy changes drop queued data while explicit off persists', async t => {
@@ -113,6 +142,7 @@ test('retry after 429 keeps event IDs immutable through a persisted replay', asy
   await telemetry.writes;
   await telemetry.flush();
   assert.equal(telemetry.status().queued, 2);
+  assert.equal(telemetry.status().diagnostics.send_failed, 1);
   advance(19_999);
   await telemetry.flush();
   assert.equal(requests.length, 1);
@@ -124,6 +154,21 @@ test('retry after 429 keeps event IDs immutable through a persisted replay', asy
   assert.equal(requests[0], requests[1]);
   assert.equal(restarted.status().queued, 0);
   await restarted.drain();
+});
+
+test('expired records increment local drops and clearing data resets diagnostic counts', async t => {
+  const { telemetry, advance, fetches } = await fixture(t);
+  await telemetry.applyNotice('continue');
+  telemetry.activity();
+  await telemetry.writes;
+  advance(8 * 24 * 60 * 60 * 1000);
+  await telemetry.flush();
+  await telemetry.writes;
+  assert.equal(telemetry.status().diagnostics.queue_drop, 2);
+  assert.equal(telemetry.status().queued, 0);
+  assert.equal(fetches.length, 0);
+  assert.equal((await telemetry.stopAll({ clear: true })).diagnostics.queue_drop, 0);
+  await telemetry.drain();
 });
 
 test('Run summaries require own opt-in, an admitted start, and terminal schema', async t => {

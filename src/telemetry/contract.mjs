@@ -112,3 +112,16 @@ export function telemetryBatch(events) {
   }
   return { body: prefix + records.join(',') + suffix, count: records.length };
 }
+
+export const desktopTelemetryExample = telemetryBatch([{
+  event_id: '00000000-0000-4000-8000-000000000001',
+  event_name: 'desktop_active_day',
+  schema_version: schemaVersion,
+  occurred_at: Date.UTC(2025, 0, 1),
+  install_id: '00000000-0000-4000-8000-000000000002',
+  app_version: '0.0.0',
+  channel: 'latest',
+  platform: 'darwin',
+  arch: 'arm64',
+  props: {},
+}]).body;

@@ -9,7 +9,9 @@ const allowed = new Set(['endpoint', 'defaultBasic', 'policyRevision', 'buildOff
 /** Snapshot only telemetry code and public release policy, outside the DSH source tree. */
 export async function stageDesktopTelemetryInputs(parent, environment) {
   const file = environment.AGENTKIT_TELEMETRY_RELEASE_FILE;
-  const release = file ? JSON.parse(await readFile(file, 'utf8')) : {};
+  const inline = environment.AGENTKIT_TELEMETRY_RELEASE_POLICY;
+  if (file && inline) throw new Error('Use one desktop telemetry release policy input');
+  const release = JSON.parse(file ? await readFile(file, 'utf8') : (inline || '{}'));
   if (!release || Object.getPrototypeOf(release) !== Object.prototype
     || Object.keys(release).some(key => !allowed.has(key))
     || (release.endpoint !== undefined && !telemetryEndpoint(release.endpoint))
