@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "service": "agentkit-studio-desktop",
+  "scope": "agentkit-studio.desktop",
+  "maxBatchRecords": 512,
+  "maxBodyBytes": 262144,
+  "envelope": {
+    "event_id": "uuid",
+    "event_name": "event",
+    "schema_version": "schemaVersion",
+    "occurred_at": "time",
+    "install_id": "uuid",
+    "app_version": "version",
+    "channel": ["latest", "nightly"],
+    "platform": ["darwin", "win32"],
+    "arch": ["arm64", "x64"]
+  },
+  "events": {
+    "app_install": { "category": "basic" },
+    "desktop_active_day": { "category": "basic" },
+    "app_launch_started": {
+      "category": "basic",
+      "required": { "attempt_id": "uuid" }
+    },
+    "app_launch_result": {
+      "category": "basic",
+      "required": { "attempt_id": "uuid", "outcome": ["ready", "failed", "canceled", "unknown"] },
+      "optional": { "duration_ms": "duration" }
+    },
+    "app_crash": {
+      "category": "crash",
+      "required": {
+        "source": ["main", "web-boot", "renderer"],
+        "phase": ["startup", "running"],
+        "error_code": "crashError"
+      }
+    },
+    "host_unexpected_exit": {
+      "category": "crash",
+      "required": { "phase": ["startup", "running"], "error_code": "crashError" }
+    },
+    "update_check_result": {
+      "category": "basic",
+      "required": { "outcome": ["no_update", "available", "failed"] }
+    },
+    "update_download_result": {
+      "category": "basic",
+      "required": { "target_version": "version", "outcome": ["ready", "failed", "canceled"] },
+      "optional": { "duration_ms": "duration" }
+    },
+    "update_install_started": {
+      "category": "basic",
+      "required": { "attempt_id": "uuid", "target_version": "version" }
+    },
+    "update_install_result": {
+      "category": "basic",
+      "required": { "attempt_id": "uuid", "outcome": ["applied", "failed"] }
+    },
+    "run_summary": {
+      "category": "run",
+      "required": {
+        "engine": ["studio-local", "codex", "native-harness"],
+        "status": ["completed", "failed", "canceled", "interrupted", "blocked"]
+      },
+      "optional": {
+        "duration_ms": "duration",
+        "input_tokens": "count",
+        "output_tokens": "count",
+        "total_tokens": "count",
+        "tool_call_count": "count",
+        "error_code": "runError"
+      }
+    }
+  },
+  "enums": {
+    "crashError": ["PROCESS_EXIT", "OOM", "UNHANDLED", "LOAD_FAILED", "OTHER"],
+    "runError": ["AUTH", "QUOTA", "RATE_LIMIT", "TIMEOUT", "SERVER", "CONTEXT_WINDOW_EXCEEDED", "INVALID_RESPONSE", "TRANSPORT", "EMPTY_RESPONSE", "OTHER"]
+  }
+}

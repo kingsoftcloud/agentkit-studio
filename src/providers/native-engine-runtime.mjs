@@ -24,6 +24,7 @@ import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGIN
 import { nativeEngineApprovalReply } from './native-host-approval.mjs';
 import { nativeEngineVerification } from './native-engine-verification.mjs';
 import { canonicalEngineWorkspace, engineServiceWorkspaces } from './engine-service-workspaces.mjs';
+import { startDesktopRun } from '../telemetry/host-run.mjs';
 export { HARNESS_SERVICE_MODEL_PROVIDER } from './engine-service-workspaces.mjs';
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
@@ -268,6 +269,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         } };
         // The remote start can be committed before its response reaches Studio.
         if (useService) signal?.addEventListener('abort', abort, { once: true });
+        const reportRun = useService ? undefined : startDesktopRun('native-harness', runId);
         const started = await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
           ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}),
           ...(verification ? { hostVerification: verification.definition } : {}),
@@ -348,6 +350,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             if (!['accepted', 'duplicate'].includes(receipt?.status))
               throw failure('NATIVE_ENGINE_APPROVAL_CONFLICT', '该工具审批已变化，请核对任务中的最新状态。');
           }
+        }
+        if (rest.terminal) {
+          const status = rest.outcome === 'blocked' ? 'blocked' : rest.phase;
+          reportRun?.(status, { usage: rest.usageComplete === true ? rest.usage : undefined });
         }
         // The final answer is the Run's delivered text; commentary during the task was shown as progress.
         const answer = rest.finalText ?? finalText;

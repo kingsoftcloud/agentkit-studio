@@ -15,6 +15,14 @@ on:
         description: Run unsigned packaging smoke without publishing or installer qualification
         type: boolean
         default: false
+      qualify_telemetry:
+        description: Build a signed candidate with a local telemetry fixture and run native qualification
+        type: boolean
+        default: false
+      telemetry_baseline_tag:
+        description: Signed Studio release tag used as the installed telemetry upgrade baseline
+        default: desktop-0.2.2-rc.1.20261117.4
+        type: string
       studio_ref:
         description: Immutable Studio source commit
         type: string
@@ -55,6 +63,10 @@ jobs:
     # runner, so the retention step needs more headroom than the build itself.
     timeout-minutes: 150
     steps:
+      - name: Validate telemetry qualification options
+        if: ${{ inputs.qualify_telemetry && inputs.diagnostic_only }}
+        shell: pwsh
+        run: throw 'Telemetry qualification requires a signed candidate'
       - name: Preserve canonical source line endings
         shell: pwsh
         run: git config --global core.autocrlf false
@@ -97,7 +109,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version-file: .node-version
       - uses: pnpm/action-setup@v4
         if: ${{ inputs.candidate_run_id == '' }}
         with:
@@ -156,7 +168,9 @@ jobs:
           if ('${{ inputs.diagnostic_only }}' -eq 'true') { throw 'Signed candidate reuse cannot be diagnostic-only' }
           pnpm install --frozen-lockfile
           if ($LASTEXITCODE) { throw 'Qualification dependencies failed' }
-          node .qualification-tools/scripts/prepare-windows-candidate.mjs --repository '${{ github.repository }}' --run $env:CANDIDATE_RUN --source $env:SOURCE_SHA --version $env:BUILD_VERSION --output .artifacts/windows-candidate
+          $fixture = @()
+          if ('${{ inputs.qualify_telemetry }}' -eq 'true') { $fixture += '--telemetry-qualification' }
+          node .qualification-tools/scripts/prepare-windows-candidate.mjs --repository '${{ github.repository }}' --run $env:CANDIDATE_RUN --source $env:SOURCE_SHA --version $env:BUILD_VERSION --output .artifacts/windows-candidate @fixture
           if ($LASTEXITCODE) { throw 'Signed candidate identity or digest failed' }
           Expand-Archive -LiteralPath .artifacts/windows-candidate/candidate.zip -DestinationPath .artifacts/windows-candidate/unpacked
           $candidate = @(Get-ChildItem .artifacts/windows-candidate/unpacked -Directory -Recurse | Where-Object { $_.Name -eq 'windows-release' })
@@ -245,6 +259,7 @@ jobs:
           DSH_DESKTOP_PLUGIN_BUNDLES: ${{ steps.product.outputs.plugin_bundles }}
           STUDIO_PRODUCT_ICON: ${{ steps.product.outputs.windows_icon }}
           STUDIO_PRODUCT_TRAY_ICON: ${{ steps.product.outputs.windows_tray_icon }}
+          AGENTKIT_TELEMETRY_RELEASE_POLICY: ${{ inputs.qualify_telemetry && '{"endpoint":"https://127.0.0.1:49331/v1/logs","defaultBasic":true,"policyRevision":"qualification-v1"}' || vars.STUDIO_TELEMETRY_RELEASE_POLICY }}
         run: |
           [string[]]$packageArguments = @('--source', "$PWD/dsh-source", '--output', "$env:RUNNER_TEMP/studio-build", '--patches', "$PWD/patches/dsh-v0.2.2-rc.1", '--commit', '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db', '--target', 'win-x64', '--dsh-version', '0.2.2-rc.1', '--studio-version', $env:STUDIO_PACKAGE_VERSION, '--build-version', $env:BUILD_VERSION)
           if ('${{ inputs.diagnostic_only }}' -eq 'true') { $packageArguments += '--unsigned' }
@@ -276,6 +291,7 @@ jobs:
             Set-Content .artifacts/windows-proof/app.asar.sha256
       - name: Verify timestamped installer and actual installation
         if: ${{ ! inputs.diagnostic_only }}
+        id: installed
         shell: pwsh
         env:
           CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
@@ -288,6 +304,11 @@ jobs:
             $artifacts = $candidates[0].FullName
           }
           ./.qualification-tools/scripts/verify-windows-install.ps1 -Artifacts $artifacts -Version $env:BUILD_VERSION -Evidence .artifacts/windows-proof
+          if ('${{ inputs.qualify_telemetry }}' -eq 'true') {
+            $receipt = Get-Content .artifacts/windows-proof/windows-install.json -Raw | ConvertFrom-Json
+            $policy = Join-Path (Split-Path $receipt.installedPath) 'resources/studio-telemetry/policy.json'
+            if (-not (Test-Path -LiteralPath $policy -PathType Leaf)) { throw 'The freshly installed signed App is missing its telemetry policy' }
+          }
           New-Item -ItemType Directory -Force .artifacts/windows-release | Out-Null
           # Retain only the files a publication consumes. Copying the whole build
           # directory pulls in win-unpacked/ and installer caches (multi-GB) and
@@ -305,11 +326,29 @@ jobs:
         shell: pwsh
         env:
           BUILD_VERSION: ${{ steps.product.outputs.build_version }}
+          AGENTKIT_TELEMETRY_DISABLED: '1'
         run: |
           node .qualification-tools/scripts/verify-desktop-module-graph.mjs (Join-Path (Split-Path $env:STUDIO_INSTALLED_APP) 'resources/app.asar') --studio | Out-File .artifacts/windows-proof/studio-module-graph.json -Encoding utf8
           if ($LASTEXITCODE) { throw 'Installed Studio archive verification failed' }
           node .qualification-tools/scripts/verify-windows-app-ui.mjs
           if ($LASTEXITCODE) { throw 'Installed Windows App UI acceptance failed' }
+      - name: Verify telemetry in the signed Windows installation
+        if: ${{ !cancelled() && inputs.qualify_telemetry && steps.installed.conclusion == 'success' }}
+        timeout-minutes: 10
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ steps.product.outputs.build_version }}
+          BASELINE_TAG: ${{ inputs.telemetry_baseline_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$BASELINE_TAG" =~ ^desktop-[0-9A-Za-z.+-]+$ ]]
+          baseline_dir=$(mktemp -d)
+          echo 'Downloading the previously released signed installer for the upgrade test'
+          gh release download "$BASELINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-win-x64.exe' --dir "$baseline_dir"
+          baseline_installer=$(find "$baseline_dir" -maxdepth 1 -name '*.exe' -print -quit)
+          test -s "$baseline_installer"
+          node .qualification-tools/scripts/verify-installed-desktop-telemetry.mjs --version "$BUILD_VERSION" --baseline "$baseline_installer" --baseline-version "${BASELINE_TAG#desktop-}" --installer "$STUDIO_SIGNED_INSTALLER" --output .artifacts/windows-proof/desktop-telemetry.json
       - name: Collect credential-free packaging diagnostics
         if: always() && inputs.diagnostic_only
         shell: pwsh
@@ -328,7 +367,7 @@ jobs:
         if: ${{ always() && (inputs.candidate_run_id != '' || steps.packaged-drag-region.outcome == 'success') }}
         uses: actions/upload-artifact@v4
         with:
-          name: agentkit-studio-${{ steps.product.outputs.build_version }}-win-x64
+          name: agentkit-studio-${{ steps.product.outputs.build_version }}-win-x64${{ inputs.qualify_telemetry && '-telemetry-qualification' || '' }}
           path: |
             .artifacts/windows-release/
             .artifacts/windows-proof/

@@ -57,6 +57,7 @@ $env:AGENTKIT_HOME = Join-Path $env:RUNNER_TEMP 'studio-finish-agentkit'
 $env:DSH_TELEMETRY_DISABLED = '1'
 $install = Start-Process -FilePath $Installer -ArgumentList "/D=$destination" -PassThru
 $started = $null
+$privacyDismissed = $false
 try {
   $deadline = (Get-Date).AddMinutes(3)
   do {
@@ -82,12 +83,44 @@ try {
   [StudioInstallerWindow]::PostMessage($finish, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
   if (-not $install.WaitForExit(30000) -or $install.ExitCode -ne 0) { throw 'Finish action failed' }
   $appPath = Join-Path $destination 'AgentKit Studio.exe'
+  $privacyLabels = [System.Windows.Automation.OrCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '关闭基础统计并继续'),
+    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Turn off basic statistics and continue'))
+  $laterCondition = [System.Windows.Automation.OrCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '稍后设置'),
+    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Set up later'))
+  $navigationCondition = [System.Windows.Automation.OrCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '智能体'),
+    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Agents'))
   $deadline = (Get-Date).AddMinutes(3)
   do {
     $started = Get-Process -Name 'AgentKit Studio' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $appPath -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if ($started) {
       $element = [System.Windows.Automation.AutomationElement]::FromHandle($started.MainWindowHandle)
-      $laterCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '稍后设置')
+      $handledPrivacy = $false
+      $process = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $started.Id)
+      $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $process)
+      foreach ($installedWindow in $windows) {
+        $privacy = $installedWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $privacyLabels)
+        if (-not $privacy -or $privacy.Current.IsOffscreen) { continue }
+        $invoke = $null
+        if ($privacy.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) {
+          $invoke.Invoke()
+        } else {
+          $bounds = $privacy.Current.BoundingRectangle
+          $dialog = [IntPtr]$installedWindow.Current.NativeWindowHandle
+          if ($dialog -eq [IntPtr]::Zero -or $bounds.IsEmpty) { continue }
+          [StudioInstallerWindow]::Click($dialog, $bounds.X+$bounds.Width/2, $bounds.Y+$bounds.Height/2)
+        }
+        if (-not $privacyDismissed) { Write-Host 'First-use privacy action selected in the installer-launched app.' }
+        $privacyDismissed = $true
+        $handledPrivacy = $true
+        break
+      }
+      if ($handledPrivacy) {
+        Start-Sleep -Milliseconds 300
+        continue
+      }
       $later = $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $laterCondition)
       if ($later -and -not $later.Current.IsOffscreen) {
         [StudioInstallerWindow]::Capture($started.MainWindowHandle, (Join-Path $Evidence 'windows-finish-studio-onboarding.png'), $false)
@@ -96,17 +129,17 @@ try {
         Start-Sleep -Milliseconds 300
         continue
       }
-      $condition = [System.Windows.Automation.OrCondition]::new(
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '智能体'),
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Agents'))
-      $navigation = $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+      $navigation = $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $navigationCondition)
       if ($navigation) { break }
     }
     Start-Sleep -Milliseconds 500
   } while ((Get-Date) -lt $deadline)
-  if (-not $started -or -not $navigation) { throw 'Finish Launch now did not render Studio navigation in the installed process' }
+  if (-not $started -or -not $navigation) {
+    if ($started) { [StudioInstallerWindow]::Capture($started.MainWindowHandle, (Join-Path $Evidence 'windows-finish-without-navigation.png'), $false) }
+    throw 'Finish Launch now did not render Studio navigation in the installed process'
+  }
   [StudioInstallerWindow]::Capture($started.MainWindowHandle, (Join-Path $Evidence 'windows-installer-launched-app.png'), $false)
-  [ordered]@{installerBrandVerified=$true;visibleInstallation=$true;finishLaunchVerified=$true;studioNavigationVerified=$true;installedPath=$appPath;pid=$started.Id} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-installer-ui.json')
+  [ordered]@{installerBrandVerified=$true;visibleInstallation=$true;finishLaunchVerified=$true;studioNavigationVerified=$true;privacyDeclineOnFinish=$privacyDismissed;installedPath=$appPath;pid=$started.Id} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-installer-ui.json')
 } finally {
   if ($started -and -not $started.HasExited) { & taskkill.exe /PID $started.Id /T /F | Out-Null }
   if (-not $install.HasExited) { Stop-Process -Id $install.Id -Force }
