@@ -99,6 +99,14 @@ Host 将 npm 版本解析为 `name@version`（可带 `registry`），Git 版本�
 
 发布 `index.json` 后，在「插件 → 发现 → 索引源」添加它的 URL，再选择该索引并点击「安装」。主包从对象存储下载，依赖仍由包管理器解析。客户端需要使用支持 `tarball` 来源的 Studio Host。
 
+### 维护远程索引
+
+在 Git 中维护 `index.json`，将审核后的版本发布到一个固定的 HTTPS 地址。用户在当前 profile 中添加一次该地址即可，以后的目录更新可以独立于 Studio 发版。
+
+1. 先上传带版本号的新 `.tgz`，从用户可访问的网络确认能下载。新插件加入 `plugins`，已有插件在同一包名的 `versions` 中新增一项，填写实际发布时间、下载地址和包声明的 `engines.dsh`（如有）。每个版本使用独立的文件路径。
+2. 在测试 profile 添加预览索引，确认「发现」能加载新目录并试装。通过后更新固定地址上的 `index.json`。用户可点击「发现」的刷新按钮重新读取索引。经 CDN 分发时，同时更新 `index.json` 的 CDN 缓存。
+3. 下架时从 `versions` 移除对应版本。如果移除的是最后一个版本，就删除整个插件条目。回滚目录时重新发布之前的 `index.json`，并保留它引用的包。已安装插件的启停和卸载由各 profile 的插件管理器处理。
+
 ## 未启用时
 
 官方索引服务只随实验性 bundle `@deepseek-ai/dsh-experimental-plugin-market-bundle`（「自定义插件索引」）挂载。Studio 会在每个 profile 第一次以某个 DSH 版本启动时自动启用它（同一份默认清单还会启用 Computer Use 的 `@deepseek-ai/dsh-cua-bundle`），所以市场默认可用；启用失败或安装不含该 bundle 时，市场返回 `PLUGIN_MARKET_UNAVAILABLE` 并给出一键启用入口。

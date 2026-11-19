@@ -99,6 +99,14 @@ Pack the built DSH bundle as an npm tarball and upload it to object storage such
 
 Publish `index.json` and add its URL under Plugins → Discover → Index sources. Select the source and choose Install. The plugin downloads from object storage and the package manager resolves its dependencies. Use a Studio Host that supports the `tarball` source.
 
+### Maintain a remote index
+
+Keep `index.json` in Git and publish the reviewed version to a stable HTTPS URL. Users add the URL once per profile. Catalog updates can ship independently of Studio releases.
+
+1. Upload the new versioned `.tgz` first and verify download access from the users’ network. Add new plugins to `plugins` and add releases of existing plugins to `versions` under the same package name. Record the publish time, download URL, and any `engines.dsh` range declared by the package. Give each version its own file path.
+2. Add a preview index in a test profile, load it in Discover, and install the new version. Then update `index.json` at the stable URL. Users can select Refresh in Discover to read it again. If you serve the index through a CDN, refresh its cached copy of `index.json` as part of publishing.
+3. Remove an entry from `versions` to withdraw a release. Remove the plugin entry when its last version is withdrawn. To roll back the catalog, republish the earlier `index.json` and retain the archives it references. Each profile’s plugin manager controls installed bundles.
+
 ## When it is not enabled
 
 The official index service is mounted only with the experimental bundle `@deepseek-ai/dsh-experimental-plugin-market-bundle` ("Custom plugin indexes"). Studio enables it automatically the first time a profile starts with a given DSH version (the same default list also enables Computer Use, `@deepseek-ai/dsh-cua-bundle`), so the market works out of the box; when enabling fails or the installation does not carry the bundle, the market answers `PLUGIN_MARKET_UNAVAILABLE` and offers a one-click enable action.
