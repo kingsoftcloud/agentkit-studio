@@ -304,6 +304,11 @@ jobs:
             $artifacts = $candidates[0].FullName
           }
           ./.qualification-tools/scripts/verify-windows-install.ps1 -Artifacts $artifacts -Version $env:BUILD_VERSION -Evidence .artifacts/windows-proof
+          if ('${{ inputs.qualify_telemetry }}' -eq 'true') {
+            $receipt = Get-Content .artifacts/windows-proof/windows-install.json -Raw | ConvertFrom-Json
+            $policy = Join-Path (Split-Path $receipt.installedPath) 'resources/studio-telemetry/policy.json'
+            if (-not (Test-Path -LiteralPath $policy -PathType Leaf)) { throw 'The freshly installed signed App is missing its telemetry policy' }
+          }
           New-Item -ItemType Directory -Force .artifacts/windows-release | Out-Null
           # Retain only the files a publication consumes. Copying the whole build
           # directory pulls in win-unpacked/ and installer caches (multi-GB) and
@@ -341,7 +346,7 @@ jobs:
           baseline_dir=$(mktemp -d)
           gh release download "$BASELINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-win-x64.exe' --dir "$baseline_dir"
           baseline_installer=$(find "$baseline_dir" -maxdepth 1 -name '*.exe' -print -quit)
-          node .qualification-tools/scripts/verify-installed-desktop-telemetry.mjs --app "$STUDIO_INSTALLED_APP" --version "$BUILD_VERSION" --baseline "$baseline_installer" --baseline-version "${BASELINE_TAG#desktop-}" --installer "$STUDIO_SIGNED_INSTALLER" --output .artifacts/windows-proof/desktop-telemetry.json
+          node .qualification-tools/scripts/verify-installed-desktop-telemetry.mjs --version "$BUILD_VERSION" --baseline "$baseline_installer" --baseline-version "${BASELINE_TAG#desktop-}" --installer "$STUDIO_SIGNED_INSTALLER" --output .artifacts/windows-proof/desktop-telemetry.json
       - name: Collect credential-free packaging diagnostics
         if: always() && inputs.diagnostic_only
         shell: pwsh

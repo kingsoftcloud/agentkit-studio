@@ -40,6 +40,9 @@ async function installWindows(installer, destination) {
     'if ($signature.Status -ne "Valid" -or -not $signature.TimeStamperCertificate) { throw "Installer signature invalid" }',
     '$result = Start-Process -FilePath $env:STUDIO_TEST_INSTALLER -ArgumentList @("/S", "/D=$env:STUDIO_TEST_DESTINATION") -Wait -PassThru',
     'if ($result.ExitCode -ne 0) { exit $result.ExitCode }',
+    '$app = Join-Path $env:STUDIO_TEST_DESTINATION "AgentKit Studio.exe"',
+    '$installed = Get-AuthenticodeSignature -LiteralPath $app',
+    'if ($installed.Status -ne "Valid" -or -not $installed.TimeStamperCertificate) { throw "Installed app signature invalid" }',
   ].join('\n');
   execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], {
     env: { ...process.env, STUDIO_TEST_INSTALLER: installer, STUDIO_TEST_DESTINATION: destination },
@@ -171,12 +174,15 @@ async function main() {
     app: { type: 'string' }, version: { type: 'string' }, output: { type: 'string' },
     baseline: { type: 'string' }, 'baseline-version': { type: 'string' }, installer: { type: 'string' },
   } });
-  assert.ok(values.app && values.version && values.output, '--app, --version and --output are required');
-  const appPath = resolve(values.app);
+  const windows = process.platform === 'win32';
+  assert.ok(values.version && values.output && (windows ? values.installer : values.app),
+    '--version, --output and a Windows --installer or macOS --app are required');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-installed-telemetry-')));
+  // The visible installer acceptance may relocate an existing installation.
+  const appPath = windows ? await installWindows(resolve(values.installer), join(root, 'installed-primary')) : resolve(values.app);
   const { executable, resources } = packagePaths(appPath);
   const release = JSON.parse(await readFile(join(resources, 'studio-telemetry', 'policy.json'), 'utf8'));
   assert.deepEqual(release, { endpoint, defaultBasic: true, policyRevision: 'qualification-v1' });
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-installed-telemetry-')));
   const profile = join(root, 'primary');
   const outbox = join(profile, 'electron', 'studio-telemetry', 'outbox.jsonl');
   const receiver = await listen(root);
@@ -265,7 +271,6 @@ async function main() {
         await rm(destination, { recursive: true, force: true });
         execFileSync('/usr/bin/ditto', [appPath, destination]);
       } else {
-        assert.ok(values.installer, '--installer is required for real Windows upgrade');
         await installWindows(resolve(values.installer), destination);
       }
       const upgraded = await open(packagePaths(installed).executable, upgradeProfile, receiver.cert, values.version);
