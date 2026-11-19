@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "603ce4e05a0fe91412bfb8dfdb28ce50e1dd030e",
+  "headCommit": "697728891deee8f242294ebf5ce5fdb67fd9e230",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "77a293164e021fa8edeb219282bd4af0fb628b93",
-  "sourceSha256": "dc88379444566099364ad7ca99f0fc40471e0f157e7a4eddfc9e78c37066194e",
+  "tree": "331c532196cdd4d0899ea81f9539349460a7ba58",
+  "sourceSha256": "7aeca05fe8d885c5eba305cc86187c8d868ad522966cd8e1f4e19c1e8b00d9c9",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "3704e01fcc4cc66a72de33db70ace9609201f7ee37288ffcfc078dfdd8373ee4"
+    "sha256": "8be75d338b5812c6cd8812b9b37428e58fa3e827f179f2d9eddb542667d83719"
   },
   "commits": [
     {
@@ -338,8 +338,8 @@
     {
       "id": "086",
       "file": "086-studio-desktop-telemetry.patch",
-      "commit": "603ce4e05a0fe91412bfb8dfdb28ce50e1dd030e",
-      "sha256": "345902a7a3ccd52bff0b6aaf86887a69c9472d8b11fdadb2ba73519e5d65df05"
+      "commit": "697728891deee8f242294ebf5ce5fdb67fd9e230",
+      "sha256": "a09b0fb7f4b6b864acb1dfd4b3860c06f71be18755e9e2bee6d2a3b969650224"
     }
   ]
 }

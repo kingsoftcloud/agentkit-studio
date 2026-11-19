@@ -57,18 +57,10 @@ index 2dfd007809bc35a850b264be4685fd20534d7901..330eef3330527f73c5c6bce1238beaf1
          const record = 'record' in message ? parsePluginOperationRecord(message.record) : undefined
          if (record !== undefined && record.runId === this.runId) {
 diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
-index aa9471f6f71ba78d44546d2466141fdde16c06c3..c2d2caef68b4eb1aef06ca61de60692b6dd65eef 100644
+index aa9471f6f71ba78d44546d2466141fdde16c06c3..3aba92d621c78647747b89650cfea8ac67533f23 100644
 --- a/apps/desktop/src/ipc.ts
 +++ b/apps/desktop/src/ipc.ts
-@@ -5,6 +5,7 @@ import type { DesktopKeyboardApi, DesktopShortcutsApi } from '@deepseek-ai/dsh-c
- import type { IpcMainInvokeEvent } from 'electron'
- import type { DesktopBrowserBridge } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
- import type { DesktopFileDrag } from '@deepseek-ai/dsh-util-file-drag'
-+import type { StudioTelemetryCategory, StudioTelemetryStatus } from './studio-telemetry.ts'
- 
- /** IPC channel names kept private to the desktop application bundle. */
- export const DESKTOP_IPC = {
-@@ -35,6 +36,11 @@ export const DESKTOP_IPC = {
+@@ -35,6 +35,11 @@ export const DESKTOP_IPC = {
    updatesStatus: 'dsh-desktop:updates-status',
    updatesOpen: 'dsh-desktop:updates-open',
    updatesPresentation: 'dsh-desktop:updates-presentation',
@@ -80,7 +72,26 @@ index aa9471f6f71ba78d44546d2466141fdde16c06c3..c2d2caef68b4eb1aef06ca61de60692b
    nativeThemeSet: 'dsh-desktop:native-theme-set',
    windowFullscreen: 'dsh-desktop:window-fullscreen',
    windowsAppearance: 'dsh-desktop:windows-appearance',
-@@ -98,6 +104,13 @@ export interface DshDesktopProductApi {
+@@ -80,6 +85,18 @@ export interface DesktopUpdatePresentation {
+   readonly failure?: DesktopUpdateFailureKind
+ }
+ 
++export type StudioTelemetryCategory = 'basic' | 'crash' | 'run'
++export interface StudioTelemetryStatus {
++  readonly available: boolean
++  readonly defaultBasic: boolean
++  readonly selfHosted: boolean
++  readonly noticePending: boolean
++  readonly endpoint: string | null
++  readonly enabled: Record<StudioTelemetryCategory, boolean>
++  readonly installId: string | null
++  readonly queued: number
++}
++
+ /** Product documents cannot supply update versions, package URLs, or installation authorization. */
+ export interface DshDesktopProductApi {
+   readonly fileActions: DesktopFileActions
+@@ -98,6 +115,13 @@ export interface DshDesktopProductApi {
      open(): Promise<void>
      subscribe(listener: (state: DesktopUpdatePresentation) => void): () => void
    }
@@ -306,28 +317,17 @@ index 26266b4f1c8a497c3cc5c94d19a06a4b5ee3bf49..e271338325a74a1a8715d840f385bd75
        subscribe: (listener) => {
 diff --git a/apps/desktop/src/studio-telemetry.ts b/apps/desktop/src/studio-telemetry.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2180484e5771fdd283696770d5094ed2c9d10a7
+index 0000000000000000000000000000000000000000..75751600dc912c5b7ec286f71a8fdbe5da621ad6
 --- /dev/null
 +++ b/apps/desktop/src/studio-telemetry.ts
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,112 @@
 +import { randomUUID } from 'node:crypto'
 +import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 +import { join } from 'node:path'
 +import { pathToFileURL } from 'node:url'
 +import { app, dialog, type BrowserWindow } from 'electron'
 +import { desktopUpdateChannel } from './update-channel.ts'
-+
-+export type StudioTelemetryCategory = 'basic' | 'crash' | 'run'
-+export interface StudioTelemetryStatus {
-+  readonly available: boolean
-+  readonly defaultBasic: boolean
-+  readonly selfHosted: boolean
-+  readonly noticePending: boolean
-+  readonly endpoint: string | null
-+  readonly enabled: Record<StudioTelemetryCategory, boolean>
-+  readonly installId: string | null
-+  readonly queued: number
-+}
++import type { StudioTelemetryStatus } from './ipc.ts'
 +
 +async function purgeOutbox(directory: string): Promise<void> {
 +  const path = join(directory, 'outbox.jsonl')

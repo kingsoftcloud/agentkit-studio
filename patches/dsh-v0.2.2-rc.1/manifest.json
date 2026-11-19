@@ -2734,13 +2734,13 @@
           "windows"
         ]
       },
-      "sha256": "345902a7a3ccd52bff0b6aaf86887a69c9472d8b11fdadb2ba73519e5d65df05"
+      "sha256": "a09b0fb7f4b6b864acb1dfd4b3860c06f71be18755e9e2bee6d2a3b969650224"
     }
   ],
-  "patchedTree": "77a293164e021fa8edeb219282bd4af0fb628b93",
-  "patchedSourceSha256": "dc88379444566099364ad7ca99f0fc40471e0f157e7a4eddfc9e78c37066194e",
+  "patchedTree": "331c532196cdd4d0899ea81f9539349460a7ba58",
+  "patchedSourceSha256": "7aeca05fe8d885c5eba305cc86187c8d868ad522966cd8e1f4e19c1e8b00d9c9",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "f57d79742dd2647b26aea84727dfe60e3eb3ab3cd52e31a6c448ee763d9126b7"
+    "sha256": "b5613c37e7e0780a44987fc5b83f1dc3284e7dea82e0675801bbe7397d4d55a8"
   }
 }
