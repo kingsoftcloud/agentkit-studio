@@ -17,7 +17,9 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 54); assert.equal(report.paths, 315); assert.ok(report.hostTests.length > 0);
+  assert.equal(report.patches, 55); assert.equal(report.paths, 318); assert.ok(report.hostTests.length > 0);
+  assert.ok(report.hostTests.includes('apps/desktop/tests/preload-app.spec.ts'));
+  assert.ok(report.hostTests.includes('packages/boot/app-boot/tests/profile.spec.ts'));
   assert.ok(report.hostTests.includes('apps/desktop/tests/local-macos-package.spec.ts'));
   assert.ok(report.hostTests.includes('apps/desktop/tests/product-branding.spec.ts'));
   assert.ok(report.hostTests.includes('packages/context/agent-instructions/tests/agent-instructions.spec.ts'));
