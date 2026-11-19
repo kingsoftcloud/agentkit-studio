@@ -18,6 +18,13 @@ function publicOrigin(value) {
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') invalid();
   return url.origin;
 }
+function publicPluginIndexUrl(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' || !/^https:\/\/[^\s\\]+$/iu.test(value)) invalid();
+  const url = URL.parse(value);
+  if (!url || url.username || url.password || /[?#]/u.test(url.href)) invalid();
+  return url.href;
+}
 function assetPath(value, directory) {
   if (typeof value !== 'string' || value.includes('\\') || /[\0\r\n]/.test(value) || isAbsolute(value)) invalid();
   const path = resolve(directory, value), child = relative(directory, path);
@@ -42,6 +49,7 @@ export function resolveProductInputs({ target, dshVersion, buildVersion, pluginV
   const desktopVersion = buildVersion ?? dshVersion;
   if (!semver.test(pluginVersion) || (desktopVersion !== undefined && !semver.test(desktopVersion))) invalid();
   const origin = publicOrigin(updateOrigin ?? desktop.updates?.origin);
+  const defaultPluginIndexUrl = publicPluginIndexUrl(desktop.defaultPluginIndexUrl);
   const channel = updateChannel ?? desktop.updates?.channel;
   const environment = updateEnvironment ?? desktop.updates?.environment;
   if (!isReleaseChannel(channel) || !['production', 'test'].includes(environment)) invalid();
@@ -55,7 +63,7 @@ export function resolveProductInputs({ target, dshVersion, buildVersion, pluginV
   if (target !== undefined && !Object.hasOwn(platforms, target)) invalid();
   return {
     name: brand.name, shortName: brand.shortName, pluginVersion, desktopVersion,
-    appId: desktop.appId, platforms,
+    appId: desktop.appId, platforms, defaultPluginIndexUrl,
     environment: {
       DSH_CLIENT_TITLE: brand.name,
       DSH_CLIENT_LOCALE_OVERRIDES: JSON.stringify(resolveProductCopy(configuration)),

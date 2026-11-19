@@ -3,7 +3,7 @@ title: 插件市场
 description: DSH 官方插件索引（format 1）在 Studio 里的接入方式：索引源、请求模型、内置社区索引与安装路径。
 ---
 
-插件市场就是 **DSH 官方的插件索引**：一份 `format: 1` 静态 JSON，列出可安装的 bundle 及其标题、图标、作者、版本、`engines.dsh` 兼容范围与安装源。Studio 不再自建聚合——它读取 Host 的 `pluginMarket` 服务，并在 profile 没有任何索引源时，把随包内置的社区索引添加为默认源。
+插件市场使用 **DSH 官方的插件索引**。这是一份 `format: 1` 静态 JSON，列出可安装的 bundle 及其标题、图标、作者、版本、`engines.dsh` 兼容范围与安装源。Studio 通过 Host 的 `pluginMarket` 服务读取索引。桌面版可以预置产品索引，随包内置的社区索引也可作为没有配置任何索引源的 profile 的默认源。
 
 - 内置社区索引：`assets/plugin-market/index.json`，由 Host 在 `GET /api/agentkit.plugin-market/index.json` 提供给官方读取器。
 - 用户索引源：属于当前 profile，可在「发现」页添加、删除、切换。
@@ -66,6 +66,14 @@ pnpm check:plugin-index    # 不联网，只校验已提交的产物
 ```
 
 收录规则：只保留合法 SemVer、有发布时间、未弃用、未私有的版本，每个插件最多 20 个；输出按下载量降序、同分按包名升序，**确定性**（无时间戳、无随机），因此刷新在 review 里只体现为数据变化。
+
+## 桌面版默认索引
+
+在 `src/product.json` 中设置 `desktop.defaultPluginIndexUrl`。地址指向可直接读取的 HTTPS 索引文档，省去凭据、查询参数和片段。macOS 和 Windows 安装包都会携带这个配置。值为 `null` 时，此产品配置不写入任何索引源。
+
+首次启动带有该地址的桌面版本时，Studio 将它放在当前 profile 的索引列表首位，保留其它索引顺序并合并重复 URL。「发现」会默认打开首个索引。用户仍可切换或删除索引，同一版本的后续启动会尊重这个修改。
+
+把索引留在固定的 KS3 URL。新增插件或更新版本时，先上传带版本号的 `.tgz`，再把新的版本和下载地址写进同一个 `index.json`。打开「发现」并刷新即可重新读取，索引内容更新无需重新打包桌面版。
 
 ## 安装路径
 

@@ -2796,12 +2796,65 @@
         ]
       },
       "sha256": "b4257332cd79421b20f34b3c2909555ccaa6b1422dee87842ef11a3c49656bd9"
+    },
+    {
+      "id": "088",
+      "file": "088-desktop-default-plugin-index.patch",
+      "sequence": 57,
+      "category": "product",
+      "risk": "medium",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "maintainerRole": "Studio desktop and plugin market maintainers",
+      "removeWhen": "The pinned DSH Desktop supports a packaged default index and profile migration.",
+      "contracts": [
+        "macOS and Windows package a configured HTTPS index and ship Discover enabled for new and existing Desktop profiles.",
+        "The Desktop Host puts the product source first and preserves distinct existing sources before sending renderer readiness.",
+        "A profile applies the default once per Desktop version and URL, with retry after a failed settings write."
+      ],
+      "affectedPackages": [
+        "apps/desktop",
+        "apps/desktop-host"
+      ],
+      "affectedFiles": [
+        "apps/desktop-host/src/index.ts",
+        "apps/desktop-host/src/plugin-market-default.ts",
+        "apps/desktop-host/tests/plugin-market-default.spec.ts",
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/tests/core-package-set.spec.ts"
+      ],
+      "dependsOn": [
+        "064",
+        "078",
+        "082",
+        "083"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio Desktop supplies an optional product plugin index from its installer."
+      },
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/plugin-market-default.spec.ts",
+          "apps/desktop/tests/core-package-set.spec.ts",
+          "apps/desktop/tests/project-manager.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "product-profiles"
+        ]
+      },
+      "sha256": "28f591d4d304d940696f55a37b5de8e41cbb191056fdef9bfcbc087f60ded17a"
     }
   ],
-  "patchedTree": "022427d33d9314508c162bed96dd9b9da1b3addb",
-  "patchedSourceSha256": "66c5505145b20e608d1c6629e7e9edf5f69a18489c91b9b7638822121379af1a",
+  "patchedTree": "253c48d8d77a1a674316fd965a8d86fcb19f6c9d",
+  "patchedSourceSha256": "b79c697384ef7ab30dcb7c6d18987b076711321c7696a2d9fe42789237ec3b73",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "d4589baf400535ef9f3d9d646148e845738b2e7ab5a08ddb9a30be4262855afe"
+    "sha256": "b6c5cb986c843a9599dd6203eef4a6a08ce3e56d1572871993700fb6ac07082e"
   }
 }

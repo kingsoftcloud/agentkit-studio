@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "5eaadfb3fb804ab40a5ee9d3b05db7c87bd43886",
+  "headCommit": "b7f4923195f37eb0f7f3edf3f2d550e3b28d393d",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "022427d33d9314508c162bed96dd9b9da1b3addb",
-  "sourceSha256": "66c5505145b20e608d1c6629e7e9edf5f69a18489c91b9b7638822121379af1a",
+  "tree": "253c48d8d77a1a674316fd965a8d86fcb19f6c9d",
+  "sourceSha256": "b79c697384ef7ab30dcb7c6d18987b076711321c7696a2d9fe42789237ec3b73",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "e115776529837cf6e7cea21e64afd9c253cb34c5e19615089130bc50154dd9dd"
+    "sha256": "e4a1fc4f85fc831bec7cd7282294aefc9596d730106349c0bd6d6771d5c0cf86"
   },
   "commits": [
     {
@@ -346,6 +346,12 @@
       "file": "087-plugin-market-tarball-sources.patch",
       "commit": "5eaadfb3fb804ab40a5ee9d3b05db7c87bd43886",
       "sha256": "b4257332cd79421b20f34b3c2909555ccaa6b1422dee87842ef11a3c49656bd9"
+    },
+    {
+      "id": "088",
+      "file": "088-desktop-default-plugin-index.patch",
+      "commit": "b7f4923195f37eb0f7f3edf3f2d550e3b28d393d",
+      "sha256": "28f591d4d304d940696f55a37b5de8e41cbb191056fdef9bfcbc087f60ded17a"
     }
   ]
 }

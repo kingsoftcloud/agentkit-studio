@@ -26,6 +26,7 @@
     "appId": "com.kingsoftcloud.agentkit-studio",
     "pluginRoots": ["@kingsoftcloud/agentkit-studio"],
     "defaultBundles": ["@kingsoftcloud/agentkit-studio"],
+    "defaultPluginIndexUrl": null,
     "updates": {
       "environment": "production",
       "origin": "https://agentkit.ks3-cn-beijing.ksyuncs.com",
