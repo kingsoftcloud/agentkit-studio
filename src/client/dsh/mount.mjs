@@ -17,7 +17,7 @@ export function mountStudio(ctx, app) {
   const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, NativeApprovalPanel, CodexPluginMarketItem, StarHarnessItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
-  installTaskTimeline(ctx, { ui, hostRemote });
+  installTaskTimeline(ctx, { ui, hostRemote }, ui.installHarnessTimeline);
   installPromptPrediction(ctx, { React, h, window });
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion } = documentEffects;
   const { openAgentAuthoring } = authoring;

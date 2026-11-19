@@ -1,3 +1,5 @@
+import { refreshStarHarnessUI } from '../dsh/star-harness-ui.mjs';
+
 export const STAR_HARNESS_CHANGED = 'agentkit-studio:star-harness-changed';
 
 export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
@@ -17,7 +19,7 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
 
     useEffect(() => {
       const lifetime = new AbortController();
-      const refresh = () => hostRemote.starHarnessStatus({}, lifetime.signal).then(value => {
+      const refresh = () => hostRemote.starHarnessStatus(view === 'page' ? { checkUpdates: true } : {}, lifetime.signal).then(value => {
         if (!lifetime.signal.aborted && !pending.current) setStatus(value);
       }, reason => {
         if (!lifetime.signal.aborted) setError(reason.message || '读取 Star Harness 状态失败。');
@@ -28,16 +30,20 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
         lifetime.abort();
         window.removeEventListener(STAR_HARNESS_CHANGED, refresh);
       };
-    }, []);
+    }, [view]);
 
     async function perform(label, operation, success, changed = true) {
       if (pending.current) return;
       pending.current = true;
       setBusy(label); setError(''); setMessage('');
       try {
-        setStatus(await operation());
+        const next = await operation();
+        setStatus(next);
         setMessage(success);
-        if (changed) window.dispatchEvent(new window.Event(STAR_HARNESS_CHANGED));
+        if (changed) {
+          window.dispatchEvent(new window.Event(STAR_HARNESS_CHANGED));
+          refreshStarHarnessUI(window, next.clientUI, ui.harnessUIError);
+        }
       } catch (reason) {
         setError(reason?.message || 'Star Harness 操作失败。');
         try { setStatus(await hostRemote.starHarnessStatus()); } catch { /* keep the last known state */ }
@@ -58,7 +64,7 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
     }
 
     const requested = version.trim() || status?.availableUpgrade || status?.version || status?.recommendedVersion || '';
-    const reinstall = Boolean(status?.version && status.version === requested && version.trim());
+    const reinstall = Boolean(status?.version && status.version === requested && (version.trim() || status.repairNeeded || ui.harnessUIError));
     const install = () => perform(status.version ? '正在升级 Star Harness…' : '正在安装 Star Harness…',
       async () => {
         const value = await hostRemote.installStarHarness(requested);
@@ -72,6 +78,8 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
       busy || message ? h('p', { role: 'status', style: muted }, busy || message) : null,
       !busy && status?.busy ? h('p', { role: 'status', style: muted }, '任务运行中，结束后可以更改版本。') : null,
       error ? h('p', { role: 'alert', style: muted }, error) : null,
+      status?.repairNeeded ? h('p', { role: 'alert', style: muted }, 'Star Harness 前端校验失败，请重新安装。') : null,
+      ui.harnessUIError ? h('p', { role: 'alert', style: muted }, 'Star Harness 前端加载失败，请重新安装或回退。') : null,
       status?.registryUnavailable ? h('p', { role: 'status', style: muted }, '暂时无法读取 npm 的最新版本。') : null,
       status?.supported === false ? h('p', { style: muted }, '此 Studio 部署由管理员管理。') : null,
       status && status.supported !== false ? h('div', { style: stack },

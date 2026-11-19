@@ -34,9 +34,9 @@ async function resolveWebDelivery(ctx, sessionId, delivery, signal) {
 }
 
 /** Native owns task interaction; Studio supplies its product preset identity. */
-export function installTaskTimeline(ctx, options) {
+export function installTaskTimeline(ctx, options, installRenderer = install) {
   requireNativeConversationPresentation(ctx.slots);
-  return install(ctx, { ...options, loadDeliveryEvidence, resolveWebDelivery: (...args) => resolveWebDelivery(ctx, ...args),
+  return installRenderer(ctx, { ...options, loadDeliveryEvidence, resolveWebDelivery: (...args) => resolveWebDelivery(ctx, ...args),
     isIndependentPreset: presetId => typeof presetId === 'string' && presetId.endsWith(HARNESS_SERVICE_PRESET_SUFFIX),
     resolveAgentFromPreset: (presetId, agents) => {
       const id = agentFromSessionPreset(presetId, agents);
