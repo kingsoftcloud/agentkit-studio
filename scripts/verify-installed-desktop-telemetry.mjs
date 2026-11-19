@@ -1,7 +1,7 @@
 /** Run an installed Studio package against a loopback HTTPS collector with synthetic data. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -172,11 +172,11 @@ async function main() {
     baseline: { type: 'string' }, 'baseline-version': { type: 'string' }, installer: { type: 'string' },
   } });
   assert.ok(values.app && values.version && values.output, '--app, --version and --output are required');
-  const root = await mkdtemp(join(tmpdir(), 'studio-installed-telemetry-'));
   const appPath = resolve(values.app);
   const { executable, resources } = packagePaths(appPath);
   const release = JSON.parse(await readFile(join(resources, 'studio-telemetry', 'policy.json'), 'utf8'));
   assert.deepEqual(release, { endpoint, defaultBasic: true, policyRevision: 'qualification-v1' });
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-installed-telemetry-')));
   const profile = join(root, 'primary');
   const outbox = join(profile, 'electron', 'studio-telemetry', 'outbox.jsonl');
   const receiver = await listen(root);
