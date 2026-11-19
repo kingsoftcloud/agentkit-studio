@@ -129,3 +129,16 @@ test('public network constants do not conceal private URLs or unknown hosts', ()
   assert.ok(auditText('tests/policy.test.mjs', buffer(constants + '\n' + host))
     .some(hit => hit.kind === 'internal-service-host'));
 });
+
+test('only the unchanged upstream URL credential fixture is allowed in the tarball market patch', () => {
+  const file = 'patches/dsh-v0.2.2-rc.1/087-plugin-market-tarball-sources.patch';
+  const url = new URL('https://registry.example/');
+  url.username = 'user';
+  url.password = 'pw';
+  const context = "     expect(npm({ registry: '" + url.href + "' })).toBe(`${at}.registry must not contain credentials`)";
+  assert.deepEqual(auditText(file, buffer(context)), []);
+  for (const changed of ['+' + context.slice(1), context.replace('pw@', 'different@')]) {
+    assert.ok(auditText(file, buffer(context + '\n' + changed)).some(hit => hit.kind === 'embedded-url-credential'));
+  }
+  assert.ok(auditText('patches/other.patch', buffer(context)).some(hit => hit.kind === 'embedded-url-credential'));
+});
