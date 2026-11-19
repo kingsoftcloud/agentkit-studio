@@ -123,8 +123,9 @@ export function createCodexToolRecorder(session, { label = 'Codex', code = 'CODE
 }
 
 /** Project remotely executed Responses calls into the same persisted tool cards. */
-export function createResponsesToolRecorder(session, traceTool) {
-  const recorder = createCodexToolRecorder(session, { label: '云端', code: 'CLOUD' });
+export function createResponsesToolRecorder(session, traceTool, { render = true } = {}) {
+  const recorder = render ? createCodexToolRecorder(session, { label: '云端', code: 'CLOUD' }) : null;
+  const consume = !render || Boolean(recorder);
   const calls = new Map();
   const items = new Map();
   return {
@@ -139,25 +140,25 @@ export function createResponsesToolRecorder(session, traceTool) {
           traceTool?.('tool.started', { callId: call.id, name: call.name });
           recorder?.record({ type: 'tool', ...call, phase: 'started' });
         }
-        return Boolean(recorder);
+        return consume;
       }
       if (type === 'response.function_call_arguments.done') {
         const call = items.get(event.item_id);
         if (call && typeof event.arguments === 'string') call.arguments = event.arguments;
-        return Boolean(recorder);
+        return consume;
       }
       if (type === 'response.output_item.done' && item?.type === 'function_call') {
         // This closes the call item. The separate result carries the execution outcome.
         const call = calls.get(item.call_id);
         if (call && typeof item.arguments === 'string') call.arguments = item.arguments;
-        return Boolean(recorder);
+        return consume;
       }
       if (type === 'response.tool_result') {
         const call = calls.get(event.call_id);
         const phase = event.is_error === true ? 'failed' : 'completed';
         traceTool?.(`tool.${phase}`, { callId: event.call_id, name: call?.name });
         if (call) recorder?.record({ type: 'tool', ...call, phase, result: { content: event.output } });
-        return Boolean(recorder);
+        return consume;
       }
       return false;
     },

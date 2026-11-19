@@ -184,6 +184,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const policy = useService ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !useService ? undefined : async request => {
+        // Both cloud companions share a container with their Host and use
+        // a workspace that the 0.0.25 command sandbox cannot admit.
+        const cloudCompanion = env.AGENTKIT_MANAGED_STAR_HARNESS === '1' || env.AGENTKIT_BUNDLE_STAR_HARNESS === '1';
+        if (useService && cloudCompanion && request.tool === 'run_command') return 'deny';
         if (useService && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
           && !request.requiresUserApproval && !request.childRunId) return 'allow';
         const requiresApproval = request.requiresUserApproval === true || useService && sandbox === 'workspace-write'
@@ -336,9 +340,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             rest = await engine.status(runId);
             if (rest.running) continue;
             const approval = rest.pendingApproval;
-            if (!approval || !engine.approve || !onApproveTool) break;
+            if (!approval || !engine.approve) break;
             signal?.throwIfAborted();
-            const decision = await onApproveTool(approval);
+            const decision = onApproveTool ? await onApproveTool(approval) : 'deny';
             signal?.throwIfAborted();
             const receipt = await engine.approve(runId, approval.interactionId, decision);
             if (!['accepted', 'duplicate'].includes(receipt?.status))
@@ -346,7 +350,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           }
         }
         // The final answer is the Run's delivered text; commentary during the task was shown as progress.
-        if (text(rest.finalText ?? finalText)) yield { type: 'text', text: rest.finalText ?? finalText };
+        const answer = rest.finalText ?? finalText;
+        if (text(answer)) yield { type: 'text', text: answer };
+        else if (rest.terminal && rest.reason === 'effect_outcome_unknown')
+          yield { type: 'text', text: runFailureMessage(rest) };
         if (!rest.terminal || rest.outcome === 'failed' || rest.phase === 'failed')
           throw failure('NATIVE_ENGINE_RUN_INCOMPLETE', runFailureMessage(rest));
       } finally {
@@ -442,6 +449,7 @@ function approvalReason(request) {
 function runFailureMessage(rest) {
   if (text(rest.modelError)) return rest.modelError;
   const reason = rest.reason ?? rest.phase ?? 'unknown';
+  if (reason === 'effect_outcome_unknown') return '工具执行结果未确认。请先核对实际结果，再发消息继续。';
   if (rest.phase === 'paused') return `任务已暂停（${reason}），可稍后继续。`;
   return `任务未完成（${reason}）。`;
 }

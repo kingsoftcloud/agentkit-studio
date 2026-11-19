@@ -12,7 +12,7 @@ const codes = {
   closed: () => starHarnessError('STAR_HARNESS_CLOSED', 'Star Harness 管理服务已关闭。'),
   invalid: () => starHarnessError('STAR_HARNESS_INVALID_REQUEST', 'Star Harness 操作参数无效。'),
   notInstalled: () => starHarnessError('STAR_HARNESS_NOT_INSTALLED', '请先安装 Star Harness。'),
-  unbound: () => starHarnessError('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '请先为该工作区绑定并启用 Star Harness。'),
+  unbound: () => starHarnessError('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '请启用 Star Harness 并在 Studio 中选择该工作区。'),
 };
 const contains = (parent, child) => {
   const offset = relative(parent, child);
@@ -25,7 +25,7 @@ const newer = (a, b) => {
 };
 const modelSelection = model => ({ provider: HARNESS_SERVICE_MODEL_PROVIDER, model });
 
-export function createStarHarnessManager({ root, env, externalRoutes, profile, settings, bundledVersion, packageManager, workspaceRegistry,
+export function createStarHarnessManager({ root, env, externalRoutes, profile, settings, bundledVersion, packageManager, workspaceRegistry, modelProfiles = [],
   releases = createStarHarnessReleases({ directory: join(root, 'releases'), env, packageManager }),
   start = startStarHarness, probe = probeStarHarness, inspect = inspectStarHarness } = {}) {
   const configPath = join(root, 'settings.json');
@@ -54,13 +54,22 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
     } finally { await rm(temp, { force: true }); }
   }
   const managedBinding = workspace => configuration.bindings.find(item => item.workspace === workspace);
-  const workspaceExists = workspace => canonicalEngineWorkspace(workspace) === workspace;
+  const registeredWorkspaces = () => workspaceRegistry?.()?.list?.() ?? [];
+  const automaticBinding = workspace => {
+    if (!registeredWorkspaces().some(row => row.path === workspace)) return;
+    const selected = modelProfiles.find(row => row.enabled !== false && row.default)
+      ?? modelProfiles.find(row => row.enabled !== false);
+    return { workspace, automatic: true, model: selected?.modelName || 'Star Harness', images: modelInput(selected).includes('image') };
+  };
+  const bindingFor = workspace => managedBinding(workspace) ?? automaticBinding(workspace);
+  const workspaceExists = workspace => typeof workspace === 'string' && canonicalEngineWorkspace(workspace) === workspace;
   const hasConflict = workspace => [...externalRoutes.keys()].some(bound => overlaps(bound, workspace));
   const presentBinding = binding => ({
     workspaceRoot: binding.workspace, modelSelection: modelSelection(binding.model), managed: true,
   });
   async function savedProfile(binding, signal) {
     const selected = await profile(binding.profileId, signal);
+    if (binding.automatic) return { ...selected, images: modelInput(selected).includes('image') };
     if (selected.modelName !== binding.model)
       throw starHarnessError('STAR_HARNESS_MODEL_CHANGED', '工作区绑定的模型已变化，请重新绑定后启动。');
     return { ...selected, images: binding.images };
@@ -110,7 +119,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       await save(next);
     } catch (error) {
       await Promise.allSettled(started.map(binding => stop(binding.workspace)));
-      if (!lifetime.signal.aborted) await Promise.allSettled(stopped.map(async binding => {
+      if (!lifetime.signal.aborted) await Promise.allSettled(stopped.filter(binding => available(binding.workspace) && bindingFor(binding.workspace)).map(async binding => {
         workers.set(binding.workspace, await boot(binding, configuration.version, lifetime.signal));
       }));
       throw error;
@@ -125,11 +134,15 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
     mutation = pending;
     return pending.finally(() => { if (mutation === pending) mutation = null; });
   };
+  const available = workspace => workspaceExists(workspace) && !overlaps(root, workspace) && !hasConflict(workspace);
   const route = workspace => {
-    const binding = managedBinding(workspace);
-    return configuration.enabled && binding && workspaceExists(workspace) && !hasConflict(workspace) ? presentBinding(binding) : undefined;
+    if (!configuration.enabled || !available(workspace)) return;
+    const binding = bindingFor(workspace);
+    return binding && presentBinding(binding);
   };
-  const availableBindings = () => configuration.bindings.filter(row => workspaceExists(row.workspace) && !hasConflict(row.workspace));
+  const availableBindings = () => [...new Set([
+    ...configuration.bindings.map(row => row.workspace), ...registeredWorkspaces().map(row => row.path),
+  ])].filter(available).map(bindingFor);
   const activeBindings = () => configuration.enabled ? availableBindings() : [];
 
   return {
@@ -140,7 +153,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
     async acquire(workspace) {
       if (mutation) throw codes.busy();
       if (lifetime.signal.aborted) throw codes.closed();
-      const binding = managedBinding(workspace);
+      const binding = bindingFor(workspace);
       if (!route(workspace)) throw codes.unbound();
       running++;
       let released = false;
@@ -158,8 +171,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       const { version, enabled, previousVersion } = configuration;
       const recommendedVersion = starHarnessVersion(bundledVersion) && (!latestVersion || newer(bundledVersion, latestVersion))
         ? bundledVersion : latestVersion;
-      const hasWorkspace = activeBindings().length > 0 || externalRoutes.size > 0;
-      if (!includeWorkspaces) return { canCreate: Boolean(version && enabled && hasWorkspace) };
+      if (!includeWorkspaces) return { canCreate: Boolean(version && enabled) };
       const configuredModels = await settings();
       const external = await Promise.all([...externalRoutes.values()].map(async route => {
         let current;
@@ -171,12 +183,14 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         version, enabled, previousVersion, registryUnavailable, busy: Boolean(mutation || running),
         recommendedVersion,
         availableUpgrade: recommendedVersion && version && newer(recommendedVersion, version) ? recommendedVersion : null,
-        canCreate: Boolean(version && enabled && hasWorkspace),
+        canCreate: Boolean(version && enabled),
         workspaceChoices: (workspaceRegistry?.()?.list?.() ?? []).map(({ path, title }) => ({ path, title })),
         models: (configuredModels.modelProfiles ?? []).filter(item => item.enabled !== false).map(item => ({
           id: item.id, label: item.displayName || item.modelName || item.id,
         })),
-        workspaces: [...external, ...configuration.bindings.map(binding => ({
+        workspaces: [...external, ...[
+          ...availableBindings(), ...configuration.bindings.filter(binding => !available(binding.workspace)),
+        ].map(binding => ({
           workspace: binding.workspace, model: binding.model, profileId: binding.profileId, external: false,
           missing: !workspaceExists(binding.workspace), running: workers.get(binding.workspace)?.alive === true,
           version: enabled ? version : null,
@@ -194,8 +208,8 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         await probe({ root, packageDirectory, version, env, signal: guard });
         if (current === version) return;
         const next = { ...configuration, version, previousVersion: current };
-        const live = activeBindings().filter(binding => workers.get(binding.workspace)?.alive);
-        await replaceWorkers(live, live, next, guard);
+        const live = [...workers.keys()].map(workspace => bindingFor(workspace) ?? { workspace });
+        await replaceWorkers(live, live.filter(binding => available(binding.workspace) && bindingFor(binding.workspace)), next, guard);
       }, signal);
     },
     setEnabled(enabled, signal) {

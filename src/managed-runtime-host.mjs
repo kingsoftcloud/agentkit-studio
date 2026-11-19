@@ -269,12 +269,16 @@ async function adoptDshHome({ root, versions }) {
   } finally { await rm(staging, { recursive: true, force: true }); }
 }
 
-export async function prepareManagedRuntimeHost({ manifest, state, installation, env = process.env }) {
+export async function prepareManagedRuntimeHost({ manifest, state, installation, env = process.env, startHarness }) {
   if (typeof env.AGENTKIT_RUNTIME_TOKEN !== 'string' || env.AGENTKIT_RUNTIME_TOKEN.length < 24) fail('TOKEN_REQUIRED', '运行入口需要独立访问令牌');
   const runtime = await loadManagedRuntimeDefinition({ manifest: resolve(manifest), env });
   const homePath = resolve(env.AGENTKIT_USER_HOME || '/home/node');
   const workspacePath = resolve(env.AGENTKIT_WORKSPACE_ROOT || join(homePath, 'workspace'));
   const remoteHarness = Boolean(runtime.harnessModelSelection);
+  const bundledHarness = !remoteHarness && runtime.declaration.framework === 'harness'
+    && env.AGENTKIT_MANAGED_STAR_HARNESS === '1';
+  const serviceBacked = remoteHarness || bundledHarness;
+  if (bundledHarness && typeof startHarness !== 'function') fail('HARNESS_LAUNCHER_REQUIRED', '托管 Star Harness 缺少服务启动器');
   if (remoteHarness
     && workspacePath !== resolve(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE)) {
     fail('HARNESS_SERVICE_WORKSPACE_MISMATCH', '托管 Harness 服务绑定的工作区与宿主工作区不一致');
@@ -312,7 +316,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   const managedSessions = await adoptManagedSessions({ root, versions });
   const codexHome = await directory(join(userHome, '.codex'));
   const cwd = await directory(workspacePath);
-  if (!remoteHarness) {
+  if (!serviceBacked) {
     await immutableJson(join(home, 'config.yaml'), { settings: { modelProfiles: runtime.modelProfiles,
       modelName: runtime.declaration.model, modelProvider: 'openai-compatible', modelBaseUrl: runtime.modelProfiles[0].baseUrl } });
   }
@@ -321,7 +325,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
     patchContent: dshSettings ?? undefined });
   const names = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
     'KSADK_SANDBOX_BACKEND',
-    ...(remoteHarness
+    ...(serviceBacked
       ? ['AGENTKIT_ENGINE_SERVICE_URL', 'AGENTKIT_ENGINE_SERVICE_TOKEN', 'AGENTKIT_ENGINE_SERVICE_WORKSPACE', 'AGENTKIT_ENGINE_SERVICE_CA_FILE']
       // A managed Host that spawns the bundled engine itself must forward the
       // launch contract. The image ships the engine but sets no
@@ -338,7 +342,17 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: codexHome,
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
     AGENTKIT_HOME: home, AGENTKIT_MANAGED_SESSIONS: managedSessions,
-    ...(!remoteHarness ? { OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible' } : {}),
+    ...(!serviceBacked ? { OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible' } : {}),
     AGENTENGINE_MANIFEST_PATH: resolve(manifest) });
-  return { entry, args: runtimeProfileArgs(), cwd, env: childEnv, identity: { ...runtime.identity, dshVersion } };
+  let companion;
+  if (bundledHarness) {
+    const profile = runtime.modelProfiles[0];
+    companion = await startHarness({ workspaceRoot: cwd, stateDir: join(root, 'star-harness-state'),
+      agentId: runtime.identity.agentId, env,
+      profile: { ...profile, apiKey: env[profile.credentialName] } });
+    Object.assign(childEnv, { AGENTKIT_ENGINE_SERVICE_URL: companion.endpoint,
+      AGENTKIT_ENGINE_SERVICE_TOKEN: companion.token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: cwd,
+      AGENTKIT_ENGINE_SERVICE_MODEL: profile.modelName, AGENTKIT_MANAGED_STAR_HARNESS: '1' });
+  }
+  return { entry, args: runtimeProfileArgs(), cwd, env: childEnv, identity: { ...runtime.identity, dshVersion }, companion };
 }

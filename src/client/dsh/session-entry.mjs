@@ -56,19 +56,19 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
           const status = await hostRemote.starHarnessStatus();
           if (!active()) return;
           const titles = new Map((status.workspaceChoices ?? []).map(({ path, title }) => [path, title]));
-          const choices = (status.workspaces ?? []).filter(item => item.external ? item.running : status.enabled).map(item => {
+          const choices = (status.workspaces ?? []).filter(item => item.external ? item.running : status.enabled && !item.missing).map(item => {
             const title = titles.get(item.workspace);
             return { value: item.workspace, label: title ? title + ' · ' + item.workspace : item.workspace };
           });
           if (!choices.length) {
             const configure = await actions.confirm({ title: '选择 Star Harness 工作区',
-              detail: '请在插件页绑定并启用工作区，或启动已绑定的外部 Harness。', confirmLabel: '打开插件页' });
+              detail: '请在 Studio 中添加或选择工作区，并在插件页启用 Star Harness。', confirmLabel: '打开插件页' });
             if (configure && active()) layout.selectPanel('plugins');
             return;
           }
           const selected = await actions.confirm({ title: '选择 Star Harness 工作区',
             detail: '新会话将在所选工作区运行。', choiceLabel: 'Star Harness 工作区',
-            choicePlaceholder: '选择已绑定的工作区', choices, confirmLabel: '开始对话' });
+            choicePlaceholder: '选择工作区', choices, confirmLabel: '开始对话' });
           if (!active() || !choices.some(choice => choice.value === selected)) return;
           cwd = selected;
           workspaceId = navCtx.workspaces?.list.getSnapshot().items.find(workspace => workspace.path === cwd)?.workspaceId;

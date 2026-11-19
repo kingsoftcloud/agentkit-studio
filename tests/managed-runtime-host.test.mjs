@@ -102,6 +102,35 @@ test('managed launch forwards the bundled Harness engine launch contract to the 
   assert.equal(service.env.AGENTKIT_ENGINE_ARGS, undefined);
 });
 
+test('bundled managed Harness starts for the declared Agent and keeps its model credential out of the Host', async t => {
+  const f = await fixture(t);
+  const raw = stringify({ ...parse(f.raw), framework: 'harness', runtime: { name: 'harness', version: 'studio-test.1' } });
+  await writeFile(f.manifest, raw);
+  const env = { ...f.env, AGENTENGINE_MANAGED_RUNTIME_NAME: 'harness', AGENTENGINE_MANIFEST_SHA256: hash(raw),
+    AGENTKIT_MANAGED_STAR_HARNESS: '1' };
+  const companion = { endpoint: 'http://127.0.0.1:8787', token: 'fixture-harness-service-token', version: '0.0.25' };
+  const plan = await prepareManagedRuntimeHost({ ...f, env, async startHarness(options) {
+    assert.equal(options.workspaceRoot, join(env.AGENTKIT_USER_HOME, 'workspace'));
+    assert.equal(options.stateDir, join(f.state, 'star-harness-state'));
+    assert.equal(options.agentId, env.AGENTENGINE_AGENT_ID);
+    assert.equal(options.profile.modelName, 'fixture-model');
+    assert.equal(options.profile.baseUrl, env.OPENAI_BASE_URL);
+    assert.equal(options.profile.apiKey, env.AGENTKIT_MODEL_API_KEY);
+    return companion;
+  } });
+  assert.equal(plan.companion, companion);
+  assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_WORKSPACE, plan.cwd);
+  assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_MODEL, 'fixture-model');
+  assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_TOKEN, companion.token);
+  assert.equal(plan.env.AGENTKIT_MANAGED_STAR_HARNESS, '1');
+  assert.equal(plan.env.OPENAI_BASE_URL, undefined);
+  assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, undefined);
+  await assert.rejects(readFile(join(plan.env.AGENTKIT_HOME, 'config.yaml')), { code: 'ENOENT' });
+  const runtime = await loadManagedRuntimeDefinition({ manifest: f.manifest, env: plan.env });
+  assert.equal(runtime.agent.spec.runtime.type, 'native-engine');
+  assert.equal(runtime.harnessModelSelection.model, 'fixture-model');
+});
+
 test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or persisted model secrets', async t => {
   const f = await fixture(t), plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTKIT_RUNTIME_TIMEOUT_MS: '1200000' } });
   assert.match(plan.entry, /@deepseek-ai\/dsh\/lib\/bin.js$/);

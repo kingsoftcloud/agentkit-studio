@@ -187,4 +187,17 @@ export default String.raw`
   .studio-srow-label { flex-basis: 100%; }
   .studio-srow-control { max-width: 100%; flex-wrap: wrap; }
 }
+
+/* The built-in plugin slot supplies a summary. Place its toggle in the
+   card action position used by the installed and experimental plugins. */
+[data-plugin-item="agentkit-star-harness"] .studio-star-harness-summary:has(.studio-star-harness-toggle) {
+  padding-inline-end: 44px;
+}
+[data-plugin-item="agentkit-star-harness"] .studio-star-harness-toggle {
+  position: absolute;
+  inset-inline-end: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+}
 `;
