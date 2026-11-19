@@ -9,7 +9,8 @@ import { createStudioBuild } from '../src/studio-build.mjs';
 import { createPortableBundles } from '../src/portable-bundle.mjs';
 import { parse as parseYaml } from 'yaml';
 import { FROZEN_RUNTIME_READY } from '../src/host/frozen-runtime-lifecycle.mjs';
-import { prepareBundleHost, acquireBundleProfileLock } from '../src/bundle-host.mjs';
+import { prepareBundleHost, startBundleHarness, acquireBundleProfileLock } from '../src/bundle-host.mjs';
+import { connectEngineService, fetchEngineServiceView } from '../src/providers/engine-service-client.mjs';
 import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
 async function fixture(t, credentialName = 'MODEL_KEY') {
@@ -75,6 +76,31 @@ test('offline boot wires the public DSH CLI/profile and forwards only target res
   assert.equal(await readFile(join(localStudio, 'studio.plugin.json'), 'utf8'), await readFile(join(f.installation, 'node_modules/@kingsoftcloud/agentkit-studio/studio.plugin.json'), 'utf8'));
   assert.equal((await readFile(join(plan.env.AGENTKIT_HOME, 'portable-bundle.zip'))).equals(await readFile(f.archive)), true);
   assert.equal(JSON.stringify(plan.identity).includes('secret'), false);
+});
+
+test('a Container bundle starts the reviewed Harness on its own loopback port and retains its task view after restart', async t => {
+  const f = await fixture(t);
+  const plan = await prepareBundleHost(f);
+  assert.equal(await startBundleHarness(plan, { env: {} }), null);
+  const env = { AGENTKIT_BUNDLE_STAR_HARNESS: '1' };
+  const first = await startBundleHarness(plan, { env });
+  t.after(() => first.stop());
+  assert.equal(first.version, '0.0.25');
+  assert.match(first.endpoint, /^http:\/\/127\.0\.0\.1:\d+$/u);
+  assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_WORKSPACE, plan.cwd);
+  assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_MODEL, 'model');
+  assert.notEqual(first.token, plan.env.AGENTKIT_RUNTIME_TOKEN);
+  const client = connectEngineService({ ...first, sessionId: 'cloud-bundle-proof', observeOnly: true });
+  const hello = await client.initialize();
+  assert.equal(hello.engine.model.name, 'model');
+  const view = hello.capabilities.ui.sha256;
+  assert.ok(await fetchEngineServiceView(first.endpoint, first.token, view));
+  await client.close();
+  await first.stop();
+  const second = await startBundleHarness(await prepareBundleHost(f), { env });
+  t.after(() => second.stop());
+  assert.notEqual(second.token, first.token);
+  assert.ok(await fetchEngineServiceView(second.endpoint, second.token, view));
 });
 
 test('restart preserves DSH session state, while changed archives cannot take over a deployment', async t => {

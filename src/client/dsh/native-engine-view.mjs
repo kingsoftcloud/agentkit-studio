@@ -13,7 +13,8 @@ function parse(event) {
   if (!event || event.type !== NATIVE_ENGINE_EVENT || event.ignorable !== true || !Number.isSafeInteger(event.seq)) return null;
   const data = event.data;
   if (!data || typeof data.runId !== 'string' || !data.runId || !data.event || !Number.isSafeInteger(data.event.seq)) return null;
-  return { runId: data.runId, view: SHA256.test(String(data.view)) ? data.view : null, event: data.event };
+  return { runId: data.runId, view: SHA256.test(String(data.view)) ? data.view : null, event: data.event,
+    deploymentAgentId: data.deploymentAgentId };
 }
 
 export const nativeEngineViewDefinition = {
@@ -24,7 +25,8 @@ export const nativeEngineViewDefinition = {
   },
   start(_context, match) {
     const parsed = parse(match.event);
-    return { first: match, latest: match, view: parsed?.view ?? null, events: parsed ? [parsed.event] : [], last: parsed?.event.seq ?? 0 };
+    return { first: match, latest: match, view: parsed?.view ?? null, events: parsed ? [parsed.event] : [], last: parsed?.event.seq ?? 0,
+      deploymentAgentId: parsed?.deploymentAgentId };
   },
   update(context, match) {
     const state = context.state, parsed = parse(match.event);
@@ -33,12 +35,12 @@ export const nativeEngineViewDefinition = {
   },
   buildViewNode(context) {
     if (!context.state) return null;
-    const { first, view, events, last } = context.state;
+    const { first, view, events, last, deploymentAgentId } = context.state;
     const location = context.start?.location || first.location;
     const current = context.current.get('chat');
     if (current?.data?.last === last && current?.data?.view === view && current?.location === location) return current;
     return { key: context.key, id: context.id, kind: NATIVE_ENGINE_VIEW_KIND, target: 'chat', anchorSeq: first.event.seq, location,
-      visibility: 'visible', data: { runId: context.id, view, events, last } };
+      visibility: 'visible', data: { runId: context.id, view, events, last, ...(deploymentAgentId ? { deploymentAgentId } : {}) } };
   },
 };
 
@@ -57,9 +59,9 @@ export function createNativeEngineView({ React, fetchView = defaultFetchView }) 
       let live = true;
       setHtml(null); setReady(false); setFailed(false); sent.current = 0;
       if (!data.view) return () => { live = false; };
-      fetchView(data.view).then(text => { if (live) setHtml(text); }, () => { if (live) setFailed(true); });
+      fetchView(data.view, data.deploymentAgentId).then(text => { if (live) setHtml(text); }, () => { if (live) setFailed(true); });
       return () => { live = false; };
-    }, [data.view]);
+    }, [data.view, data.deploymentAgentId]);
     useEffect(() => {
       const onMessage = message => {
         if (!frame.current || message.source !== frame.current.contentWindow) return;
@@ -100,11 +102,12 @@ function hostTheme() {
 }
 
 const viewCache = new Map();
-function defaultFetchView(sha256) {
-  if (!viewCache.has(sha256)) viewCache.set(sha256, fetch(`api/agentkit.native-engine.view?${new URLSearchParams({ sha256 })}`, { credentials: 'same-origin' })
+function defaultFetchView(sha256, deploymentAgentId) {
+  const query = new URLSearchParams({ sha256, ...(deploymentAgentId ? { deploymentAgentId } : {}) }).toString();
+  if (!viewCache.has(query)) viewCache.set(query, fetch(`api/agentkit.native-engine.view?${query}`, { credentials: 'same-origin' })
     .then(response => { if (!response.ok) throw new Error(`view ${response.status}`); return response.text(); })
-    .catch(error => { viewCache.delete(sha256); throw error; }));
-  return viewCache.get(sha256);
+    .catch(error => { viewCache.delete(query); throw error; }));
+  return viewCache.get(query);
 }
 
 export function mountNativeEngineView(ctx, { React, fetchView } = {}) {

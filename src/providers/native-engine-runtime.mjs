@@ -184,7 +184,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const policy = useService ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !useService ? undefined : async request => {
-        if (useService && request.tool === 'run_command' && env.AGENTKIT_MANAGED_STAR_HARNESS === '1') return 'deny';
+        // Both cloud companions share a container with their Host and use
+        // a workspace that the 0.0.25 command sandbox cannot admit.
+        const cloudCompanion = env.AGENTKIT_MANAGED_STAR_HARNESS === '1' || env.AGENTKIT_BUNDLE_STAR_HARNESS === '1';
+        if (useService && cloudCompanion && request.tool === 'run_command') return 'deny';
         if (useService && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
           && !request.requiresUserApproval && !request.childRunId) return 'allow';
         const requiresApproval = request.requiresUserApproval === true || useService && sandbox === 'workspace-write'

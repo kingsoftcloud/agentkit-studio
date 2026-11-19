@@ -1,23 +1,21 @@
-/** Preprod runtime TLS exception; never changes the process-wide trust policy. */
+/** Preprod transport uses the Node trust store, including any CA supplied to the Host at startup. */
 import { Agent, fetch as undiciFetch } from 'undici';
 
-export function createCloudRuntimeFetch({ configuration, fetchImpl = fetch, runtimeFetchImpl = undiciFetch, createDispatcher = () => new Agent({ connect: { rejectUnauthorized: false } }) }) {
+export function createCloudRuntimeFetch({ configuration, fetchImpl = fetch, runtimeFetchImpl = undiciFetch, createDispatcher = () => new Agent({ connect: { rejectUnauthorized: true } }) }) {
   let dispatcher, closed = false;
   const assertOpen = () => { if (closed) throw Object.assign(new Error('Runtime transport is closed'), { code: 'RUNTIME_TRANSPORT_CLOSED' }); };
   const request = async (input, init = {}) => {
     assertOpen();
     const url = new URL(input instanceof Request ? input.url : input);
     const preprodRuntime = url.protocol === 'https:' && !url.port && !url.username && !url.password
-      // Keep the exception on the exact preprod runtime origin shape only;
-      // public production origins keep the process TLS policy.
+      // Match only the expected preprod runtime origins.
       && /^ar-[A-Za-z0-9-]+\.agent-pre\.kspmas\.ksyun\.com$/.test(url.hostname);
     if (preprodRuntime) {
       const { values } = await (await configuration).resolve();
       assertOpen();
       if (values.cloudRegion?.toLowerCase() === 'pre-online') {
         dispatcher ||= createDispatcher();
-        // Never follow a redirect with this dispatcher: the exception belongs
-        // only to the exact preprod runtime origin checked above.
+        // Keep authenticated requests on the expected runtime origin.
         // Node's bundled fetch may use a different Undici dispatcher protocol.
         // Pair this dispatcher with the fetch exported by the same dependency.
         if (input instanceof Request) {

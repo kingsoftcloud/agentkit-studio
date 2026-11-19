@@ -5,7 +5,7 @@ import { createCloudRuntimeFetch } from '../src/cloud-runtime-fetch.mjs';
 
 const runtime = 'https://ar-20261019105049-0f164abe.agent-pre.kspmas.ksyun.com';
 
-test('preprod runtime exception follows current environment and refuses redirects', async () => {
+test('preprod runtime transport follows the current environment and refuses redirects', async () => {
   let region = 'pre-online', created = 0;
   let destroyed = false;
   const calls = [], dispatcher = { destroy: async () => { destroyed = true; } };

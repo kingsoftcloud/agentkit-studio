@@ -5,6 +5,18 @@ import { sha256, portableError } from './portable-resources.mjs';
 import { cloudFrames } from './providers/dsh-runtime.mjs';
 import { createResponsesToolRecorder } from './providers/codex-tool-events.mjs';
 import { sanitizeResourceCheck } from './resource-checks.mjs';
+import { hostedHarnessView, HOSTED_HARNESS_VIEW_EVENT, HOSTED_HARNESS_VIEW_PATH } from './harness-view-presentation.mjs';
+import { ENGINE_VIEW_CONTRACT, NATIVE_ENGINE_EVENT } from './providers/native-engine-runtime.mjs';
+import { fetchEngineServiceView } from './providers/engine-service-client.mjs';
+
+export function createDeploymentHarnessView({ agents, fetchImpl }) {
+  return async (agentId, sha256) => {
+    if (!/^ar-[A-Za-z0-9-]+$/.test(agentId)) return null;
+    const { endpoint, token, capabilities } = await (await agents()).connect(agentId);
+    if (!capabilities?.includes('harness-task-view')) return null;
+    return fetchEngineServiceView(endpoint, token, sha256, fetchImpl, HOSTED_HARNESS_VIEW_PATH);
+  };
+}
 
 export function createDeploymentConversation({ agents, fetchImpl = fetch, observability, permissionModeFor }) {
   return async function* stream(options) {
@@ -33,6 +45,7 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
     }
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'text/event-stream',
       ...(permissionMode ? { 'x-agentkit-permission-mode': permissionMode } : {}) };
+    const ownView = capabilities?.includes('harness-task-view') === true;
     let responseId, verified = false, response, complete = false;
     const startedAt = new Date().toISOString(), events = [], resourceChecks = [];
     const bindings = agent.spec?.bindings || {}, ids = values => (values || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).filter(Boolean);
@@ -40,7 +53,7 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
       platform: (bindings.plugins || []).map(item => item.config?.binding?.resource).filter(Boolean).map(item => ({ kind: item.kind, id: item.id || item.resourceId })) };
     let status = 'failed';
     const recordEvent = (event_type, payload) => events.push({ event_type, at: new Date().toISOString(), session_id: options.sessionId, run_id: responseId, payload });
-    const toolRecorder = createResponsesToolRecorder(options.session, recordEvent);
+    const toolRecorder = createResponsesToolRecorder(options.session, recordEvent, { render: !ownView });
     const onEvent = event => {
       const type = event.type || event.event;
       if (['response.created', 'response.in_progress', 'response.completed'].includes(type)) {
@@ -66,6 +79,16 @@ export function createDeploymentConversation({ agents, fetchImpl = fetch, observ
         else if (type === 'response.created') recordEvent('run.started', { cloudAgentId: options.agentId, buildId: agent.deployment.buildId, model: request.model, responseId });
       }
       if (!verified) throw portableError('DEPLOYMENT_RESPONSE_UNVERIFIED', '云端流未返回可核验的 Agent 身份');
+      if (type === HOSTED_HARNESS_VIEW_EVENT) {
+        const frame = event.harness_view;
+        if (ownView && frame?.contract === ENGINE_VIEW_CONTRACT) {
+          const view = hostedHarnessView({ type: NATIVE_ENGINE_EVENT, data: { view: frame.sha256, event: frame.event } });
+          if (view) options.session?.append?.(NATIVE_ENGINE_EVENT, {
+            runId: responseId, view: view.sha256, event: view.event, deploymentAgentId: options.agentId,
+          }, { ignorable: true });
+        }
+        return true;
+      }
       if (type === 'response.resource_check') {
         const check = sanitizeResourceCheck(event.check);
         if (check) {

@@ -100,11 +100,11 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       if (req.method === 'GET' && url.pathname === '/v1/agentkit/runtime') {
         const owner = managed ? { format: 'agentengine.managed-runtime/v1', ...managedIdentity }
           : { format: 'agentkit.runtime-identity/v1', agentId, buildId, bundleSha256, deploymentVersion };
-        json(res, 200, { ...owner, status: 'ready', model, models, ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), ...(declaredPolicy && allowedPermissionModes.length ? { allowedPermissionModes } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(declaredPolicy && allowedPermissionModes.length ? [CLOUD_EXECUTION_POLICY_CAPABILITY] : [])] }); return;
+        json(res, 200, { ...owner, status: 'ready', model, models, ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), ...(declaredPolicy && allowedPermissionModes.length ? { allowedPermissionModes } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(harnessView ? ['harness-task-view'] : []), ...(declaredPolicy && allowedPermissionModes.length ? [CLOUD_EXECUTION_POLICY_CAPABILITY] : [])] }); return;
       }
       if (managed && (req.headers['x-agentengine-target-version-id'] !== managedIdentity.versionId
         || req.headers['x-agentengine-manifest-sha256'] !== managedIdentity.manifestSha256)) throw fail('RUNTIME_DEPLOYMENT_CHANGED', 409);
-      if (managed && harnessView && ['GET', 'HEAD'].includes(req.method)
+      if (harnessView && ['GET', 'HEAD'].includes(req.method)
         && url.pathname.startsWith(HOSTED_HARNESS_VIEW_PATH + '/')) {
         const sha256 = url.pathname.slice(HOSTED_HARNESS_VIEW_PATH.length + 1);
         if (!/^[a-f0-9]{64}$/.test(sha256)) throw fail('RUNTIME_HARNESS_VIEW_NOT_FOUND', 404);

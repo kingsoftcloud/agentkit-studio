@@ -215,7 +215,7 @@ export async function startStarHarness({ packageDirectory, version, workspaceRoo
     if (!Number.isInteger(readyOrExit?.port) || readyOrExit.port < 1 || readyOrExit.port > 65535 || !alive) throw Error('engine not listening');
     const connection = { endpoint: 'http://127.0.0.1:' + readyOrExit.port, token };
     const info = await inspectStarHarness(connection, { version, signal: check, required: true });
-    return { ...connection, ...info, get alive() { return alive; }, stop };
+    return { ...connection, ...info, get alive() { return alive; }, closed, stop };
   } catch (error) {
     await stop();
     signal?.throwIfAborted();
