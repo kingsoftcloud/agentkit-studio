@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant, scopeKey } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeE2BSandboxOwner, createDshE2BSandboxOwner } from '@kingsoftcloud/agentkit-harness-node/native/e2b-sandbox-owner';
+import { buildCloudHeaders, resolveTrafficSource } from '../cloud-headers.mjs';
 import { createNativeE2BSdkLifecycle, createNativeE2BSdkTransport, createNativeE2BSdkFileSession, describeNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from './native-e2b-sdk-transport.mjs';
 
 export const STUDIO_NATIVE_E2B_HOST = 'agentkit.studio-native-e2b-host/v1';
@@ -44,14 +45,15 @@ function configuration(env, sandboxEnvironment) {
   invariant(typeof rawType === 'string', 'studio_native_e2b_type_invalid');
   const sandboxType = types.get(rawType.trim().toLowerCase().replace(/[_\- ]/gu, ''));
   invariant(sandboxType, 'studio_native_e2b_type_invalid');
-  const source = env.KSADK_TRAFFIC_SOURCE ?? '';
-  invariant(typeof source === 'string' && !/[^\x20-\x7e]/u.test(source), 'studio_native_e2b_traffic_source_invalid');
+  let source;
+  try { source = resolveTrafficSource(env.KSADK_TRAFFIC_SOURCE); }
+  catch { invariant(false, 'studio_native_e2b_traffic_source_invalid'); }
   invariant(sandboxEnvironment && typeof sandboxEnvironment === 'object' && !Array.isArray(sandboxEnvironment)
     && Object.values(sandboxEnvironment).every(value => typeof value === 'string'), 'studio_native_e2b_environment_invalid');
   // SDK connection validation is shared with the production transport. There
   // is no endpoint probe, ambient SDK default, or managed-cluster URL rewrite.
   return { connection: { apiUrl: env.E2B_API_URL, domain: env.E2B_DOMAIN, apiKey: env.E2B_API_KEY,
-    headers: { 'X-Traffic-Source': source.trim() || 'agentkit' } },
+    headers: buildCloudHeaders(null, source) },
     template: template.trim(), timeoutSeconds, allowInternetAccess, sandboxType, env: copy(sandboxEnvironment) };
 }
 

@@ -296,3 +296,47 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} actual stream ad
     sessionId: 'actual-session', userId: 'trusted-user', messages: [{ role: 'user', content: 'hello' }] })) {}
   assert.equal(checked, 1);
 });
+
+test('unbound SDK writes never forward a subject id AICP rejects', async t => {
+  // backend=sdk 且没有 collection 绑定时 bound 为 false，历史行为是把受信任主体
+  // 原样当 AgentUserId 发出去。子账号 UUID 恰好合法，但 email/ARN/带冒号的值会让
+  // AICP 以 MemoryCreateFailed 拒绝整次写入，而本地只看到 save_memory 返回 false。
+  const send = async (userId, sessionId) => {
+    const { root, make } = setup(t), calls = [];
+    const options = sdkOptions(async (name, payload) => {
+      calls.push({ name, payload });
+      if (name === 'CreateMemorySdk') return { requestId: 'receipt', data: { Code: 0 } };
+      return { data: { Data: { Items: [] } } };
+    });
+    options.env.KSADK_LTM_NAMESPACE = 'namespace';
+    const service = make(options);
+    const base = invocation('unbound');
+    await service.execute('save_memory', { content: '中文记忆' },
+      { ...base, context: { ...base.context, userId, sessionId } });
+    return calls[0].payload;
+  };
+
+  const safe = await send('x74DnjR42xnre4hFve7w', 'sess-abc');
+  assert.equal(safe.AgentUserId, 'x74DnjR42xnre4hFve7w');
+  assert.equal(safe.SessionId, 'sess-abc');
+
+  const cases = [
+    // userId 不合法、session 合法：只替换 userId
+    ['user@example.com', 'sess-abc', true, false],
+    ['agent:ar-1:user:u-1', 'sess-abc', true, false],
+    // session 不合法：只替换 session
+    ['u-1', 'session:with:colon', false, true],
+  ];
+  for (const [userId, sessionId, userReplaced, sessionReplaced] of cases) {
+    const payload = await send(userId, sessionId);
+    const fields = [
+      ['AgentUserId', payload.AgentUserId, userReplaced],
+      ['SessionId', payload.SessionId, sessionReplaced],
+    ];
+    for (const [field, value, replaced] of fields) {
+      assert.ok(value.length <= 64, `${field} length for ${userId}/${sessionId}`);
+      assert.match(value, /^[A-Za-z0-9_-]+$/, `${field} charset for ${userId}/${sessionId}`);
+      if (replaced) assert.match(value, /^(mp1-)?[0-9a-f]{32}$/, `${field} should be digested for ${userId}/${sessionId}`);
+    }
+  }
+});

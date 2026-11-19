@@ -239,7 +239,7 @@ test('memory adapter uses QueryMemorySdk and normalizes the returned memories', 
   assert.deepEqual(result, [{ content: '历史偏好' }]);
   assert.equal(call[0], 'QueryMemorySdk');
   assert.equal(call[1].MemoryCollectionId, 'mem-1');
-  assert.match(call[1].AgentUserId, /^mp1-[0-9a-f]{60}$/);
+  assert.match(call[1].AgentUserId, /^mp1-[0-9a-f]{32}$/);
   assert.equal(call[1].Query, '偏好');
   assert.equal(call[1].Limit, 5);
   assert.equal(call[1].SceneId, '_sys_general');
@@ -278,13 +278,15 @@ test('memory adapter writes a bounded conversation through CreateMemorySdk', asy
   assert.deepEqual(result, { accepted: true, data: { accepted: true } });
   assert.equal(call[0], 'CreateMemorySdk');
   assert.equal(call[1].MemoryCollectionId, 'mem-1');
-  assert.match(call[1].AgentUserId, /^mp1-[0-9a-f]{60}$/);
+  assert.match(call[1].AgentUserId, /^mp1-[0-9a-f]{32}$/);
   assert.deepEqual({ ...call[1], AgentUserId: undefined, Data: undefined }, {
     MemoryCollectionId: 'mem-1', AgentUserId: undefined, SceneId: '_sys_general', DataType: 'conversation',
     Data: undefined,
     AgentId: 'agent-1', SessionId: call[1].SessionId,
   });
-  assert.match(call[1].SessionId, /^[0-9a-f]{64}$/);
+  // AICP caps SessionId at 64 characters; 32 stays well inside it.
+  assert.match(call[1].SessionId, /^[0-9a-f]{32}$/);
+  assert.ok(call[1].SessionId.length <= 64);
   assert.deepEqual(call[1].Data, { Conversation: [
       { Role: 'user', CreatedAt: call[1].Data.Conversation[0].CreatedAt, MessageId: call[1].Data.Conversation[0].MessageId, Content: [{ Type: 'input_text', Text: '我喜欢轻松口吻' }] },
       { Role: 'assistant', CreatedAt: call[1].Data.Conversation[1].CreatedAt, MessageId: call[1].Data.Conversation[1].MessageId, Content: [{ Type: 'input_text', Text: '好的，我会保持轻松口吻。' }] },

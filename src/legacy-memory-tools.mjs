@@ -6,6 +6,7 @@ import { join, resolve, sep } from 'node:path';
 import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
 import { hostFetch } from './http-fetch.mjs';
 import { createAicpResourceConnection } from './aicp-resource-connection.mjs';
+import { aicpCompatibleId } from './memory-identity.mjs';
 import { memorySubjectId, memorySessionId } from './memory-identity.mjs';
 import { LegacyMemoryEffects } from './legacy-memory-effects.mjs';
 import { LegacyLocalMemory } from './legacy-memory-local.mjs';
@@ -179,8 +180,10 @@ export function createLegacyMemoryTools({ agentId, root, workspaceRoot, bindings
               ? { payload: { index, user_id: context.userId, events: [event], metadata, session_id: context.sessionId, flush: true } }
               : backend === 'local' ? { id: `mem_${randomUUID().replaceAll('-', '').slice(0, 24)}`, content: args.content || event,
                 userId: context.userId, createdAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'), operationKey, event }
-              : { requestIds: collectionIds.map(() => randomUUID()), targets: collectionIds.map(id => ({ MemoryCollectionId: id, AgentUserId: bound ? memorySubjectId(id, context.userId, agentId) : context.userId,
-                SessionId: bound ? memorySessionId(context.sessionId) : context.sessionId, AgentId: agentId, SceneId: sceneId,
+              : { requestIds: collectionIds.map(() => randomUUID()), targets: collectionIds.map(id => ({ MemoryCollectionId: id, AgentUserId: bound ? memorySubjectId(id, context.userId, agentId)
+                  : aicpCompatibleId(context.userId, memorySubjectId(id, context.userId, agentId)),
+                SessionId: bound ? memorySessionId(context.sessionId)
+                  : aicpCompatibleId(context.sessionId, memorySessionId(context.sessionId)), AgentId: agentId, SceneId: sceneId,
                 DataType: 'conversation', Flush: true, Data: { Conversation: args.content ? [{ Role: 'user', CreatedAt: Date.now(), MessageId: randomUUID(),
                   Content: [{ Type: 'input_text', Text: args.content }] }] : [] } })) };
           },
@@ -202,7 +205,8 @@ export function createLegacyMemoryTools({ agentId, root, workspaceRoot, bindings
               } else {
                 entries = [];
                 for (const id of collectionIds) entries.push(...await sdkQuery({ MemoryCollectionId: id,
-                  AgentUserId: bound ? memorySubjectId(id, context.userId, agentId) : context.userId }, prepared.query, topK, signal, current));
+                  AgentUserId: bound ? memorySubjectId(id, context.userId, agentId)
+                    : aicpCompatibleId(context.userId, memorySubjectId(id, context.userId, agentId)) }, prepared.query, topK, signal, current));
               }
               current(); return { status: 'ok', content: formatLegacyMemoryEntries(entries) };
             }
