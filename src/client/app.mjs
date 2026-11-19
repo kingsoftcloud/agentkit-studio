@@ -90,7 +90,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createResourceDialogs({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createResourcePages({ ui, hostRemote, actions, window }));
   Object.assign(ui, createCodexPluginPages({ ui, hostRemote }));
-  ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window });
+  ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window, Switch: primitives.Switch });
   Object.assign(ui, createDeliveryPages({ ui, hostRemote, actions, window, document }));
   Object.assign(ui, createScheduleDelivery({ ui, hostRemote }));
   Object.assign(ui, createAutomationPage({ ui, hostRemote, actions, window, document }));

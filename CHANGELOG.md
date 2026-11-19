@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.0.19 - 2026-11-19
+
+### 修复
+
+- **`supportsStore` 按线路条件设置**：0.0.18 把它写在每条路由的 `compat` 上，而它是 `openai-completions` 独占的键。profile 声明 `protocol: openai-responses` 时，DSH 直接拒绝整个模型配置：
+
+  ```
+  llm-pi-ai: provider "agentkit-studio-default" sets compat "supportsStore",
+  but no model on the route speaks a protocol that takes it;
+  it exists on openai-completions
+  ```
+
+  也就是说 0.0.18 加的 Responses 支持救不了自己 —— 切到 Responses 反而保存不了配置。现在两个 bridge 都只在 `openai-completions` 线路上发这个键；`supportsDeveloperRole` 不受影响。新增两条测试钉住分界（Responses 线路断言该键不存在，chat 线路断言存在），回滚修复会让前者变红。
+
+### 说明
+
+- 0.0.18 的 npm 包与桌面端候选都含此缺陷。不声明 `protocol` 的 profile 不受影响（仍走 Chat Completions），本补丁只为让 Responses 线路可用。
+
 ## 0.0.18 - 2026-11-19
 
 ### 功能：模型线路与推理档位

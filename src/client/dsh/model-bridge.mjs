@@ -80,8 +80,9 @@ export function createModelBridge({ hostRemote }) {
         // Keep the default only for a route that serves this profile's model
         // alone; on a catalog route the session-level choice carries it.
         const dedicated = models.length === 1 && models[0].id === modelName;
+        const wire = providerWireApi(profile);
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
-          displayName: `${provider} · ${modelName}`, api: providerWireApi(profile), apiKeyEnv: credentialName,
+          displayName: `${provider} · ${modelName}`, api: wire, apiKeyEnv: credentialName,
           baseURL: baseUrl,
           // Kspmas validates message roles and answers
           // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends
@@ -94,7 +95,12 @@ export function createModelBridge({ hostRemote }) {
           // only implements the older request shape — LiteLLM and friends —
           // rejects the key itself, and dropping it costs a stateless route
           // nothing it could have used.
-          compat: { supportsDeveloperRole: false, supportsStore: false },
+          //
+          // It is also an `openai-completions`-only key. DSH rejects a route
+          // that sets it while no model speaks that protocol — exactly the
+          // case a profile declaring `protocol: openai-responses` creates —
+          // so it is conditional on the wire this route actually uses.
+          compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
           // A concrete route default keeps fresh sessions on a thinking level
           // instead of DSH's "provider default" row, which would omit the
           // parameter and leave thinking to the gateway's own default.

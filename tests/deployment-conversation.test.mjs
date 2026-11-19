@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDeploymentConversation } from '../src/deployment-conversation.mjs';
+import { createHash } from 'node:crypto';
+import { createDeploymentConversation, createDeploymentHarnessView } from '../src/deployment-conversation.mjs';
+import { NATIVE_ENGINE_EVENT } from '../src/providers/native-engine-runtime.mjs';
+import { nativeEngineViewDefinition } from '../src/client/dsh/native-engine-view.mjs';
 import { CLOUD_PROVIDER, createDeploymentModelAdapter } from '../src/deployment-agents.mjs';
 import { createDshRuntimeAdapter, bindDshAgentRoute, routeDshRuntime, setDshRuntimeAdapter, unbindDshAgentRoutes } from '../src/providers/dsh-runtime.mjs';
 import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
@@ -13,9 +16,10 @@ const contract = createRuntimeResponsesContract({ agentId: agent.deployment.agen
 const agents = async () => ({ connect: async id => { assert.equal(id, 'ar-cloud-test'); return { agent, endpoint: 'https://ar-cloud-test.agent-pre.kspmas.ksyun.com', token: 'private-runtime-token' }; }, list: async () => ({ items: [agent] }) });
 const options = { agentId: 'ar-cloud-test', provider: CLOUD_PROVIDER, model: 'frozen-model', input: '你好', userMessage: { id: 'user-1' }, sessionId: 'native-session' };
 const collect = async stream => { const frames = []; for await (const frame of stream) frames.push(frame); return frames; };
-function response(body, change = event => event) {
+function response(body, change = event => event, harnessViews = []) {
   const events = [], request = contract.parse(body), writer = createRuntimeResponsesStream(request, (_type, value) => events.push(change(value)));
   writer.start();
+  for (const data of harnessViews) writer.frame({ kind: 'event', value: { type: NATIVE_ENGINE_EVENT, data } });
   writer.frame({ kind: 'assistant', value: { type: 'chunk', attemptId: 'first', chunk: { type: 'reasoning-delta', index: 0, text: '分析问题' } } });
   writer.frame({ kind: 'event', value: { type: 'tool/call', data: { callId: 'search-1', name: 'search', arguments: '{"q":"example"}' } } });
   writer.frame({ kind: 'event', value: { type: 'tool/result', data: { message: { source: { callId: 'search-1' }, content: [{ type: 'text', text: 'actual result' }] } } } });
@@ -24,6 +28,60 @@ function response(body, change = event => event) {
   writer.complete({ output: '真实回答', tokenUsage: { inputTokens: 42, outputTokens: 9 } });
   return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'Content-Type': 'text/event-stream' } });
 }
+
+test('a verified deployment presents its own Harness view without duplicate tool cards', async () => {
+  const events = [], html = '<!doctype html><title>Engine view</title>';
+  const sha256 = createHash('sha256').update(html).digest('hex');
+  const cloud = await agents();
+  const token = 't'.repeat(32);
+  const cloudAgents = async () => ({ connect: async id => ({ ...await cloud.connect(id), token, capabilities: ['harness-task-view'] }) });
+  const resolve = createDeploymentHarnessView({ agents: cloudAgents, fetchImpl: async (url, request) => {
+    assert.ok(url.endsWith('/_ksadk/harness/v1/views/' + sha256));
+    assert.equal(request.headers.authorization, 'Bearer ' + token);
+    return new Response(html, { headers: { 'content-type': 'text/html' } });
+  } });
+  const stream = createDeploymentConversation({ agents: cloudAgents, fetchImpl: async (_url, init) => response(JSON.parse(init.body), undefined, [{
+    view: sha256, event: { schema: 'agentkit.engine-event/v1', seq: 1, kind: 'run.terminal', status: 'completed', private: 'never copy' },
+  }]) });
+  await collect(stream({ ...options, session: { append: (...args) => events.push(args) } }));
+  assert.equal(events.length, 1);
+  const [type, data, flags] = events[0];
+  assert.equal(type, NATIVE_ENGINE_EVENT);
+  assert.equal(data.deploymentAgentId, 'ar-cloud-test');
+  assert.equal(data.event.private, undefined);
+  assert.equal(flags.ignorable, true);
+  const event = { type, data, ...flags, seq: 2 };
+  const match = { event, location: 'chat' };
+  assert.equal(nativeEngineViewDefinition.match(event).id, data.runId);
+  const node = nativeEngineViewDefinition.buildViewNode({ state: nativeEngineViewDefinition.start({}, match), current: new Map() });
+  assert.equal(node.data.deploymentAgentId, 'ar-cloud-test');
+  assert.equal(node.data.view, sha256);
+  assert.equal(await resolve(node.data.deploymentAgentId, node.data.view), html);
+});
+
+test('cloud Harness history relays a write label and file path without forwarding file contents or raw receipts', async () => {
+  const view = 'a'.repeat(64), schema = 'agentkit.engine-event/v1';
+  const name = 'write_workspace_file', callId = 'write-1', path = '验收/cloud proof.txt';
+  const values = [{ schema, seq: 1, kind: 'model.completed', calls: [
+    { callId, name, arguments: { path: './' + path, content: 'private document' } },
+    { callId: 'write-2', name, arguments: { path: '/app/private.txt' } },
+    { callId: 'run-1', name: 'run_command', arguments: { path, command: 'private command' } },
+    { name, arguments: { path } },
+  ] }, { schema, seq: 2, kind: 'tool.completed', category: 'tool', title: name, callId, status: 'ok',
+    result: { ok: true, path, diff_additions: 1, diff_deletions: 0, absolute_path: '/app/code/' + path } }];
+  const cloud = await agents();
+  const stream = createDeploymentConversation({
+    agents: async () => ({ connect: async id => ({ ...await cloud.connect(id), capabilities: ['harness-task-view'] }) }),
+    fetchImpl: async (_url, init) => response(JSON.parse(init.body), undefined, values.map(event => ({ view, event }))),
+  });
+  const events = [];
+  await collect(stream({ ...options, session: { append: (type, data) => events.push({ type, ...data }) } }));
+  assert.deepEqual(events.map(frame => frame.type), [NATIVE_ENGINE_EVENT, NATIVE_ENGINE_EVENT]);
+  assert.deepEqual(events[0].event.calls, [{ callId, name, arguments: { path } },
+    { callId: 'write-2', name }, { callId: 'run-1', name: 'run_command' }]);
+  assert.deepEqual(events[1].event.result, { ok: true, path, diff_additions: 1, diff_deletions: 0 });
+  assert.equal(events[1].event.callId, events[0].event.calls[0].callId);
+});
 
 test('all three cloud runtimes reuse native DSH chunks and tool cards without local model credentials or resource execution', async () => {
   for (const runtime of ['harness', 'dsh-native', 'codex']) {

@@ -127,7 +127,7 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
     withResourceContext: managedResourceContext?.run, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax,
     validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
-    ...(managedRuntime && nativeEngineRuntime?.usesService ? { harnessView: nativeEngineRuntime.resolveView, allowImages: Boolean(harnessModel) } : {}),
+    ...(harnessModel && nativeEngineRuntime?.usesService ? { harnessView: nativeEngineRuntime.resolveView, allowImages: Boolean(managedRuntime) } : {}),
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 
