@@ -3,7 +3,7 @@ title: Plugin market
 description: How Studio consumes DSH's official plugin index (format 1) — index sources, request model, the bundled community index, and the install path.
 ---
 
-The plugin market is **DSH's official plugin index**: a static `format: 1` JSON document listing installable bundles with their title, icon, author, versions, `engines.dsh` compatibility range and install source. Studio no longer aggregates anything at request time — it reads the Host's `pluginMarket` service and, when the profile configures no index source at all, adds the community index bundled with the product as the default source.
+The plugin market uses **DSH's official plugin index**, a static `format: 1` JSON document listing installable bundles with titles, icons, authors, versions, `engines.dsh` compatibility ranges, and install sources. Studio reads indexes through the Host's `pluginMarket` service. Desktop builds can configure a product index. The bundled community index can also serve as the default for a profile with no configured sources.
 
 - Bundled community index: `assets/plugin-market/index.json`, served by the Host at `GET /api/agentkit.plugin-market/index.json`.
 - User index sources: they belong to the current profile and are added, removed and switched on the Discover page.
@@ -28,7 +28,7 @@ Host defaults: `cacheTtlMs` 600000 (10 minutes), `fetchTimeoutMs` 15000, `maxByt
 
 ## Index format
 
-Root fields: `format` (must be `1`), `title` (required, `LocalizedText`), `description`, `metadata`, `plugins[]`. Plugin fields: `name` (npm package name, unique in the document), `title`, `description`, `icon`, `author`, `homepage`, `repository`, `metadata`, `versions[]`. Version fields: `version` (exact SemVer), `publishTimestamp` (Unix seconds), `source` (`{"type":"npm"}` or `{"type":"git","url","commit","path"}`) and `engines.dsh` (a SemVer range).
+Root fields: `format` (must be `1`), `title` (required, `LocalizedText`), `description`, `metadata`, `plugins[]`. Plugin fields: `name` (npm package name, unique in the document), `title`, `description`, `icon`, `author`, `homepage`, `repository`, `metadata`, `versions[]`. Version fields: `version` (exact SemVer), `publishTimestamp` (Unix seconds), `source` (`{"type":"npm"}`, `{"type":"git","url","commit","path"}`, or `{"type":"tarball","url"}`) and `engines.dsh` (a SemVer range).
 
 ```json
 {
@@ -67,9 +67,53 @@ pnpm check:plugin-index    # offline; validates the committed document
 
 Inclusion rule: only valid SemVer versions that were published, are not deprecated and are not private, at most 20 per plugin; output is ordered by downloads and then by name and is **deterministic** (no timestamps, no randomness), so a refresh shows up in review as data changes only.
 
+## Desktop default index
+
+Set `desktop.defaultPluginIndexUrl` in `src/product.json` to a directly readable HTTPS index URL without credentials, a query, or a fragment. Both macOS and Windows installers carry this setting. Use `null` to opt out of adding a product index.
+
+On the first launch of a Desktop version carrying the URL, Studio puts it first in the profile, retains the order of other sources, and merges duplicate URLs. Discover opens the first source by default and lets users switch sources. If a user removes the product source, later launches of the same version honor that edit.
+
+Keep the KS3 index URL stable. To publish a plugin or a new version, upload the versioned `.tgz` first, then add the new version and download URL to the same `index.json`. Refresh Discover to read the new document. Index content changes take effect through KS3 without rebuilding the desktop app.
+
 ## Install path
 
-The index produces arguments; it never installs. An npm version resolves to `name@version` (with a `registry` when the document declares one), a Git version to `git+<url>.git#<commit>` (with `&path:/<dir>` for a subdirectory), and both are handed to the official `pluginManager.inspect()` / `installBundle()`, which owns the compatibility check, the build-script approval and the rollback on failure.
+The Host uses `name@version` with an optional registry for npm, `git+<url>.git#<commit>` with an optional `&path:/<dir>` for Git, and the download URL for a tarball. After confirmation, the DSH plugin manager handles download, compatibility checks, build-script approval, and rollback on failure.
+
+### Install from object storage
+
+Pack the built DSH bundle as an npm tarball and upload it to object storage such as KS3. Serve it at a directly readable HTTPS URL with a versioned filename ending in `.tgz` or `.tar.gz`. Omit credentials, query parameters, and fragments. Match the listed name and version to the archive’s `package.json`, which must declare `dsh.bundle`.
+
+```json
+{
+  "format": 1,
+  "title": "Studio plugins",
+  "plugins": [
+    {
+      "name": "@example/dsh-workspace-tools",
+      "versions": [
+        {
+          "version": "1.2.3",
+          "publishTimestamp": 1794600000,
+          "source": {
+            "type": "tarball",
+            "url": "https://downloads.example.com/plugins/workspace-tools-1.2.3.tgz"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Publish `index.json` and add its URL under Plugins → Discover → Index sources. Select the source and choose Install. The plugin downloads from object storage and the package manager resolves its dependencies. Use a Studio Host that supports the `tarball` source.
+
+### Maintain a remote index
+
+Keep `index.json` in Git and publish the reviewed version to a stable HTTPS URL. Users add the URL once per profile. Catalog updates can ship independently of Studio releases.
+
+1. Upload the new versioned `.tgz` first and verify download access from the users’ network. Add new plugins to `plugins` and add releases of existing plugins to `versions` under the same package name. Record the publish time, download URL, and any `engines.dsh` range declared by the package. Give each version its own file path.
+2. Add a preview index in a test profile, load it in Discover, and install the new version. Then update `index.json` at the stable URL. Users can select Refresh in Discover to read it again. If you serve the index through a CDN, refresh its cached copy of `index.json` as part of publishing.
+3. Remove an entry from `versions` to withdraw a release. Remove the plugin entry when its last version is withdrawn. To roll back the catalog, republish the earlier `index.json` and retain the archives it references. Each profile’s plugin manager controls installed bundles.
 
 ## When it is not enabled
 

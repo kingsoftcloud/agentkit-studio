@@ -3,7 +3,7 @@ title: 插件市场
 description: DSH 官方插件索引（format 1）在 Studio 里的接入方式：索引源、请求模型、内置社区索引与安装路径。
 ---
 
-插件市场就是 **DSH 官方的插件索引**：一份 `format: 1` 静态 JSON，列出可安装的 bundle 及其标题、图标、作者、版本、`engines.dsh` 兼容范围与安装源。Studio 不再自建聚合——它读取 Host 的 `pluginMarket` 服务，并在 profile 没有任何索引源时，把随包内置的社区索引添加为默认源。
+插件市场使用 **DSH 官方的插件索引**。这是一份 `format: 1` 静态 JSON，列出可安装的 bundle 及其标题、图标、作者、版本、`engines.dsh` 兼容范围与安装源。Studio 通过 Host 的 `pluginMarket` 服务读取索引。桌面版可以预置产品索引，随包内置的社区索引也可作为没有配置任何索引源的 profile 的默认源。
 
 - 内置社区索引：`assets/plugin-market/index.json`，由 Host 在 `GET /api/agentkit.plugin-market/index.json` 提供给官方读取器。
 - 用户索引源：属于当前 profile，可在「发现」页添加、删除、切换。
@@ -28,7 +28,7 @@ description: DSH 官方插件索引（format 1）在 Studio 里的接入方式�
 
 ## 索引格式
 
-根字段：`format`（必须为 `1`）、`title`（必填，`LocalizedText`）、`description`、`metadata`、`plugins[]`。插件字段：`name`（npm 包名，索引内唯一）、`title`、`description`、`icon`、`author`、`homepage`、`repository`、`metadata`、`versions[]`。版本字段：`version`（精确 SemVer）、`publishTimestamp`（Unix 秒）、`source`（`{"type":"npm"}` 或 `{"type":"git","url","commit","path"}`）、`engines.dsh`（SemVer range）。
+根字段：`format`（必须为 `1`）、`title`（必填，`LocalizedText`）、`description`、`metadata`、`plugins[]`。插件字段：`name`（npm 包名，索引内唯一）、`title`、`description`、`icon`、`author`、`homepage`、`repository`、`metadata`、`versions[]`。版本字段：`version`（精确 SemVer）、`publishTimestamp`（Unix 秒）、`source`（`{"type":"npm"}`、`{"type":"git","url","commit","path"}` 或 `{"type":"tarball","url"}`）、`engines.dsh`（SemVer range）。
 
 ```json
 {
@@ -67,9 +67,53 @@ pnpm check:plugin-index    # 不联网，只校验已提交的产物
 
 收录规则：只保留合法 SemVer、有发布时间、未弃用、未私有的版本，每个插件最多 20 个；输出按下载量降序、同分按包名升序，**确定性**（无时间戳、无随机），因此刷新在 review 里只体现为数据变化。
 
+## 桌面版默认索引
+
+在 `src/product.json` 中设置 `desktop.defaultPluginIndexUrl`。地址指向可直接读取的 HTTPS 索引文档，省去凭据、查询参数和片段。macOS 和 Windows 安装包都会携带这个配置。使用 `null` 可关闭预置。
+
+首次启动带有该地址的桌面版本时，Studio 将它放在当前 profile 的索引列表首位，保留其它索引顺序并合并重复 URL。「发现」会默认打开首个索引，用户可随时切换。手动删除产品索引后，同一桌面版本重启会保留该修改。
+
+把索引留在固定的 KS3 URL。新增插件或更新版本时，先上传带版本号的 `.tgz`，再把新的版本和下载地址写进同一个 `index.json`。打开「发现」并刷新即可重新读取，索引内容更新无需重新打包桌面版。
+
 ## 安装路径
 
-索引只产出参数，不执行安装：npm 版本解析为 `name@version`（可带 `registry`），Git 版本解析为 `git+<url>.git#<commit>`（子目录追加 `&path:/<dir>`），随后交给官方 `pluginManager.inspect()` / `installBundle()`，兼容性检查、构建脚本批准与失败回滚都在那里。
+Host 将 npm 版本解析为 `name@version`（可带 `registry`），Git 版本解析为 `git+<url>.git#<commit>`（子目录追加 `&path:/<dir>`），tarball 版本使用下载地址。用户确认后，DSH 插件管理器负责下载、兼容性检查、构建脚本批准和失败回滚。
+
+### 从对象存储安装
+
+把构建好的 DSH bundle 打成 npm tarball，上传到 KS3 等对象存储，并为该文件提供可直接读取的 HTTPS 地址。地址使用版本化的文件名，以 `.tgz` 或 `.tar.gz` 结尾，省去凭据、查询参数和片段。索引的包名和版本应与包内的 `package.json` 一致，包需声明 `dsh.bundle`。
+
+```json
+{
+  "format": 1,
+  "title": "Studio plugins",
+  "plugins": [
+    {
+      "name": "@example/dsh-workspace-tools",
+      "versions": [
+        {
+          "version": "1.2.3",
+          "publishTimestamp": 1794600000,
+          "source": {
+            "type": "tarball",
+            "url": "https://downloads.example.com/plugins/workspace-tools-1.2.3.tgz"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+发布 `index.json` 后，在「插件 → 发现 → 索引源」添加它的 URL，再选择该索引并点击「安装」。主包从对象存储下载，依赖仍由包管理器解析。客户端需要使用支持 `tarball` 来源的 Studio Host。
+
+### 维护远程索引
+
+在 Git 中维护 `index.json`，将审核后的版本发布到一个固定的 HTTPS 地址。用户在当前 profile 中添加一次该地址即可，以后的目录更新可以独立于 Studio 发版。
+
+1. 先上传带版本号的新 `.tgz`，从用户可访问的网络确认能下载。新插件加入 `plugins`，已有插件在同一包名的 `versions` 中新增一项，填写实际发布时间、下载地址和包声明的 `engines.dsh`（如有）。每个版本使用独立的文件路径。
+2. 在测试 profile 添加预览索引，确认「发现」能加载新目录并试装。通过后更新固定地址上的 `index.json`。用户可点击「发现」的刷新按钮重新读取索引。经 CDN 分发时，同时更新 `index.json` 的 CDN 缓存。
+3. 下架时从 `versions` 移除对应版本。如果移除的是最后一个版本，就删除整个插件条目。回滚目录时重新发布之前的 `index.json`，并保留它引用的包。已安装插件的启停和卸载由各 profile 的插件管理器处理。
 
 ## 未启用时
 

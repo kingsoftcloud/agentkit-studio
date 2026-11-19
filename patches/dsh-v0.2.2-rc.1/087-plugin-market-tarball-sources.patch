@@ -1,0 +1,522 @@
+diff --git a/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.i18n.yaml b/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.i18n.yaml
+index 425a7295e2734f2999a5e7075fde5e4381bf366d..329b9a47140a01c942a52d415277afd9bfba52bd 100644
+--- a/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.i18n.yaml
++++ b/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.i18n.yaml
+@@ -21,11 +21,11 @@
+   en: b79abd05a957948b
+   zh: b6f0c203ea8e4838
+ /agent-note-plugin-market-index-format/decision/version-fields:
+-  en: d6c0fa99e1cbb068
+-  zh: 3d2a7b85299c679a
++  en: 257d50b9f8a33f56
++  zh: e9da1af9c3bf5539
+ /agent-note-plugin-market-index-format/decision/install-arguments:
+-  en: c748cdc4d8ce349a
+-  zh: 5740fa0d6106e637
++  en: 810b4ec52cb36ce4
++  zh: 4d116f01f069b85e
+ /agent-note-plugin-market-index-format/decision/dsh-compatibility:
+   en: 00fe507b9b5dfea7
+   zh: 55de6aaeb3865e84
+diff --git a/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.md b/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.md
+index cb772e894b594ca22099e1fd7a4e57d4a473aa95..5cdb9040523db0654cd0196daa2c062a4dc17cb3 100644
+--- a/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.md
++++ b/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.md
+@@ -141,10 +141,11 @@ Category, label, and sort-key ids are non-empty strings. Readers look ids up as
+ 
+ A relative `icon` reference resolves against the index URL, as an HTML image reference resolves against its page. For an index at `https://market.example/dsh/index.json`, `"icon": "icons/foo.svg"` names `https://market.example/dsh/icons/foo.svg`. A generator can therefore publish the index and its icon files as one directory on any static host without knowing the final URL. Absolute icon URLs on other origins must use `https:`; the same-origin allowance lets an `http:` index on a loopback or intranet host serve its own icons. Readers resolve the reference when they read the index, so clients receive absolute URLs.
+ 
+-`source` takes one of two forms, and readers reject any other `type`:
++`source` has three supported forms.
+ 
+ - `{ "type": "npm", "registry"?: string }`. `registry` is an `http:` or `https:` URL without credentials, query, or fragment; `http:` is admitted for intranet mirrors, as in DSH's [install registries](../../implemented/architecture/2026-09-18-plugin-install-registries.md).
+ - `{ "type": "git", "url": string, "commit": string, "path"?: string }`. `url` is a canonical `https:` URL (equal to its WHATWG URL serialization) with at least two non-empty path segments and no trailing slash, without credentials, query, or fragment, and not ending in `.tgz` or `.tar.gz`. `commit` is a lowercase 40-hex-digit SHA. `path` is a `/`-separated relative directory whose segments contain only ASCII letters, digits, and `._@+-`, and are neither `.` nor `..`; absent means the repository root.
++- `{ "type": "tarball", "url": string }`. The `http:` or `https:` URL ends in `.tgz` or `.tar.gz` and contains neither credentials, query, nor fragment.
+ 
+ ### Install arguments
+ 
+@@ -152,6 +153,7 @@ A client installs one version with exactly these pnpm arguments:
+ 
+ - npm: the spec `<name>@<version>`. Without `registry`, the client asks its configured registries as it does for any install. With `registry`, the client follows DSH's [registry plan](../../implemented/architecture/2026-09-18-plugin-install-registries.md): it asks `registry` first and falls back to its other configured registries only when `registry` is one of them; any other `registry` is asked alone, so a private registry never falls through to a public one that may publish a different package under the same name and version.
+ - git: the spec `git+<url>.git#<commit>`, without doubling a trailing `.git`, followed by `&path:/<path>` when `path` is present. The `git+` prefix makes pnpm treat URLs with more than two path segments, such as GitLab subgroups, as Git repositories.
++- tarball uses the archive URL as its spec.
+ 
+ ### DSH compatibility
+ 
+diff --git a/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.zh.md b/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.zh.md
+index 1d76f9d462ef7b7549b2958c2d9a90fc22ea1f48..963ee21ebf6bbff57c478b6bf8af5dc858fa9348 100644
+--- a/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.zh.md
++++ b/.agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.zh.md
+@@ -141,10 +141,11 @@ DSH 只能从用户已知的 spec 安装第三方组合包（bundle）：npm 包
+ 
+ 相对的 `icon` 引用相对于索引 URL 解析，与 HTML 图片引用相对于所在页面解析的方式相同。对于位于 `https://market.example/dsh/index.json` 的索引，`"icon": "icons/foo.svg"` 指向 `https://market.example/dsh/icons/foo.svg`。因此，生成器可以把索引和图标文件作为一个目录发布到任意静态主机，无需知道最终 URL。指向其他源的绝对图标 URL 必须使用 `https:`；同源规则允许位于 loopback 或内网主机上的 `http:` 索引提供自己的图标。读取器在读取索引时解析该引用，因此客户端收到的是绝对 URL。
+ 
+-`source` 采用以下两种形式之一，读取器拒绝其他任何 `type`：
++`source` 支持以下三种形式。
+ 
+ - `{ "type": "npm", "registry"?: string }`。`registry` 是不含凭据、查询或片段的 `http:` 或 `https:` URL；允许 `http:` 是为了支持内网镜像，与 DSH 的[安装 registry](../../implemented/architecture/2026-09-18-plugin-install-registries.zh.md) 一致。
+ - `{ "type": "git", "url": string, "commit": string, "path"?: string }`。`url` 是规范的 `https:` URL（等于其 WHATWG URL 序列化结果），至少包含两个非空路径段且不以斜杠结尾，不含凭据、查询或片段，且不以 `.tgz` 或 `.tar.gz` 结尾。`commit` 是 40 位小写十六进制 SHA。`path` 是以 `/` 分隔的相对目录，各段只包含 ASCII 字母、数字和 `._@+-`，且不是 `.` 或 `..`；缺省表示仓库根目录。
++- `{ "type": "tarball", "url": string }`。使用以 `.tgz` 或 `.tar.gz` 结尾的 `http:` 或 `https:` 地址，省去凭据、查询参数和片段。
+ 
+ ### 安装参数
+ 
+@@ -152,6 +153,7 @@ DSH 只能从用户已知的 spec 安装第三方组合包（bundle）：npm 包
+ 
+ - npm：spec 为 `<name>@<version>`。没有 `registry` 时，客户端像任何安装一样询问它配置的 registry。存在 `registry` 时，客户端遵循 DSH 的 [registry 计划](../../implemented/architecture/2026-09-18-plugin-install-registries.zh.md)：先询问 `registry`，仅当它属于客户端配置的 registry 之一时才回退到其他已配置 registry；其他 `registry` 单独询问，因此私有 registry 不会回退到可能以相同名称和版本发布不同包的公共 registry。
+ - git：spec 为 `git+<url>.git#<commit>`，`url` 已以 `.git` 结尾时不重复添加；存在 `path` 时在其后追加 `&path:/<path>`。`git+` 前缀使 pnpm 将路径段多于两个的 URL（例如 GitLab 子组）视为 Git 仓库。
++- tarball 使用归档文件的下载地址作为 spec。
+ 
+ ### DSH 兼容性
+ 
+diff --git a/packages/boot/plugin-market/README.i18n.yaml b/packages/boot/plugin-market/README.i18n.yaml
+index fb47f93c8892706abc58475ecbe4cd40869b64eb..40e2306d273e8ca0facf282db9c79feb51c09cce 100644
+--- a/packages/boot/plugin-market/README.i18n.yaml
++++ b/packages/boot/plugin-market/README.i18n.yaml
+@@ -15,14 +15,14 @@
+   en: 76368b6b1da79c80
+   zh: 52384aee991ac542
+ /deepseek-ai-dsh-plugin-market/use-this-package:
+-  en: fef9850d643e327f
+-  zh: c6e8cab773cf93b9
++  en: 837eef83acaf9ac6
++  zh: 54425c90a171a08f
+ /deepseek-ai-dsh-plugin-market/use-this-package/plugin-detail-documents:
+   en: 0e15de273c9acaae
+   zh: 4fd93c92b71d4398
+ /deepseek-ai-dsh-plugin-market/understand-the-implementation:
+-  en: 678705f57d986377
+-  zh: 68d090edfe04acde
++  en: d5fb8d25b0b05598
++  zh: 7c8714011bad79fc
+ /deepseek-ai-dsh-plugin-market/model-experience:
+   en: 215e7ba838619b7b
+   zh: a311da3843709f90
+diff --git a/packages/boot/plugin-market/README.md b/packages/boot/plugin-market/README.md
+index b93adc2bf9475bc53ea44bd380da398ecd342074..ecbd6ede476fa93dbd180494feb2843832464ce5 100644
+--- a/packages/boot/plugin-market/README.md
++++ b/packages/boot/plugin-market/README.md
+@@ -48,7 +48,7 @@ The Remote methods are:
+ - `listIndexes()` returns each configured URL with the title and description of its last successful read and, when the last read failed, its error. It never fetches.
+ - `setIndexes(urls)` normalizes and validates each URL not already configured, keeps configured ones as written, refuses a repeated URL, and writes it through `settings.update` to this service's profile entry. It fails with `plugin-market/settings-unavailable` without Settings or a profile entry. The committed list is announced by `plugin-market/changed`.
+ - `search(url, query)` accepts only a configured URL, so the service never fetches an arbitrary address. It returns one page of the plugins that match `query`, with the index title, description, and declarations, the document's `fetchedAt`, the `total` number of matches, and the `nextOffset`; each plugin carries its `defaultVersion` and `installation`, and each version its `install` and `compatibility`.
+-- `readEntryDetail(url, name, version, language, { refresh?, npmFileSources? })` reads the long description of one listed version of a configured index's entry from that version's source: the npm file CDNs for a version without `registry` or with the npm or npmmirror registry, or its pinned Git commit and `path`. An npm version from another registry has no readable package files.
++- `readEntryDetail(url, name, version, language, { refresh?, npmFileSources? })` reads the long description of one listed version of a configured index's entry from that version's source: the npm file CDNs for a version without `registry` or with the npm or npmmirror registry, or its pinned Git commit and `path`. A tarball or an npm version from another registry uses the declared repository for long descriptions.
+ 
+ The service method `entry(url, name)`, which is not a Remote method, returns one plugin of a configured index in the same form, or `undefined` when the index does not list it.
+ 
+@@ -97,7 +97,7 @@ Compatibility is computed per version with `evaluatePluginCompatibility`, the ve
+ 
+ Entry detail reads share one reader that the service owns; document selection and the npm file CDNs come from [`dsh-plugin-detail`](../../util/plugin-detail/README.md). Each partial clone is a bare repository under `detailCacheDir`, named by a hash of its URL, initialized in a staging directory and renamed into place, and fetched with `--depth 1 --filter=blob:none` so only commits and trees arrive; Git downloads a file's contents when it is read. Commands run without inherited `GIT_*` variables other than the ssh program, with hooks, the file-system monitor, submodule recursion, and every transport but https, http, and ssh disabled, and no working tree is created. The directory size is checked every 200 ms while Git downloads; growth past `detailRepositoryMaxBytes` within one command stops Git, and output keeps a file's final newline byte. A file read stops once its contents pass the read's limit, and an image read completes even when the browser abandons the request, so leaving a page never interrupts a clone. A ref under `refs/dsh/` records each fetched commit, so a commit is never fetched lazily without the size check. Operations on one repository run one at a time, also across processes that share `detailCacheDir`, such as Web and Desktop on one profile, through a lock file beside the repository; eviction deletes a repository only after them, enforces `detailCacheMaxBytes` after every fetch and every file read, and deletes the repository in use last, after its operation, when it alone exceeds the total; one that fails or is cancelled, for any reason but a file over its read's limit, deletes the repository, so the next read starts from a fresh clone. Eviction also removes staging directories older than `detailGitTimeoutMs`. Disposal stops Git and waits for it.
+ 
+-`marketInstallTarget` builds install arguments: `name@version` with the version's registry for npm, and `git+<url>.git#<commit>` with `&path:/<path>` for a package directory in Git.
++`marketInstallTarget` builds install arguments: `name@version` with the version's registry for npm, `git+<url>.git#<commit>` with `&path:/<path>` for a Git package directory, or the download URL for a tarball.
+ 
+ -----
+ 
+diff --git a/packages/boot/plugin-market/README.zh.md b/packages/boot/plugin-market/README.zh.md
+index 5d82b46c7712d1db19d17230dc0947cd7b7941a7..5b93339623e6909463174bc625133e3ef4eed4d0 100644
+--- a/packages/boot/plugin-market/README.zh.md
++++ b/packages/boot/plugin-market/README.zh.md
+@@ -48,7 +48,7 @@ Remote 方法如下：
+ - `listIndexes()` 返回每个已配置 URL，以及其最近一次成功读取得到的标题和描述；最近一次读取失败时，还返回其错误。它从不发起获取。
+ - `setIndexes(urls)` 规范化并校验每个尚未配置的 URL，已配置的 URL 保持原样，拒绝重复的 URL，并通过 `settings.update` 把列表写入本服务的 profile 条目。没有 Settings 或 profile 条目时，以 `plugin-market/settings-unavailable` 失败。提交后的列表通过 `plugin-market/changed` 通告。
+ - `search(url, query)` 只接受已配置的 URL，因此服务从不获取任意地址。它返回匹配 `query` 的一页插件，并附带索引的标题、描述和声明、该文档的 `fetchedAt`、匹配总数 `total` 和 `nextOffset`；每个插件携带 `defaultVersion` 和 `installation`，每个版本携带 `install` 和 `compatibility`。
+-- `readEntryDetail(url, name, version, language, { refresh?, npmFileSources? })` 从已配置索引中某个条目的一个已列出版本的来源读取该版本的详细介绍：没有 `registry` 或使用 npm 或 npmmirror 注册表的版本从 npm 文件 CDN 读取，Git 版本从其固定的 Git 提交和 `path` 读取。来自其他注册表的 npm 版本没有可读取的包文件。
++- `readEntryDetail(url, name, version, language, { refresh?, npmFileSources? })` 从已配置索引中某个条目的一个已列出版本的来源读取该版本的详细介绍：没有 `registry` 或使用 npm 或 npmmirror 注册表的版本从 npm 文件 CDN 读取，Git 版本从其固定的 Git 提交和 `path` 读取。tarball 和来自其他注册表的 npm 版本从条目声明的仓库读取详细介绍。
+ 
+ 服务方法 `entry(url, name)` 不是 Remote 方法，它以相同形式返回已配置索引中的一个插件；索引未列出该插件时返回 `undefined`。
+ 
+@@ -98,7 +98,7 @@ Host 使用进程的 `fetch` 获取，因此配置的出站代理生效，并拒
+ 
+ 条目详细介绍的读取共用服务拥有的一个读取器；文档选择和 npm 文件 CDN 来自 [`dsh-plugin-detail`](../../util/plugin-detail/README.zh.md)。每个部分克隆是 `detailCacheDir` 下的一个裸仓库，以其 URL 的哈希命名，先在暂存目录中初始化，再重命名到目标位置，并使用 `--depth 1 --filter=blob:none` 获取，因此只下载提交和树对象；读取文件时 Git 才下载其内容。命令运行时不继承除 ssh 程序之外的 `GIT_*` 变量，禁用 hook、文件系统监视器、子模块递归，以及 https、http 和 ssh 之外的所有传输协议，且不创建工作树。Git 下载期间每 200 毫秒检查一次目录大小；单条命令执行期间增长超过 `detailRepositoryMaxBytes` 时停止 Git，且输出保留文件末尾的换行字节。文件内容超过本次读取的限制时，读取即停止；浏览器放弃请求时，图片读取仍会完成，因此离开页面不会中断克隆。`refs/dsh/` 下的 ref 记录每个已获取的提交，因此不会在没有大小检查的情况下延迟获取提交。对同一仓库的操作逐个执行，共享 `detailCacheDir` 的多个进程（例如同一 profile 上的 Web 和 Desktop）之间也是如此，由仓库旁的一个锁文件实现；淘汰只在这些操作结束后删除该仓库，并在每次获取和每次文件读取后执行 `detailCacheMaxBytes` 总量限制；正在使用的仓库单独超过该总量时，淘汰最后删除它，并等到其操作结束后再删除；除文件超过本次读取的限制外，任何原因导致操作失败或被取消时，都删除该仓库，使下一次读取从新的克隆开始。淘汰时还会删除存在时间超过 `detailGitTimeoutMs` 的暂存目录。销毁时停止 Git 并等待其退出。
+ 
+-`marketInstallTarget` 构建安装参数：npm 为 `name@version` 加该版本的 registry，Git 为 `git+<url>.git#<commit>`，包位于子目录时追加 `&path:/<path>`。
++`marketInstallTarget` 构建安装参数：npm 为 `name@version` 加该版本的 registry，Git 为 `git+<url>.git#<commit>`，包位于子目录时追加 `&path:/<path>`。tarball 使用下载地址。
+ 
+ -----
+ 
+diff --git a/packages/boot/plugin-market/src/index.ts b/packages/boot/plugin-market/src/index.ts
+index f4f2a26c95a2dc612f67ee6075ac607451089017..892af342483d75edddce6a0b097340ff56f35baf 100644
+--- a/packages/boot/plugin-market/src/index.ts
++++ b/packages/boot/plugin-market/src/index.ts
+@@ -305,7 +305,7 @@ export default class PluginMarket extends TypertRemoteService {
+       // A repository that names the source directory itself adds nothing to the source.
+       if (repository?.url === ref.url && repository.directory === dir) repository = undefined
+       location = { files: repositoryFiles(ref, source.commit, this.detailRepositoryOptions()), dir, repository }
+-    } else if (source.registry === undefined || PUBLIC_REGISTRIES.has(new URL(source.registry).host)) {
++    } else if (source.type === 'npm' && (source.registry === undefined || PUBLIC_REGISTRIES.has(new URL(source.registry).host))) {
+       location = this.npmLocation(name, version, repository ?? 'manifest', options?.npmFileSources ?? [])
+     } else {
+       location = { dir: '', repository }
+diff --git a/packages/boot/plugin-market/tests/detail-remote.spec.ts b/packages/boot/plugin-market/tests/detail-remote.spec.ts
+index ddcf9d1333b10fb2a4434d60868e00fce41fd1cf..d7c7f152052a427b6e246b061aa655c5cce1876f 100644
+--- a/packages/boot/plugin-market/tests/detail-remote.spec.ts
++++ b/packages/boot/plugin-market/tests/detail-remote.spec.ts
+@@ -140,6 +140,23 @@ it('reads market entries from their version source and the entry repository', as
+   expect(await mirrored.readEntryDetail(INDEX, 'from-npm', '2.0.0', 'en', { npmFileSources: ['npmmirror'] })).toMatchObject({ markdown: '# Mirror' })
+ })
+ 
++it('reads a tarball listing without downloading its archive for details', async () => {
++  const url = 'https://downloads.example/dsh-archive-1.0.0.tgz'
++  const requests = serve({
++    [INDEX]: {
++      format: 1, title: 'Market', plugins: [{
++        name: 'dsh-archive', versions: [{ version: '1.0.0', publishTimestamp: 1, source: { type: 'tarball', url } }],
++      }],
++    },
++  })
++  const { market } = await mount()
++  const listing = await market.search(INDEX, { sort: { kind: 'index' }, offset: 0, limit: 1 })
++  expect(listing.entries[0]?.versions[0]?.install).toEqual({ spec: url })
++  expect(await market.readEntryDetail(INDEX, 'dsh-archive', '1.0.0', 'en')).toEqual({ status: 'none' })
++  expect(requests).toHaveBeenCalledOnce()
++  expect(requests.mock.calls[0]?.[0]).toBe(INDEX)
++})
++
+ it('reports unreadable sources as detail-unavailable and keeps other failures', async () => {
+   serve({ [INDEX]: index, 'https://cdn.jsdelivr.net/npm/from-npm@2.0.0/locale/en.json': new Error('offline') })
+   const { market } = await mount()
+diff --git a/packages/client/ui-plugin-market/README.i18n.yaml b/packages/client/ui-plugin-market/README.i18n.yaml
+index f7f071560f751a71e82ed22c63eefffd33de86c3..e26665b3dc24ba1a6c2661869a5597cb47f65a91 100644
+--- a/packages/client/ui-plugin-market/README.i18n.yaml
++++ b/packages/client/ui-plugin-market/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: 76368b6b1da79c80
+   zh: 52384aee991ac542
+ /deepseek-ai-dsh-client-ui-plugin-market/use-this-package:
+-  en: 4e582bcd8434b513
+-  zh: 39334bf8ae435e09
++  en: bc4ab79b843f1688
++  zh: a6a02016372fd039
+ /deepseek-ai-dsh-client-ui-plugin-market/understand-the-implementation:
+   en: e1a480caaff8efea
+   zh: 0b725fa5bc929f22
+diff --git a/packages/client/ui-plugin-market/README.md b/packages/client/ui-plugin-market/README.md
+index ccffb813110d5eab5629fc8f05783e98461742f3..048a1c081147a65a7d3347b54589132bc7bbe3ed 100644
+--- a/packages/client/ui-plugin-market/README.md
++++ b/packages/client/ui-plugin-market/README.md
+@@ -28,7 +28,7 @@ Open **Plugins** and select **Discover**. With no index source, the tab shows an
+ 
+ The toolbar holds the index menu, which switches indexes and ends with **Manage index sources…**; the search field; a **Labels** menu with multi-select checkmarks when the index declares labels; the **Sort** menu; and a refresh button. Controls wrap onto additional rows when space is limited, keeping search, filtering, sorting, and refresh available on mobile. Category pills, with **All** first, follow when the index declares categories.
+ 
+-Each card shows the icon, localized title, label tags, a one-line description, and the default version, author, and publish date, with one action: **Install** for an installable entry; a disabled **Install** whose tooltip says no version is compatible with the running DSH when the plugin has no default version and its highest version is neither compatible nor exempted; or **Installed**, **Update available**, or **Provided by DSH**, which switches to the Installed tab and opens that bundle's page when that tab lists it. Selecting a card opens the entry's page with its full description, compatibility notice, and, under the source heading, the default version's facts: author; homepage and source code repository, as links that open in a new tab, with the package directory beside the repository; the npm package and registry, or the Git repository, full commit, and directory; publish date; category; labels; and index title. The page shows the long description first, without a heading of its own, then **Versions**, then the source facts. The **Versions** list is in descending SemVer order; each row tags the recommended, prerelease, installed, incompatible, and exempted versions and offers **Install** for any other version installation accepts, except for a bundle DSH provides. The page's back link returns to the list with its search, filters, and sort intact.
++Each card shows the icon, localized title, label tags, a one-line description, and the default version, author, and publish date, with one action: **Install** for an installable entry; a disabled **Install** whose tooltip says no version is compatible with the running DSH when the plugin has no default version and its highest version is neither compatible nor exempted; or **Installed**, **Update available**, or **Provided by DSH**, which switches to the Installed tab and opens that bundle's page when that tab lists it. Selecting a card opens the entry's page with its full description, compatibility notice, and, under the source heading, the default version's facts: author; homepage and source code repository, as links that open in a new tab, with the package directory beside the repository; the npm package and registry, the Git repository with its full commit and directory, or the tarball download URL; publish date; category; labels; and index title. The page shows the long description first, without a heading of its own, then **Versions**, then the source facts. The **Versions** list is in descending SemVer order; each row tags the recommended, prerelease, installed, incompatible, and exempted versions and offers **Install** for any other version installation accepts, except for a bundle DSH provides. The page's back link returns to the list with its search, filters, and sort intact.
+ 
+ **Install** chooses the default version and opens a confirmation dialog with the entry's icon, title, that version, the author, its source facts, an exemption notice when one applies, and a trust notice. Confirming opens the Plugins install dialog at its check screen with the entry's exact spec and registry; there is no spec form, and a refusal offers **Retry**. The registry an entry names applies to that install only.
+ 
+diff --git a/packages/client/ui-plugin-market/README.zh.md b/packages/client/ui-plugin-market/README.zh.md
+index db4e749056db0d93dbecf65f760dcb4d524d0efc..bc2473bc98335b6cf5cb6ec017389d7cba0078b6 100644
+--- a/packages/client/ui-plugin-market/README.zh.md
++++ b/packages/client/ui-plugin-market/README.zh.md
+@@ -28,7 +28,7 @@ kind: "package-reference"
+ 
+ 工具栏包含：插件索引菜单，用于切换插件索引，最后一项为**管理索引源…**；搜索框；插件索引声明了标签时显示的**标签**菜单，以勾选标记支持多选；**排序**菜单；以及刷新按钮。空间不足时，控件自动换行，确保手机端仍可使用搜索、筛选、排序和刷新。插件索引声明了分类时，其后显示分类按钮，**全部**排在第一位。
+ 
+-每张卡片显示图标、本地化标题、标签、一行描述，以及默认版本、作者和发布日期，并只有一个操作：可安装的条目显示**安装**；没有默认版本、且最高版本既不兼容也未豁免的条目显示禁用的**安装**，其提示框说明没有与当前运行的 DSH 兼容的版本；其余条目显示**已安装**、**有新版本**或**随 DSH 提供**，点击后切换到「已安装」标签页，并在该标签页列出该组合包时打开其页面。选择卡片会打开条目页面，显示其完整描述、兼容性提示，并在来源标题下显示默认版本的信息：作者；主页和源代码仓库（在新标签页中打开的链接，仓库旁显示包所在目录）；npm 包和注册表，或 Git 仓库、完整提交和目录；发布日期；分类；标签；以及插件索引标题。页面先显示详细介绍，不带单独的标题，然后是**版本**，然后是来源信息。**版本**列表按 SemVer 降序排列；每行标出推荐、预发布、已安装、不兼容和已豁免的版本，并为安装检查接受的其他版本提供**安装**，DSH 随附的组合包除外。页面的返回链接回到列表，搜索、筛选和排序保持不变。
++每张卡片显示图标、本地化标题、标签、一行描述，以及默认版本、作者和发布日期，并只有一个操作：可安装的条目显示**安装**；没有默认版本、且最高版本既不兼容也未豁免的条目显示禁用的**安装**，其提示框说明没有与当前运行的 DSH 兼容的版本；其余条目显示**已安装**、**有新版本**或**随 DSH 提供**，点击后切换到「已安装」标签页，并在该标签页列出该组合包时打开其页面。选择卡片会打开条目页面，显示其完整描述、兼容性提示，并在来源标题下显示默认版本的信息：作者；主页和源代码仓库（在新标签页中打开的链接，仓库旁显示包所在目录）；npm 包和注册表、Git 仓库及完整提交和目录，或 tarball 下载地址；发布日期；分类；标签；以及插件索引标题。页面先显示详细介绍，不带单独的标题，然后是**版本**，然后是来源信息。**版本**列表按 SemVer 降序排列；每行标出推荐、预发布、已安装、不兼容和已豁免的版本，并为安装检查接受的其他版本提供**安装**，DSH 随附的组合包除外。页面的返回链接回到列表，搜索、筛选和排序保持不变。
+ 
+ **安装**选择默认版本并打开确认对话框，显示条目的图标、标题、该版本、作者、来源信息、适用时的豁免提示，以及信任提示。确认后，插件页的安装对话框以该条目的精确 spec 和注册表在检查界面打开；不显示 spec 表单，被拒绝时提供**重试**。条目指定的注册表只用于这一次安装。
+ 
+diff --git a/packages/client/ui-plugin-market/src/client/DiscoverSection.tsx b/packages/client/ui-plugin-market/src/client/DiscoverSection.tsx
+index cad12593bf75a5fc9d3921d0140fba3cc3655449..aa4b9108d39ada63e70de566cd2f9a31871eceaf 100644
+--- a/packages/client/ui-plugin-market/src/client/DiscoverSection.tsx
++++ b/packages/client/ui-plugin-market/src/client/DiscoverSection.tsx
+@@ -39,6 +39,7 @@ const FACT_KEYS = {
+   repository: 'factRepository',
+   commit: 'factCommit',
+   directory: 'factDirectory',
++  tarball: 'factTarball',
+ } as const satisfies Record<SourceFact['kind'], string>
+ 
+ function MarketIcon({ src, size }: { readonly src: string | undefined; readonly size: number }): ReactNode {
+diff --git a/packages/client/ui-plugin-market/src/client/locales.ts b/packages/client/ui-plugin-market/src/client/locales.ts
+index 52753bd63abb323338be68d2ee7268f85983cbbb..bb7fda1f9b83cd385fba3176e17f2c644805ca6f 100644
+--- a/packages/client/ui-plugin-market/src/client/locales.ts
++++ b/packages/client/ui-plugin-market/src/client/locales.ts
+@@ -64,6 +64,7 @@ export const zh = {
+   factRepository: '仓库',
+   factCommit: '提交',
+   factDirectory: '目录',
++  factTarball: '下载地址',
+   factPublished: '发布时间',
+   factAuthor: '作者',
+   factHomepage: '主页',
+@@ -158,6 +159,7 @@ export const en = {
+   factRepository: 'Repository',
+   factCommit: 'Commit',
+   factDirectory: 'Directory',
++  factTarball: 'Download URL',
+   factPublished: 'Published',
+   factAuthor: 'Author',
+   factHomepage: 'Homepage',
+@@ -249,6 +251,7 @@ export const ja = {
+   'factRepository': 'リポジトリ',
+   'factCommit': 'コミット',
+   'factDirectory': 'ディレクトリ',
++  'factTarball': 'ダウンロード URL',
+   'factPublished': '公開日',
+   'factAuthor': '作者',
+   'factHomepage': 'ホームページ',
+@@ -340,6 +343,7 @@ export const es = {
+   factRepository: 'Repositorio',
+   factCommit: 'comprometerse',
+   factDirectory: 'Directorio',
++  factTarball: 'URL de descarga',
+   factPublished: 'Publicado',
+   factAuthor: 'Autor',
+   factHomepage: 'Página de inicio',
+@@ -431,6 +435,7 @@ export const fr = {
+   factRepository: 'Référentiel',
+   factCommit: "S'engager",
+   factDirectory: 'Annuaire',
++  factTarball: 'URL de téléchargement',
+   factPublished: 'Publié',
+   factAuthor: 'Auteur',
+   factHomepage: "Page d'accueil",
+@@ -522,6 +527,7 @@ export const de = {
+   factRepository: 'Repository',
+   factCommit: 'Begehen',
+   factDirectory: 'Verzeichnis',
++  factTarball: 'Download-URL',
+   factPublished: 'Veröffentlicht',
+   factAuthor: 'Autor',
+   factHomepage: 'Homepage',
+@@ -613,6 +619,7 @@ export const ru = {
+   factRepository: 'Репозиторий',
+   factCommit: 'Зафиксировать',
+   factDirectory: 'Каталог',
++  factTarball: 'URL загрузки',
+   factPublished: 'Опубликовано',
+   factAuthor: 'Автор',
+   factHomepage: 'Домашняя страница',
+@@ -704,6 +711,7 @@ export const pt = {
+   factRepository: 'Repositório',
+   factCommit: 'Confirmar',
+   factDirectory: 'Diretório',
++  factTarball: 'URL de download',
+   factPublished: 'Publicado',
+   factAuthor: 'Autor',
+   factHomepage: 'Página inicial',
+diff --git a/packages/client/ui-plugin-market/src/client/presentation.ts b/packages/client/ui-plugin-market/src/client/presentation.ts
+index 2ce11ebb7f03fc22cd624ba343decb0ddaa3066b..45a75673614e0d1ff7b54a589dec19825ad55499 100644
+--- a/packages/client/ui-plugin-market/src/client/presentation.ts
++++ b/packages/client/ui-plugin-market/src/client/presentation.ts
+@@ -78,7 +78,7 @@ export function presentedVersion(entry: MarketListingEntry): MarketListingVersio
+ 
+ /** One fact about where an entry installs from, keyed for its localized label. */
+ export interface SourceFact {
+-  readonly kind: 'package' | 'registry' | 'repository' | 'commit' | 'directory'
++  readonly kind: 'package' | 'registry' | 'repository' | 'commit' | 'directory' | 'tarball'
+   readonly value: string
+ }
+ 
+@@ -86,21 +86,22 @@ export interface SourceFact {
+  * List where a version installs from, so users can check its origin before installing.
+  * @param name - the entry's package name.
+  * @param version - the version to install.
+- * @returns the npm package and registry, or the repository, full commit, and package directory.
++ * @returns npm package and registry, Git repository and commit details, or the tarball URL.
+  */
+ export function sourceFacts(name: string, version: MarketListingVersion): SourceFact[] {
+   const { source } = version
+-  if (source.type === 'npm') {
+-    return [
++  switch (source.type) {
++    case 'npm': return [
+       { kind: 'package', value: `${name}@${version.version}` },
+       ...source.registry === undefined ? [] : [{ kind: 'registry' as const, value: source.registry }],
+     ]
++    case 'git': return [
++      { kind: 'repository', value: source.url },
++      { kind: 'commit', value: source.commit },
++      ...source.path === undefined ? [] : [{ kind: 'directory' as const, value: source.path }],
++    ]
++    case 'tarball': return [{ kind: 'tarball', value: source.url }]
+   }
+-  return [
+-    { kind: 'repository', value: source.url },
+-    { kind: 'commit', value: source.commit },
+-    ...source.path === undefined ? [] : [{ kind: 'directory' as const, value: source.path }],
+-  ]
+ }
+ 
+ /**
+diff --git a/packages/client/ui-plugin-market/tests/discover.client.spec.tsx b/packages/client/ui-plugin-market/tests/discover.client.spec.tsx
+index 9597605788edff971d433e2e352315add843a9ca..9d89f1ef52bf9ecee3df68c25936fff8f50dcb13 100644
+--- a/packages/client/ui-plugin-market/tests/discover.client.spec.tsx
++++ b/packages/client/ui-plugin-market/tests/discover.client.spec.tsx
+@@ -164,6 +164,22 @@ describe('DiscoverSection', () => {
+     expect(screen.queryByRole('dialog')).toBeNull()
+   })
+ 
++  it('shows the tarball URL before passing it to the confirmed installer', () => {
++    const url = 'https://downloads.example/dsh-archive-1.0.0.tgz'
++    const { answer, install } = renderTab()
++    const archive = entry('dsh-archive', { title: 'Archive plugin' }, {}, {
++      source: { type: 'tarball', url }, install: { spec: url },
++    })
++    answer(INITIAL_QUERY, { entries: [archive], total: 1 })
++    fireEvent.click(card('dsh-archive').getByRole('button', { name: 'Install Archive plugin' }))
++    const dialog = within(screen.getByRole('dialog', { name: 'Install "Archive plugin"?' }))
++    expect(dialog.getByText(en.factTarball)).toBeTruthy()
++    expect(dialog.getByText(url)).toBeTruthy()
++    expect(install).not.toHaveBeenCalled()
++    fireEvent.click(dialog.getByRole('button', { name: en.install }))
++    expect(install).toHaveBeenCalledExactlyOnceWith({ spec: url, title: 'Archive plugin', version: '1.0.0' })
++  })
++
+   it('falls back to the default artwork when an icon fails to load', () => {
+     renderTab()
+     const image = document.querySelector('[data-market-entry="dsh-a"] img') as HTMLImageElement
+diff --git a/packages/util/plugin-market-index/README.i18n.yaml b/packages/util/plugin-market-index/README.i18n.yaml
+index 9f56252a3b3c34f7cb237830e804e2211e7ab9e2..dc94cf040a43eae004256a4c1dfb07a7fe2a7252 100644
+--- a/packages/util/plugin-market-index/README.i18n.yaml
++++ b/packages/util/plugin-market-index/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: cd2a60a905c978d6
+   zh: cc71d387d0cbd442
+ /dsh-plugin-market-index/use-this-package:
+-  en: 8eac2625e2e366a8
+-  zh: 652131f240e929e0
++  en: 9caeecb34e5a5a7a
++  zh: 4ddaeb79c27d198b
+ /dsh-plugin-market-index/api:
+   en: e0e4444616427bf2
+   zh: 3960a7602bb17705
+diff --git a/packages/util/plugin-market-index/README.md b/packages/util/plugin-market-index/README.md
+index 2255022c8e913231d30e87cf0d3fc9631331ffe5..d0a551e958ce1bd18b6e7d1f95472fb9e17efffe 100644
+--- a/packages/util/plugin-market-index/README.md
++++ b/packages/util/plugin-market-index/README.md
+@@ -28,7 +28,7 @@ It is a library, not a service or plugin: no `ctx`, no registrations, no state,
+ 
+ Parse the fetched document as JSON, then pass the value and the URL it was read from to `parseMarketIndex`. The first violated rule throws `MarketIndexError` with the JSON path of the offending value. A successful result drops members the format does not define, fills absent `metadata` groups, `keywords`, `labels`, `sortKeys`, and `engines` with empty values, orders each plugin's `versions` by descending SemVer precedence, and replaces each relative `icon` reference with its absolute URL.
+ 
+-Install one version with `marketInstallTarget(name, version)`: it returns the exact pnpm spec, `name@version` for npm and a commit-pinned `git+https` URL with an optional `path:` parameter for Git, and the registry to ask first when the version names one.
++Install one version with `marketInstallTarget(name, version)`: it returns the pnpm spec. npm uses `name@version` and the registry if specified. Git uses a commit-pinned `git+https` URL with an optional `path:` parameter. A tarball uses its download URL.
+ 
+ -----
+ 
+diff --git a/packages/util/plugin-market-index/README.zh.md b/packages/util/plugin-market-index/README.zh.md
+index e19d6cfcb9947ff9db3d12c2422779963f6a1ebe..0d643bca553324af63d6c8fe961b05e05bfecd90 100644
+--- a/packages/util/plugin-market-index/README.zh.md
++++ b/packages/util/plugin-market-index/README.zh.md
+@@ -28,7 +28,7 @@ kind: "package-library"
+ 
+ 先把获取到的文档解析为 JSON，再把该值和读取它的 URL 传给 `parseMarketIndex`。遇到第一条被违反的规则时，它抛出 `MarketIndexError`，并附带违规值的 JSON 路径。成功的结果会丢弃格式未定义的成员，用空值填充缺失的 `metadata` 分组、`keywords`、`labels`、`sortKeys` 和 `engines`，按 SemVer 优先级降序排列每个插件的 `versions`，并把每个相对 `icon` 引用替换为其绝对 URL。
+ 
+-使用 `marketInstallTarget(name, version)` 安装一个版本：它返回精确的 pnpm spec（npm 为 `name@version`，Git 为固定到提交、可带 `path:` 参数的 `git+https` URL），该版本指定了 registry 时还返回首先询问的 registry。
++使用 `marketInstallTarget(name, version)` 安装一个版本：它返回 pnpm spec。npm 使用 `name@version` 并返回版本指定的注册表。Git 使用固定提交的 `git+https` URL，可带 `path:` 参数。tarball 使用下载地址。
+ 
+ -----
+ 
+diff --git a/packages/util/plugin-market-index/src/index.ts b/packages/util/plugin-market-index/src/index.ts
+index ae700b54191a30edc65047c5dc773957f0d4f823..f7ca481b2750092a3420ef6f058b5d702c0c6483 100644
+--- a/packages/util/plugin-market-index/src/index.ts
++++ b/packages/util/plugin-market-index/src/index.ts
+@@ -201,7 +201,13 @@ function source(value: unknown, path: string): MarketSource {
+       const packageDir = optional(object, 'path', path, packagePath)
+       return { type: 'git', url: gitUrl(object.url, `${path}.url`), commit, ...packageDir === undefined ? {} : { path: packageDir } }
+     }
+-    default: return fail(`${path}.type`, 'must be "npm" or "git"')
++    case 'tarball': {
++      const at = `${path}.url`
++      const url = httpUrl(object.url, at, ['https:', 'http:'])
++      if (!/\.(?:tgz|tar\.gz)$/iu.test(url.pathname)) fail(at, 'must end in .tgz or .tar.gz')
++      return { type: 'tarball', url: url.href }
++    }
++    default: return fail(`${path}.type`, 'must be "npm", "git", or "tarball"')
+   }
+ }
+ 
+@@ -316,15 +322,20 @@ export function parseMarketIndex(value: unknown, indexUrl: string): MarketIndex
+ }
+ 
+ /**
+- * Build the arguments that install one exact version: `name@version` for npm, and a `git+https` URL pinned to the
+- * commit, with pnpm's `path:` parameter for a package directory, for Git.
++ * Build the install arguments for a listed version: `name@version` for npm, a commit-pinned `git+https` URL
++ * with an optional package directory for Git, or the URL of a tarball.
+  * @param name - the plugin's package name.
+  * @param version - a validated version of that plugin.
+  * @returns the install spec and the registry to ask first, when the version names one.
+  */
+ export function marketInstallTarget(name: string, version: Pick<MarketVersion, 'version' | 'source'>): MarketInstallTarget {
+   const { source: from } = version
+-  if (from.type === 'npm') return { spec: `${name}@${version.version}`, ...from.registry === undefined ? {} : { registry: from.registry } }
+-  const repository = from.url.endsWith('.git') ? from.url : `${from.url}.git`
+-  return { spec: `git+${repository}#${from.commit}${from.path === undefined ? '' : `&path:/${from.path}`}` }
++  switch (from.type) {
++    case 'npm': return { spec: `${name}@${version.version}`, ...from.registry === undefined ? {} : { registry: from.registry } }
++    case 'git': {
++      const repository = from.url.endsWith('.git') ? from.url : `${from.url}.git`
++      return { spec: `git+${repository}#${from.commit}${from.path === undefined ? '' : `&path:/${from.path}`}` }
++    }
++    case 'tarball': return { spec: from.url }
++  }
+ }
+diff --git a/packages/util/plugin-market-index/src/types.ts b/packages/util/plugin-market-index/src/types.ts
+index f2570d7777ed5362d6b14ec5bfcb868669c5ead2..78116ed1bc8679289b150c31a311f1d64b3200bb 100644
+--- a/packages/util/plugin-market-index/src/types.ts
++++ b/packages/util/plugin-market-index/src/types.ts
+@@ -56,6 +56,11 @@ export type MarketSource =
+     /** Relative POSIX package directory; absent means the repository root. */
+     readonly path?: string
+   }
++  | {
++    readonly type: 'tarball'
++    /** Absolute http(s) URL of a versioned .tgz or .tar.gz archive, without credentials, query, or fragment. */
++    readonly url: string
++  }
+ 
+ /** Runtime requirements of one version. */
+ export interface MarketEngines {
+diff --git a/packages/util/plugin-market-index/tests/plugin-market-index.spec.ts b/packages/util/plugin-market-index/tests/plugin-market-index.spec.ts
+index d42849961e7a9c418d7cd0059ad71317b3a9279a..16bb7a94de12033046afcdebab6d8a6363b29ec8 100644
+--- a/packages/util/plugin-market-index/tests/plugin-market-index.spec.ts
++++ b/packages/util/plugin-market-index/tests/plugin-market-index.spec.ts
+@@ -206,7 +206,7 @@ describe('parseMarketIndex', () => {
+   it('rejects malformed sources', () => {
+     const at = '$.plugins[0].versions[0].source'
+     const npm = (fields: Record<string, unknown>): string => versionRejection({ source: { type: 'npm', ...fields } })
+-    expect(versionRejection({ source: { type: 'tarball' } })).toBe(`${at}.type must be "npm" or "git"`)
++    expect(versionRejection({ source: { type: 'unknown' } })).toBe(`${at}.type must be "npm", "git", or "tarball"`)
+     expect(npm({ registry: 'not a url' })).toBe(`${at}.registry must be an absolute URL`)
+     expect(npm({ registry: 'ftp://registry.example/' })).toBe(`${at}.registry must use https: or http:`)
+     expect(npm({ registry: 'https://user:pw@registry.example/' })).toBe(`${at}.registry must not contain credentials`)
+@@ -266,6 +266,36 @@ describe('parseMarketIndex', () => {
+   })
+ })
+ 
++describe('tarball sources', () => {
++  it.each(['dsh-foo-1.2.3.tgz', 'dsh-foo-1.2.3.tar.gz'])('uses the archive URL for %s without a registry override', (file) => {
++    const url = `https://downloads.example/${file}`
++    const plugin = entry({ versions: [npmVersion({ source: { type: 'tarball', url } })] })
++    const [listed] = parseMarketIndex(document({ plugins: [plugin] }), INDEX_URL).plugins
++    const version = listed?.versions[0]
++    if (listed === undefined || version === undefined) throw new Error('archive version was not listed')
++    expect(version.source).toEqual({ type: 'tarball', url })
++    expect(marketInstallTarget(listed.name, version)).toEqual({ spec: url })
++  })
++
++  it('refuses a download URL with credentials', () => {
++    const url = new URL('https://downloads.example/dsh-foo.tgz')
++    url.username = 'user'
++    url.password = 'pw'
++    expect(versionRejection({ source: { type: 'tarball', url: url.href } }))
++      .toBe('$.plugins[0].versions[0].source.url must not contain credentials')
++  })
++
++  it.each([
++    ['./dsh-foo.tgz', 'must be an absolute URL'],
++    ['file:///tmp/dsh-foo.tgz', 'must use https: or http:'],
++    ['https://downloads.example/dsh-foo.tgz?signature=example', 'must not contain a query or fragment'],
++    ['https://downloads.example/dsh-foo.tgz#v1', 'must not contain a query or fragment'],
++    ['https://downloads.example/dsh-foo.zip', 'must end in .tgz or .tar.gz'],
++  ])('rejects %s', (url, reason) => {
++    expect(versionRejection({ source: { type: 'tarball', url } })).toBe(`$.plugins[0].versions[0].source.url ${reason}`)
++  })
++})
++
+ describe('marketInstallTarget', () => {
+   it('pins npm versions to their exact version and registry', () => {
+     expect(marketInstallTarget('dsh-foo', { version: '1.2.3', source: { type: 'npm' } })).toEqual({ spec: 'dsh-foo@1.2.3' })

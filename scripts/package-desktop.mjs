@@ -83,7 +83,10 @@ export async function packageDesktop(options) {
   const { manifest: patchManifest } = await checkPatchManifest(options.patches, { baseCommit: options.commit });
   const product = resolveProductInputs({ target, dshVersion, buildVersion: requestedBuildVersion, pluginVersion: options.studioVersion });
   const { pluginVersion: studioVersion, desktopVersion: buildVersion } = product;
-  const environment=packageManagerEnvironment({ ...product.environment, ...process.env });
+  const environment=packageManagerEnvironment({
+    ...product.environment, ...process.env,
+    DSH_DESKTOP_DEFAULT_PLUGIN_INDEX_URL: product.defaultPluginIndexUrl ?? '',
+  });
   const manager = packageManagerInvocation(process.platform, environment, options.pnpmScript);
   const invoke = (args, cwd) => run(manager.command, [...manager.args, ...args], cwd, environment);
   return withDesktopCheckout(options,async checkout=>{

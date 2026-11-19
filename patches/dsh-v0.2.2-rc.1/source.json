@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "96d0cc7320eb54027c83cef7052e17f789cfcdd7",
+  "headCommit": "b7f4923195f37eb0f7f3edf3f2d550e3b28d393d",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "8a42dfaba954450c981fca37b2fc77b2b20ffd60",
-  "sourceSha256": "a900a482a02f3b7087695e33d7fb3c7c236b9b1c59674f11778806decdfaca25",
+  "tree": "253c48d8d77a1a674316fd965a8d86fcb19f6c9d",
+  "sourceSha256": "b79c697384ef7ab30dcb7c6d18987b076711321c7696a2d9fe42789237ec3b73",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "348b9ee6e4da360ddf70415618f0736ed03dc8efb6f8373a6bf91bbc22a8c94e"
+    "sha256": "e4a1fc4f85fc831bec7cd7282294aefc9596d730106349c0bd6d6771d5c0cf86"
   },
   "commits": [
     {
@@ -340,6 +340,18 @@
       "file": "086-studio-desktop-telemetry.patch",
       "commit": "96d0cc7320eb54027c83cef7052e17f789cfcdd7",
       "sha256": "e8189763edffe809455b036a3201c597a140d7deb7545de2c64e4455b47a09e6"
+    },
+    {
+      "id": "087",
+      "file": "087-plugin-market-tarball-sources.patch",
+      "commit": "5eaadfb3fb804ab40a5ee9d3b05db7c87bd43886",
+      "sha256": "b4257332cd79421b20f34b3c2909555ccaa6b1422dee87842ef11a3c49656bd9"
+    },
+    {
+      "id": "088",
+      "file": "088-desktop-default-plugin-index.patch",
+      "commit": "b7f4923195f37eb0f7f3edf3f2d550e3b28d393d",
+      "sha256": "28f591d4d304d940696f55a37b5de8e41cbb191056fdef9bfcbc087f60ded17a"
     }
   ]
 }

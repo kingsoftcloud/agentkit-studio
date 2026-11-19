@@ -2736,12 +2736,125 @@
       },
       "sequence": 55,
       "sha256": "e8189763edffe809455b036a3201c597a140d7deb7545de2c64e4455b47a09e6"
+    },
+    {
+      "id": "087",
+      "file": "087-plugin-market-tarball-sources.patch",
+      "sequence": 56,
+      "category": "product",
+      "risk": "medium",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "maintainerRole": "Studio plugin market maintainers",
+      "removeWhen": "The pinned DSH release supports tarball sources and shows the download address before confirmation.",
+      "contracts": [
+        "Format 1 indexes accept an absolute HTTP(S) tarball URL and preserve npm and Git sources.",
+        "Discover displays the archive URL and passes it to the existing confirmed installation flow.",
+        "Index browsing and details use index metadata and the declared repository without downloading the archive."
+      ],
+      "affectedPackages": [
+        "packages/boot/plugin-market",
+        "packages/client/ui-plugin-market",
+        "packages/util/plugin-market-index"
+      ],
+      "affectedFiles": [
+        ".agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.i18n.yaml",
+        ".agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.md",
+        ".agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.zh.md",
+        "packages/boot/plugin-market/README.i18n.yaml",
+        "packages/boot/plugin-market/README.md",
+        "packages/boot/plugin-market/README.zh.md",
+        "packages/boot/plugin-market/src/index.ts",
+        "packages/boot/plugin-market/tests/detail-remote.spec.ts",
+        "packages/client/ui-plugin-market/README.i18n.yaml",
+        "packages/client/ui-plugin-market/README.md",
+        "packages/client/ui-plugin-market/README.zh.md",
+        "packages/client/ui-plugin-market/src/client/DiscoverSection.tsx",
+        "packages/client/ui-plugin-market/src/client/locales.ts",
+        "packages/client/ui-plugin-market/src/client/presentation.ts",
+        "packages/client/ui-plugin-market/tests/discover.client.spec.tsx",
+        "packages/util/plugin-market-index/README.i18n.yaml",
+        "packages/util/plugin-market-index/README.md",
+        "packages/util/plugin-market-index/README.zh.md",
+        "packages/util/plugin-market-index/src/index.ts",
+        "packages/util/plugin-market-index/src/types.ts",
+        "packages/util/plugin-market-index/tests/plugin-market-index.spec.ts"
+      ],
+      "dependsOn": [],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio supports plugin bundles distributed through object storage."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/util/plugin-market-index/tests/plugin-market-index.spec.ts",
+          "packages/boot/plugin-market/tests/detail-remote.spec.ts",
+          "packages/client/ui-plugin-market/tests/discover.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "web"
+        ]
+      },
+      "sha256": "b4257332cd79421b20f34b3c2909555ccaa6b1422dee87842ef11a3c49656bd9"
+    },
+    {
+      "id": "088",
+      "file": "088-desktop-default-plugin-index.patch",
+      "sequence": 57,
+      "category": "product",
+      "risk": "medium",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "maintainerRole": "Studio desktop and plugin market maintainers",
+      "removeWhen": "The pinned DSH Desktop supports a packaged default index and profile migration.",
+      "contracts": [
+        "macOS and Windows package a configured HTTPS index and ship Discover enabled for new and existing Desktop profiles.",
+        "The Desktop Host puts the product source first and preserves distinct existing sources before sending renderer readiness.",
+        "A profile applies the default once per Desktop version and URL, with retry after a failed settings write."
+      ],
+      "affectedPackages": [
+        "apps/desktop",
+        "apps/desktop-host"
+      ],
+      "affectedFiles": [
+        "apps/desktop-host/src/index.ts",
+        "apps/desktop-host/src/plugin-market-default.ts",
+        "apps/desktop-host/tests/plugin-market-default.spec.ts",
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/tests/core-package-set.spec.ts"
+      ],
+      "dependsOn": [
+        "064",
+        "078",
+        "082",
+        "083"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio Desktop supplies an optional product plugin index from its installer."
+      },
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/plugin-market-default.spec.ts",
+          "apps/desktop/tests/core-package-set.spec.ts",
+          "apps/desktop/tests/project-manager.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "product-profiles"
+        ]
+      },
+      "sha256": "28f591d4d304d940696f55a37b5de8e41cbb191056fdef9bfcbc087f60ded17a"
     }
   ],
-  "patchedTree": "8a42dfaba954450c981fca37b2fc77b2b20ffd60",
-  "patchedSourceSha256": "a900a482a02f3b7087695e33d7fb3c7c236b9b1c59674f11778806decdfaca25",
+  "patchedTree": "253c48d8d77a1a674316fd965a8d86fcb19f6c9d",
+  "patchedSourceSha256": "b79c697384ef7ab30dcb7c6d18987b076711321c7696a2d9fe42789237ec3b73",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "33efe43b8d4437557dcb4e9b882c583cdde9d7d233495b1e5a9d56c702b5c53c"
+    "sha256": "b6c5cb986c843a9599dd6203eef4a6a08ce3e56d1572871993700fb6ac07082e"
   }
 }

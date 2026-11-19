@@ -69,6 +69,10 @@ const APPROVED_CONTAINER_HOMES = Object.freeze([CONTAINER_HOME]);
 const NETWORK_ORACLE_PATH = 'tests/fixtures/a2a-tool-activity-reference.json';
 const NETWORK_ORACLE_SHA256 = '67a980c5f98febb3cfb65e8eeb1b66025deae25b1e403452f4fc511829c0ca80';
 
+// The generated patch retains one unchanged synthetic URL credential from an upstream refusal test.
+const MARKET_TARBALL_PATCH = 'patches/dsh-v0.2.2-rc.1/087-plugin-market-tarball-sources.patch';
+const UPSTREAM_MARKET_TEST_CONTEXT_SHA256 = 'a651fd03725ad0088f0ab3cba825f46809b22a50e8eb86c95f3add73a36a4630';
+
 export function auditPath(file) {
   return FORBIDDEN_PATHS
     .filter(pattern => pattern.test(file))
@@ -105,6 +109,12 @@ function publicExample(name, candidate, text, file, networkOracle) {
     // reviewed bare address literals. URLs and other test addresses still fail.
     if (/^['"]/.test(value) && /['"]$/.test(value)
       && (networkOracle || file === 'tests/native-dsh-web.test.mjs' && address === ['10', '0', '0', '1'].join('.'))) return true;
+  }
+  if (name === 'embedded-url-credential' && file === MARKET_TARBALL_PATCH) {
+    const start = text.lastIndexOf('\n', candidate.index) + 1;
+    const end = text.indexOf('\n', candidate.index);
+    const line = text.slice(start, end === -1 ? undefined : end);
+    if (createHash('sha256').update(line).digest('hex') === UPSTREAM_MARKET_TEST_CONTEXT_SHA256) return true;
   }
   if (name === 'embedded-url-credential' && testInput) {
     // Only these short, explicit synthetic user/password pairs are examples.

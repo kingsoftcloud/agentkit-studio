@@ -36,6 +36,25 @@ test('invalid feed or version inputs fail before packaging', () => {
   for (const values of [{ target: '__proto__' }, { updateChannel: 'beta' }, { buildVersion: 'invalid' }, { pluginVersion: '9.0.0' }]) assert.throws(() => resolveProductInputs(values), /invalid public/);
 });
 
+test('the optional product index uses a public HTTPS URL on every desktop target', () => {
+  const configuration = structuredClone(product);
+  delete configuration.desktop.defaultPluginIndexUrl;
+  assert.equal(resolveProductInputs({ configuration }).defaultPluginIndexUrl, null);
+  configuration.desktop.defaultPluginIndexUrl = null;
+  assert.equal(resolveProductInputs({ configuration }).defaultPluginIndexUrl, null);
+  configuration.desktop.defaultPluginIndexUrl = 'https://Market.Example.org:443/studio/index.json';
+  for (const target of ['mac-arm64', 'mac-x64', 'win-x64']) {
+    assert.equal(resolveProductInputs({ target, configuration }).defaultPluginIndexUrl, 'https://market.example.org/studio/index.json');
+  }
+  const credentialUrl = new URL(configuration.desktop.defaultPluginIndexUrl);
+  credentialUrl.username = 'fixture';
+  for (const value of [42, '', '/index.json', 'http://market.example.org/index.json', credentialUrl.href,
+    'https://market.example.org/index.json?', 'https://market.example.org/index.json#top', 'https://market.example.org/invalid path']) {
+    configuration.desktop.defaultPluginIndexUrl = value;
+    assert.throws(() => resolveProductInputs({ configuration }), /invalid public/);
+  }
+});
+
 test('the product default lane and every accepted DSH lane reach the packaged manifest input', () => {
   assert.equal(product.desktop.updates.channel, 'nightly');
   for (const updateChannel of ['latest', 'nightly', 'preview', 'stable']) {
