@@ -1,6 +1,8 @@
 /** Internal presentation and scope-owner capsules only.
  * Keep DSH/React peers, DOM/global APIs, RPC payloads and storage keys outside
- * this list. Additions require checking every use at those boundaries.
+ * this list. The independently built Harness view also receives the ui and
+ * hostRemote options and the ResourceDialog and buttonStyle UI members.
+ * Additions require checking every use at those boundaries.
  */
 export const CLIENT_PRIVATE_PROPERTIES = Object.freeze([
   "ALLOWED_RUNTIME_TYPES",
@@ -36,7 +38,6 @@ export const CLIENT_PRIVATE_PROPERTIES = Object.freeze([
   "Pill",
   "PlatformResourcePicker",
   "RUNTIME_LABELS",
-  "ResourceDialog",
   "ResourceWorkspace",
   "RuntimeCatalogPage",
   "ScheduleDeliveryPicker",
@@ -52,16 +53,13 @@ export const CLIENT_PRIVATE_PROPERTIES = Object.freeze([
   "StudioSubnav",
   "actions",
   "authoring",
-  "buttonStyle",
   "connectionOwner",
   "createDshModelBridge",
   "documentEffects",
-  "hostRemote",
   "inputStyle",
   "operationalStatus",
   "pagerButtonStyle",
   "primitives",
   "readConversationAgent",
-  "ui",
   "writeConversationAgent"
 ]);

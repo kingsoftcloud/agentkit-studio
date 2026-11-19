@@ -26,13 +26,14 @@ export async function apply(ctx) {
   const observability = installManagedObservability(ctx);
   if (observability) ctx.provide('studioManagedObservability', observability);
   const { mountStudioHost } = await import('./host/bootstrap.mjs');
-  await mountStudioHost(ctx, { env: runtimeEnv });
+  const { starHarness } = await mountStudioHost(ctx, { env: runtimeEnv });
   const versions = await import('./studio-version.mjs').then(({ studioVersions }) => studioVersions(runtimeEnv));
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',
     name: '__AGENTKIT_STUDIO__',
     value: {
       ...versions,
+      starHarnessUI: starHarness?.clientDescriptor ?? null,
       // Cordis exposes this service only after the providing plugin is active.
       // Resolve it when the Host collects the index, not during apply().
       hostCompatibility: ctx.get('studioHostCompatibility').inspect(),

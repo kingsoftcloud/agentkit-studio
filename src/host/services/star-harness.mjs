@@ -29,7 +29,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   releases = createStarHarnessReleases({ directory: join(root, 'releases'), env, packageManager }),
   start = startStarHarness, probe = probeStarHarness, inspect = inspectStarHarness } = {}) {
   const configPath = join(root, 'settings.json');
-  let configuration = initial, configError;
+  let configuration = initial, configError, clientError, clientAsset = null;
   try {
     const found = JSON.parse(readFileSync(configPath, 'utf8'));
     if (!(found.version === null && found.enabled === false || starHarnessVersion(found.version))
@@ -44,12 +44,16 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   const lifetime = new AbortController();
   let running = 0, mutation, latestVersion = null, closing;
 
-  async function save(next) {
+  const readClient = next => next.enabled ? releases.client?.(next.version) ?? null : null;
+  const clientDescriptor = () => clientAsset ? { version: clientAsset.version, sha256: clientAsset.sha256 } : null;
+  async function save(next, nextAsset = clientAsset) {
     await mkdir(root, { recursive: true, mode: 0o700 });
     const temp = join(root, '.settings-' + randomUUID());
     try {
       await writeFile(temp, JSON.stringify(next), { mode: 0o600 });
       await rename(temp, configPath);
+      clientAsset = nextAsset;
+      clientError = null;
       configuration = next;
     } finally { await rm(temp, { force: true }); }
   }
@@ -104,6 +108,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   async function replaceWorkers(before, after, next, signal) {
     // A workspace ledger has one writer. The new worker takes over only after
     // the old one has stopped. Restore its previous version if cutover fails.
+    const nextAsset = await readClient(next);
     const stopped = [], started = [];
     try {
       for (const binding of before) {
@@ -116,7 +121,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         started.push(binding);
       }
       signal.throwIfAborted();
-      await save(next);
+      await save(next, nextAsset);
     } catch (error) {
       await Promise.allSettled(started.map(binding => stop(binding.workspace)));
       if (!lifetime.signal.aborted) await Promise.allSettled(stopped.filter(binding => available(binding.workspace) && bindingFor(binding.workspace)).map(async binding => {
@@ -136,17 +141,26 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   };
   const available = workspace => workspaceExists(workspace) && !overlaps(root, workspace) && !hasConflict(workspace);
   const route = workspace => {
-    if (!configuration.enabled || !available(workspace)) return;
+    if (clientError || !configuration.enabled || !available(workspace)) return;
     const binding = bindingFor(workspace);
     return binding && presentBinding(binding);
   };
   const availableBindings = () => [...new Set([
     ...configuration.bindings.map(row => row.workspace), ...registeredWorkspaces().map(row => row.path),
   ])].filter(available).map(bindingFor);
-  const activeBindings = () => configuration.enabled ? availableBindings() : [];
+  const activeBindings = () => configuration.enabled && !clientError ? availableBindings() : [];
 
   return {
     get enabled() { return configuration.enabled; },
+    get clientAsset() { return clientAsset; },
+    get clientDescriptor() { return clientDescriptor(); },
+    async restoreClientAsset() {
+      try { clientAsset = await readClient(configuration); }
+      catch (error) {
+        clientError = starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 前端校验失败，请重新安装当前版本。', { cause: error });
+        throw clientError;
+      }
+    },
     get routes() { return activeBindings().map(presentBinding); },
     route,
     modelInfo(model) { return { images: activeBindings().some(row => row.model === model && row.images) }; },
@@ -154,6 +168,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       if (mutation) throw codes.busy();
       if (lifetime.signal.aborted) throw codes.closed();
       const binding = bindingFor(workspace);
+      if (clientError) throw clientError;
       if (!route(workspace)) throw codes.unbound();
       running++;
       let released = false;
@@ -171,7 +186,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       const { version, enabled, previousVersion } = configuration;
       const recommendedVersion = starHarnessVersion(bundledVersion) && (!latestVersion || newer(bundledVersion, latestVersion))
         ? bundledVersion : latestVersion;
-      if (!includeWorkspaces) return { canCreate: Boolean(version && enabled) };
+      if (!includeWorkspaces) return { canCreate: Boolean(version && enabled && !clientError) };
       const configuredModels = await settings();
       const external = await Promise.all([...externalRoutes.values()].map(async route => {
         let current;
@@ -180,10 +195,10 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
           running: Boolean(current), version: current?.version ?? null };
       }));
       return {
-        version, enabled, previousVersion, registryUnavailable, busy: Boolean(mutation || running),
+        version, enabled, previousVersion, registryUnavailable, busy: Boolean(mutation || running), clientUI: clientDescriptor(),
         recommendedVersion,
         availableUpgrade: recommendedVersion && version && newer(recommendedVersion, version) ? recommendedVersion : null,
-        canCreate: Boolean(version && enabled),
+        canCreate: Boolean(version && enabled && !clientError), repairNeeded: Boolean(clientError),
         workspaceChoices: (workspaceRegistry?.()?.list?.() ?? []).map(({ path, title }) => ({ path, title })),
         models: (configuredModels.modelProfiles ?? []).filter(item => item.enabled !== false).map(item => ({
           id: item.id, label: item.displayName || item.modelName || item.id,
@@ -206,8 +221,8 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         await mkdir(root, { recursive: true, mode: 0o700 });
         const packageDirectory = await releases.install(version, guard);
         await probe({ root, packageDirectory, version, env, signal: guard });
-        if (current === version) return;
-        const next = { ...configuration, version, previousVersion: current };
+        if (current === version && !clientError) return;
+        const next = current === version ? configuration : { ...configuration, version, previousVersion: current };
         const live = [...workers.keys()].map(workspace => bindingFor(workspace) ?? { workspace });
         await replaceWorkers(live, live.filter(binding => available(binding.workspace) && bindingFor(binding.workspace)), next, guard);
       }, signal);

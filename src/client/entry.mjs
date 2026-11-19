@@ -1,5 +1,6 @@
 import { createStudioApp } from './app.mjs';
 import { mountStudio } from './dsh/mount.mjs';
+import { loadStarHarnessUI, watchStarHarnessUI } from './dsh/star-harness-ui.mjs';
 
 window.__ModuleLoader__.load({
   id: '@kingsoftcloud/agentkit-studio',
@@ -19,7 +20,16 @@ window.__ModuleLoader__.load({
     return {
       name: 'agentkit-studio',
       inject: ['slots', 'layout', 'sidebarRight', 'sidebarRightTabs', 'theme', 'connection', 'remote', 'remote.session', 'remote.settings', 'remote.credentials', 'remote.llm', 'remote.agentPresets', 'remote.commands', 'sessions', 'modelDirectories', 'uiConversation'],
-      apply(ctx) { mountStudio(ctx, createStudioApp(runtime)); },
+      async apply(ctx) {
+        let harnessUIError = false;
+        const harnessUI = await loadStarHarnessUI(window.__AGENTKIT_STUDIO__?.starHarnessUI).catch(error => {
+          harnessUIError = true;
+          console.warn('[agentkit-studio] Star Harness UI could not start:', error.message);
+          return null;
+        });
+        mountStudio(ctx, createStudioApp({ ...runtime, harnessUI, harnessUIError }));
+        ctx.effect(() => watchStarHarnessUI(window));
+      },
     };
   },
 });
