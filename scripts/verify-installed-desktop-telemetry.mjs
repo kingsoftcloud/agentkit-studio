@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { _electron as electron } from '@playwright/test';
@@ -34,11 +34,13 @@ function packagePaths(path) {
 }
 
 async function installWindows(installer, destination) {
+  console.log(`Installing signed ${basename(installer)}`);
   const script = [
     '$ErrorActionPreference = "Stop"',
     '$signature = Get-AuthenticodeSignature -LiteralPath $env:STUDIO_TEST_INSTALLER',
     'if ($signature.Status -ne "Valid" -or -not $signature.TimeStamperCertificate) { throw "Installer signature invalid" }',
-    '$result = Start-Process -FilePath $env:STUDIO_TEST_INSTALLER -ArgumentList @("/S", "/D=$env:STUDIO_TEST_DESTINATION") -Wait -PassThru',
+    '$result = Start-Process -FilePath $env:STUDIO_TEST_INSTALLER -ArgumentList @("/S", "/D=$env:STUDIO_TEST_DESTINATION") -PassThru',
+    'if (-not $result.WaitForExit(120000)) { Stop-Process -Id $result.Id -Force; throw "NSIS did not exit within two minutes" }',
     'if ($result.ExitCode -ne 0) { exit $result.ExitCode }',
     '$app = Join-Path $env:STUDIO_TEST_DESTINATION "AgentKit Studio.exe"',
     '$installed = Get-AuthenticodeSignature -LiteralPath $app',
@@ -47,7 +49,9 @@ async function installWindows(installer, destination) {
   execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], {
     env: { ...process.env, STUDIO_TEST_INSTALLER: installer, STUDIO_TEST_DESTINATION: destination },
     stdio: 'inherit',
+    timeout: 150_000,
   });
+  console.log('Installed executable passed Authenticode verification');
   return join(destination, 'AgentKit Studio.exe');
 }
 
@@ -177,9 +181,9 @@ async function main() {
   const windows = process.platform === 'win32';
   assert.ok(values.version && values.output && (windows ? values.installer : values.app),
     '--version, --output and a Windows --installer or macOS --app are required');
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-installed-telemetry-')));
+  const root = await realpath(await mkdtemp(join(tmpdir(), windows ? 'studio-qa-' : 'studio-installed-telemetry-')));
   // The visible installer acceptance may relocate an existing installation.
-  const appPath = windows ? await installWindows(resolve(values.installer), join(root, 'installed-primary')) : resolve(values.app);
+  const appPath = windows ? await installWindows(resolve(values.installer), join(root, 'current')) : resolve(values.app);
   const { executable, resources } = packagePaths(appPath);
   const release = JSON.parse(await readFile(join(resources, 'studio-telemetry', 'policy.json'), 'utf8'));
   assert.deepEqual(release, { endpoint, defaultBasic: true, policyRevision: 'qualification-v1' });
@@ -190,6 +194,7 @@ async function main() {
     const app = await open(executable, profile, receiver.cert, values.version);
     try {
       await waitForNotice(app);
+      console.log('Reached the first-use privacy notice in the installed app');
       await wait(31_000);
       assert.equal(receiver.requests.length, 0);
       await assert.rejects(access(outbox), { code: 'ENOENT' });
@@ -221,6 +226,7 @@ async function main() {
     } finally {
       await app.close();
     }
+    console.log('Verified credential-free delivery, stable retry IDs, the fixed preview, and local opt-out');
 
     const requestsAfterOptOut = receiver.requests.length;
     const restarted = await open(executable, profile, receiver.cert, values.version);
@@ -249,13 +255,14 @@ async function main() {
     } finally {
       await declining.close();
     }
+    console.log('Verified opt-out after restart and decline in a fresh profile');
 
     let upgradedFrom = null;
     if (values.baseline) {
       assert.ok(values['baseline-version'] && values['baseline-version'] !== values.version);
       const old = resolve(values.baseline);
       const upgradeProfile = join(root, 'upgrade-profile');
-      const destination = join(root, process.platform === 'darwin' ? 'Upgraded Studio.app' : 'installed-upgrade');
+      const destination = join(root, windows ? 'upgrade' : 'Upgraded Studio.app');
       if (process.platform === 'darwin') await installMacBaseline(old, root, destination);
       else await installWindows(old, destination);
       const installed = process.platform === 'darwin' ? destination : join(destination, 'AgentKit Studio.exe');

@@ -344,8 +344,10 @@ jobs:
           set -euo pipefail
           [[ "$BASELINE_TAG" =~ ^desktop-[0-9A-Za-z.+-]+$ ]]
           baseline_dir=$(mktemp -d)
+          echo 'Downloading the previously released signed installer for the upgrade test'
           gh release download "$BASELINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-win-x64.exe' --dir "$baseline_dir"
           baseline_installer=$(find "$baseline_dir" -maxdepth 1 -name '*.exe' -print -quit)
+          test -s "$baseline_installer"
           node .qualification-tools/scripts/verify-installed-desktop-telemetry.mjs --version "$BUILD_VERSION" --baseline "$baseline_installer" --baseline-version "${BASELINE_TAG#desktop-}" --installer "$STUDIO_SIGNED_INSTALLER" --output .artifacts/windows-proof/desktop-telemetry.json
       - name: Collect credential-free packaging diagnostics
         if: always() && inputs.diagnostic_only
