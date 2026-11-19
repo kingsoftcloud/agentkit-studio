@@ -85,7 +85,7 @@ test('a Container bundle starts the reviewed Harness on its own loopback port an
   const env = { AGENTKIT_BUNDLE_STAR_HARNESS: '1' };
   const first = await startBundleHarness(plan, { env });
   t.after(() => first.stop());
-  assert.equal(first.version, '0.0.25');
+  assert.equal(first.version, '0.0.26');
   assert.match(first.endpoint, /^http:\/\/127\.0\.0\.1:\d+$/u);
   assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_WORKSPACE, plan.cwd);
   assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_MODEL, 'model');
