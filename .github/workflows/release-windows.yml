@@ -291,6 +291,7 @@ jobs:
             Set-Content .artifacts/windows-proof/app.asar.sha256
       - name: Verify timestamped installer and actual installation
         if: ${{ ! inputs.diagnostic_only }}
+        id: installed
         shell: pwsh
         env:
           CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
@@ -327,7 +328,7 @@ jobs:
           node .qualification-tools/scripts/verify-windows-app-ui.mjs
           if ($LASTEXITCODE) { throw 'Installed Windows App UI acceptance failed' }
       - name: Verify telemetry in the signed Windows installation
-        if: ${{ inputs.qualify_telemetry }}
+        if: ${{ !cancelled() && inputs.qualify_telemetry && steps.installed.conclusion == 'success' }}
         timeout-minutes: 10
         shell: bash
         env:

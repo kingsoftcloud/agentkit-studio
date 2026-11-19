@@ -89,16 +89,25 @@ try {
     if ($started) {
       $element = [System.Windows.Automation.AutomationElement]::FromHandle($started.MainWindowHandle)
       if (-not $privacyDismissed) {
-        $privacyName = [System.Windows.Automation.OrCondition]::new(
+        $privacyLabels = [System.Windows.Automation.OrCondition]::new(
           [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '关闭基础统计并继续'),
           [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Turn off basic statistics and continue'))
+        $buttonType = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+        $privacyButton = [System.Windows.Automation.AndCondition]::new($privacyLabels, $buttonType)
         $process = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $started.Id)
         $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $process)
         foreach ($installedWindow in $windows) {
-          $privacy = $installedWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $privacyName)
+          $privacy = $installedWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $privacyButton)
           if ($privacy -and -not $privacy.Current.IsOffscreen) {
-            $invoke = $privacy.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-            $invoke.Invoke()
+            $invoke = $null
+            if ($privacy.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) {
+              $invoke.Invoke()
+            } else {
+              $bounds = $privacy.Current.BoundingRectangle
+              $dialog = [IntPtr]$installedWindow.Current.NativeWindowHandle
+              if ($dialog -eq [IntPtr]::Zero -or $bounds.IsEmpty) { continue }
+              [StudioInstallerWindow]::Click($dialog, $bounds.X+$bounds.Width/2, $bounds.Y+$bounds.Height/2)
+            }
             $privacyDismissed = $true
             break
           }
