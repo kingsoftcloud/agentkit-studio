@@ -64,9 +64,9 @@ jobs:
     timeout-minutes: 150
     steps:
       - name: Validate telemetry qualification options
-        if: ${{ inputs.qualify_telemetry && (inputs.diagnostic_only || inputs.candidate_run_id != '') }}
+        if: ${{ inputs.qualify_telemetry && inputs.diagnostic_only }}
         shell: pwsh
-        run: throw 'Telemetry qualification requires a fresh signed candidate'
+        run: throw 'Telemetry qualification requires a signed candidate'
       - name: Preserve canonical source line endings
         shell: pwsh
         run: git config --global core.autocrlf false
@@ -168,7 +168,9 @@ jobs:
           if ('${{ inputs.diagnostic_only }}' -eq 'true') { throw 'Signed candidate reuse cannot be diagnostic-only' }
           pnpm install --frozen-lockfile
           if ($LASTEXITCODE) { throw 'Qualification dependencies failed' }
-          node .qualification-tools/scripts/prepare-windows-candidate.mjs --repository '${{ github.repository }}' --run $env:CANDIDATE_RUN --source $env:SOURCE_SHA --version $env:BUILD_VERSION --output .artifacts/windows-candidate
+          $fixture = @()
+          if ('${{ inputs.qualify_telemetry }}' -eq 'true') { $fixture += '--telemetry-qualification' }
+          node .qualification-tools/scripts/prepare-windows-candidate.mjs --repository '${{ github.repository }}' --run $env:CANDIDATE_RUN --source $env:SOURCE_SHA --version $env:BUILD_VERSION --output .artifacts/windows-candidate @fixture
           if ($LASTEXITCODE) { throw 'Signed candidate identity or digest failed' }
           Expand-Archive -LiteralPath .artifacts/windows-candidate/candidate.zip -DestinationPath .artifacts/windows-candidate/unpacked
           $candidate = @(Get-ChildItem .artifacts/windows-candidate/unpacked -Directory -Recurse | Where-Object { $_.Name -eq 'windows-release' })
@@ -338,7 +340,7 @@ jobs:
           baseline_dir=$(mktemp -d)
           gh release download "$BASELINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-win-x64.exe' --dir "$baseline_dir"
           baseline_installer=$(find "$baseline_dir" -maxdepth 1 -name '*.exe' -print -quit)
-          node scripts/verify-installed-desktop-telemetry.mjs --app "$STUDIO_INSTALLED_APP" --version "$BUILD_VERSION" --baseline "$baseline_installer" --baseline-version "${BASELINE_TAG#desktop-}" --installer "$STUDIO_SIGNED_INSTALLER" --output .artifacts/windows-proof/desktop-telemetry.json
+          node .qualification-tools/scripts/verify-installed-desktop-telemetry.mjs --app "$STUDIO_INSTALLED_APP" --version "$BUILD_VERSION" --baseline "$baseline_installer" --baseline-version "${BASELINE_TAG#desktop-}" --installer "$STUDIO_SIGNED_INSTALLER" --output .artifacts/windows-proof/desktop-telemetry.json
       - name: Collect credential-free packaging diagnostics
         if: always() && inputs.diagnostic_only
         shell: pwsh
