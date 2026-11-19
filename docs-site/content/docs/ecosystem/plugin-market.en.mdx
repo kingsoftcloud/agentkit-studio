@@ -71,7 +71,7 @@ Inclusion rule: only valid SemVer versions that were published, are not deprecat
 
 Set `desktop.defaultPluginIndexUrl` in `src/product.json` to a directly readable HTTPS index URL without credentials, a query, or a fragment. Both macOS and Windows installers carry this setting. Use `null` to opt out of adding a product index.
 
-On the first launch of a Desktop version carrying the URL, Studio puts it first in the profile, retains the order of other sources, and merges duplicate URLs. Discover opens the first source by default. Users can switch or remove sources, and later launches of the same version honor their changes.
+On the first launch of a Desktop version carrying the URL, Studio puts it first in the profile, retains the order of other sources, and merges duplicate URLs. Discover opens the first source by default and lets users switch sources. If a user removes the product source, later launches of the same version honor that edit.
 
 Keep the KS3 index URL stable. To publish a plugin or a new version, upload the versioned `.tgz` first, then add the new version and download URL to the same `index.json`. Refresh Discover to read the new document. Index content changes take effect through KS3 without rebuilding the desktop app.
 
