@@ -28,7 +28,7 @@ description: DSH 官方插件索引（format 1）在 Studio 里的接入方式�
 
 ## 索引格式
 
-根字段：`format`（必须为 `1`）、`title`（必填，`LocalizedText`）、`description`、`metadata`、`plugins[]`。插件字段：`name`（npm 包名，索引内唯一）、`title`、`description`、`icon`、`author`、`homepage`、`repository`、`metadata`、`versions[]`。版本字段：`version`（精确 SemVer）、`publishTimestamp`（Unix 秒）、`source`（`{"type":"npm"}` 或 `{"type":"git","url","commit","path"}`）、`engines.dsh`（SemVer range）。
+根字段：`format`（必须为 `1`）、`title`（必填，`LocalizedText`）、`description`、`metadata`、`plugins[]`。插件字段：`name`（npm 包名，索引内唯一）、`title`、`description`、`icon`、`author`、`homepage`、`repository`、`metadata`、`versions[]`。版本字段：`version`（精确 SemVer）、`publishTimestamp`（Unix 秒）、`source`（`{"type":"npm"}`、`{"type":"git","url","commit","path"}` 或 `{"type":"tarball","url"}`）、`engines.dsh`（SemVer range）。
 
 ```json
 {
@@ -69,7 +69,35 @@ pnpm check:plugin-index    # 不联网，只校验已提交的产物
 
 ## 安装路径
 
-索引只产出参数，不执行安装：npm 版本解析为 `name@version`（可带 `registry`），Git 版本解析为 `git+<url>.git#<commit>`（子目录追加 `&path:/<dir>`），随后交给官方 `pluginManager.inspect()` / `installBundle()`，兼容性检查、构建脚本批准与失败回滚都在那里。
+Host 将 npm 版本解析为 `name@version`（可带 `registry`），Git 版本解析为 `git+<url>.git#<commit>`（子目录追加 `&path:/<dir>`），tarball 版本使用下载地址。用户确认后，DSH 插件管理器负责下载、兼容性检查、构建脚本批准和失败回滚。
+
+### 从对象存储安装
+
+把构建好的 DSH bundle 打成 npm tarball，上传到 KS3 等对象存储，并为该文件提供可直接读取的 HTTPS 地址。地址使用版本化的文件名，以 `.tgz` 或 `.tar.gz` 结尾，省去凭据、查询参数和片段。索引的包名和版本应与包内的 `package.json` 一致，包需声明 `dsh.bundle`。
+
+```json
+{
+  "format": 1,
+  "title": "Studio plugins",
+  "plugins": [
+    {
+      "name": "@example/dsh-workspace-tools",
+      "versions": [
+        {
+          "version": "1.2.3",
+          "publishTimestamp": 1794600000,
+          "source": {
+            "type": "tarball",
+            "url": "https://downloads.example.com/plugins/workspace-tools-1.2.3.tgz"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+发布 `index.json` 后，在「插件 → 发现 → 索引源」添加它的 URL，再选择该索引并点击「安装」。主包从对象存储下载，依赖仍由包管理器解析。客户端需要使用支持 `tarball` 来源的 Studio Host。
 
 ## 未启用时
 

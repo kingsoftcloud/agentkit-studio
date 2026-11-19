@@ -28,7 +28,7 @@ Host defaults: `cacheTtlMs` 600000 (10 minutes), `fetchTimeoutMs` 15000, `maxByt
 
 ## Index format
 
-Root fields: `format` (must be `1`), `title` (required, `LocalizedText`), `description`, `metadata`, `plugins[]`. Plugin fields: `name` (npm package name, unique in the document), `title`, `description`, `icon`, `author`, `homepage`, `repository`, `metadata`, `versions[]`. Version fields: `version` (exact SemVer), `publishTimestamp` (Unix seconds), `source` (`{"type":"npm"}` or `{"type":"git","url","commit","path"}`) and `engines.dsh` (a SemVer range).
+Root fields: `format` (must be `1`), `title` (required, `LocalizedText`), `description`, `metadata`, `plugins[]`. Plugin fields: `name` (npm package name, unique in the document), `title`, `description`, `icon`, `author`, `homepage`, `repository`, `metadata`, `versions[]`. Version fields: `version` (exact SemVer), `publishTimestamp` (Unix seconds), `source` (`{"type":"npm"}`, `{"type":"git","url","commit","path"}`, or `{"type":"tarball","url"}`) and `engines.dsh` (a SemVer range).
 
 ```json
 {
@@ -69,7 +69,35 @@ Inclusion rule: only valid SemVer versions that were published, are not deprecat
 
 ## Install path
 
-The index produces arguments; it never installs. An npm version resolves to `name@version` (with a `registry` when the document declares one), a Git version to `git+<url>.git#<commit>` (with `&path:/<dir>` for a subdirectory), and both are handed to the official `pluginManager.inspect()` / `installBundle()`, which owns the compatibility check, the build-script approval and the rollback on failure.
+The Host uses `name@version` with an optional registry for npm, `git+<url>.git#<commit>` with an optional `&path:/<dir>` for Git, and the download URL for a tarball. After confirmation, the DSH plugin manager handles download, compatibility checks, build-script approval, and rollback on failure.
+
+### Install from object storage
+
+Pack the built DSH bundle as an npm tarball and upload it to object storage such as KS3. Serve it at a directly readable HTTPS URL with a versioned filename ending in `.tgz` or `.tar.gz`. Omit credentials, query parameters, and fragments. Match the listed name and version to the archive’s `package.json`, which must declare `dsh.bundle`.
+
+```json
+{
+  "format": 1,
+  "title": "Studio plugins",
+  "plugins": [
+    {
+      "name": "@example/dsh-workspace-tools",
+      "versions": [
+        {
+          "version": "1.2.3",
+          "publishTimestamp": 1794600000,
+          "source": {
+            "type": "tarball",
+            "url": "https://downloads.example.com/plugins/workspace-tools-1.2.3.tgz"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Publish `index.json` and add its URL under Plugins → Discover → Index sources. Select the source and choose Install. The plugin downloads from object storage and the package manager resolves its dependencies. Use a Studio Host that supports the `tarball` source.
 
 ## When it is not enabled
 

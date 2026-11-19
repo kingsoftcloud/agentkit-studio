@@ -2736,12 +2736,72 @@
       },
       "sequence": 55,
       "sha256": "e8189763edffe809455b036a3201c597a140d7deb7545de2c64e4455b47a09e6"
+    },
+    {
+      "id": "087",
+      "file": "087-plugin-market-tarball-sources.patch",
+      "sequence": 56,
+      "category": "product",
+      "risk": "medium",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "maintainerRole": "Studio plugin market maintainers",
+      "removeWhen": "The pinned DSH release supports tarball sources and shows the download address before confirmation.",
+      "contracts": [
+        "Format 1 indexes accept an absolute HTTP(S) tarball URL and preserve npm and Git sources.",
+        "Discover displays the archive URL and passes it to the existing confirmed installation flow.",
+        "Index browsing and details use index metadata and the declared repository without downloading the archive."
+      ],
+      "affectedPackages": [
+        "packages/boot/plugin-market",
+        "packages/client/ui-plugin-market",
+        "packages/util/plugin-market-index"
+      ],
+      "affectedFiles": [
+        ".agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.i18n.yaml",
+        ".agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.md",
+        ".agents/notes/implemented/feature/2026-10-02-plugin-market-index-format.zh.md",
+        "packages/boot/plugin-market/README.i18n.yaml",
+        "packages/boot/plugin-market/README.md",
+        "packages/boot/plugin-market/README.zh.md",
+        "packages/boot/plugin-market/src/index.ts",
+        "packages/boot/plugin-market/tests/detail-remote.spec.ts",
+        "packages/client/ui-plugin-market/README.i18n.yaml",
+        "packages/client/ui-plugin-market/README.md",
+        "packages/client/ui-plugin-market/README.zh.md",
+        "packages/client/ui-plugin-market/src/client/DiscoverSection.tsx",
+        "packages/client/ui-plugin-market/src/client/locales.ts",
+        "packages/client/ui-plugin-market/src/client/presentation.ts",
+        "packages/client/ui-plugin-market/tests/discover.client.spec.tsx",
+        "packages/util/plugin-market-index/README.i18n.yaml",
+        "packages/util/plugin-market-index/README.md",
+        "packages/util/plugin-market-index/README.zh.md",
+        "packages/util/plugin-market-index/src/index.ts",
+        "packages/util/plugin-market-index/src/types.ts",
+        "packages/util/plugin-market-index/tests/plugin-market-index.spec.ts"
+      ],
+      "dependsOn": [],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio supports plugin bundles distributed through object storage."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/util/plugin-market-index/tests/plugin-market-index.spec.ts",
+          "packages/boot/plugin-market/tests/detail-remote.spec.ts",
+          "packages/client/ui-plugin-market/tests/discover.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "web"
+        ]
+      },
+      "sha256": "b4257332cd79421b20f34b3c2909555ccaa6b1422dee87842ef11a3c49656bd9"
     }
   ],
-  "patchedTree": "8a42dfaba954450c981fca37b2fc77b2b20ffd60",
-  "patchedSourceSha256": "a900a482a02f3b7087695e33d7fb3c7c236b9b1c59674f11778806decdfaca25",
+  "patchedTree": "022427d33d9314508c162bed96dd9b9da1b3addb",
+  "patchedSourceSha256": "66c5505145b20e608d1c6629e7e9edf5f69a18489c91b9b7638822121379af1a",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "33efe43b8d4437557dcb4e9b882c583cdde9d7d233495b1e5a9d56c702b5c53c"
+    "sha256": "d4589baf400535ef9f3d9d646148e845738b2e7ab5a08ddb9a30be4262855afe"
   }
 }
