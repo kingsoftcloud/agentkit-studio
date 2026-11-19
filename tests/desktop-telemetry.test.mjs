@@ -1,0 +1,160 @@
+import assert from 'node:assert/strict';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { createDesktopTelemetry, resolveDesktopTelemetryConfig } from '../src/telemetry/desktop.mjs';
+import { validEventProps } from '../src/telemetry/contract.mjs';
+
+const endpoint = 'https://telemetry.example.test/v1/logs';
+const release = { endpoint, defaultBasic: true, policyRevision: 'test-1' };
+const dimensions = { app_version: '0.0.18', channel: 'nightly', platform: 'darwin', arch: 'arm64' };
+const ack = () => new Response('{}', { headers: { 'content-type': 'application/json' } });
+const logRecords = body => JSON.parse(body).resourceLogs[0].scopeLogs[0].logRecords;
+const eventNames = body => logRecords(body).map(record => record.body.stringValue);
+
+async function fixture(t, overrides = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-telemetry-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const fetches = [];
+  let now = Date.parse('2026-11-19T15:59:00Z');
+  const options = { directory, dimensions, config: resolveDesktopTelemetryConfig({ release, packaged: true }),
+    now: () => now, random: () => 0, batchDelay: 120_000,
+    fetchImpl: async (url, request) => { fetches.push({ url, request }); return ack(); },
+    ...overrides };
+  return { directory, options, fetches, advance: ms => { now += ms; }, telemetry: await createDesktopTelemetry(options) };
+}
+
+test('release policy gates basic by package and first-party receiver', () => {
+  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true }).defaultBasic, true);
+  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: false }).defaultBasic, false);
+  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true, selfHosted: endpoint }).defaultBasic, false);
+  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true, disabled: '0' }).disabled, true);
+  assert.equal(resolveDesktopTelemetryConfig({ release, selfHosted: 'https://user:pass@example.test/v1/logs' }).endpoint, null);
+});
+
+test('no allocation before notice, one consent-gated event per Beijing day', async t => {
+  const { telemetry, options, directory, fetches, advance } = await fixture(t);
+  telemetry.beginLaunch();
+  telemetry.activity();
+  await telemetry.flush();
+  assert.equal(fetches.length, 0);
+  await assert.rejects(access(join(directory, 'outbox.jsonl')));
+  await telemetry.applyNotice('continue');
+  assert.deepEqual(telemetry.status().enabled, { basic: true, crash: false, run: false });
+  telemetry.activity();
+  telemetry.activity();
+  telemetry.track('app_crash', { source: 'main', phase: 'startup', error_code: 'OTHER' });
+  await telemetry.writes;
+  const expected = telemetry.preview();
+  assert.deepEqual(eventNames(expected), ['app_install', 'desktop_active_day']);
+  await telemetry.flush();
+  assert.equal(fetches[0].request.body, expected);
+  assert.equal(fetches[0].request.credentials, 'omit');
+  assert.deepEqual(Object.keys(fetches[0].request.headers), ['content-type']);
+  await telemetry.drain();
+  const restarted = await createDesktopTelemetry(options);
+  restarted.activity();
+  assert.equal(restarted.status().queued, 0);
+  advance(120_000);
+  restarted.activity();
+  assert.deepEqual(eventNames(restarted.preview()), ['desktop_active_day']);
+  assert.equal(restarted.status().installId, telemetry.status().installId);
+  await restarted.drain();
+});
+
+test('address or policy changes drop queued data while explicit off persists', async t => {
+  const { telemetry, options, directory, fetches } = await fixture(t);
+  await telemetry.applyNotice('continue');
+  telemetry.activity();
+  await telemetry.setPreference('crash', false);
+  const next = await createDesktopTelemetry({
+    ...options,
+    config: resolveDesktopTelemetryConfig({ release: { ...release, defaultBasic: false }, packaged: true }),
+  });
+  await next.applyNotice('continue');
+  assert.deepEqual(next.status().enabled, { basic: false, crash: false, run: false });
+  assert.deepEqual(eventNames(next.preview()), []);
+  assert.equal(fetches.length, 0);
+  assert.equal((await readFile(join(directory, 'outbox.jsonl'), 'utf8')).trim().split('\n').length, 1);
+  await next.drain();
+});
+
+test('stop aborts in-flight request and disk restart cannot replay it', async t => {
+  let signal;
+  const { telemetry, options } = await fixture(t, { fetchImpl: async (_, request) => {
+    signal = request.signal;
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw new DOMException('Aborted', 'AbortError');
+  } });
+  await telemetry.applyNotice('continue');
+  telemetry.activity();
+  await telemetry.writes;
+  const inFlight = telemetry.flush();
+  assert.equal(signal.aborted, false);
+  await telemetry.stopAll();
+  assert.equal(signal.aborted, true);
+  await inFlight;
+  const restarted = await createDesktopTelemetry(options);
+  assert.deepEqual(restarted.status().enabled, { basic: false, crash: false, run: false });
+  assert.equal(restarted.status().queued, 0);
+  await restarted.drain();
+});
+
+test('retry after 429 keeps event IDs immutable through a persisted replay', async t => {
+  const requests = [];
+  const { telemetry, options, advance } = await fixture(t, { fetchImpl: async (_, request) => {
+    requests.push(request.body);
+    return requests.length === 1 ? new Response('{}', { status: 429, headers: { 'retry-after': '20' } }) : ack();
+  } });
+  await telemetry.applyNotice('continue');
+  telemetry.activity();
+  await telemetry.writes;
+  await telemetry.flush();
+  assert.equal(telemetry.status().queued, 2);
+  advance(19_999);
+  await telemetry.flush();
+  assert.equal(requests.length, 1);
+  await telemetry.drain();
+  advance(1);
+  const restarted = await createDesktopTelemetry(options);
+  await restarted.flush();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0], requests[1]);
+  assert.equal(restarted.status().queued, 0);
+  await restarted.drain();
+});
+
+test('Run summaries require own opt-in, an admitted start, and terminal schema', async t => {
+  const { telemetry } = await fixture(t);
+  await telemetry.applyNotice('continue');
+  const run = { id: 'local-run-only', engine: 'native-harness' };
+  const props = { engine: run.engine, status: 'completed', input_tokens: 2, output_tokens: 3, total_tokens: 5 };
+  telemetry.localRun({ ...run, kind: 'start' });
+  await telemetry.setPreference('run', true);
+  telemetry.localRun({ ...run, kind: 'finish', props });
+  assert.equal(telemetry.status().queued, 0);
+  telemetry.localRun({ ...run, kind: 'start' });
+  telemetry.localRun({ ...run, kind: 'finish', props });
+  telemetry.localRun({ ...run, kind: 'start' });
+  telemetry.localRun({ ...run, kind: 'finish', props });
+  assert.deepEqual(eventNames(telemetry.preview()), ['run_summary']);
+  assert.doesNotMatch(telemetry.preview(), /local-run-only/);
+  assert.equal(validEventProps('run_summary', { ...props, total_tokens: 6 }), false);
+  assert.equal(validEventProps('run_summary', { ...props, error_message: 'sensitive' }), false);
+  assert.equal(validEventProps('update_check_result', { outcome: 'failed', error_code: 'OTHER' }), false);
+  await telemetry.drain();
+});
+
+test('ordinary time-driven batching does not send an idle heartbeat', async t => {
+  const { telemetry, fetches } = await fixture(t, { now: Date.now, batchDelay: 30 });
+  await telemetry.applyNotice('continue');
+  await sleep(45);
+  assert.equal(fetches.length, 0);
+  telemetry.activity();
+  await telemetry.writes;
+  for (let attempt = 0; attempt < 25 && fetches.length === 0; attempt += 1) await sleep(10);
+  assert.equal(fetches.length, 1);
+  await telemetry.drain();
+});

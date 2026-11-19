@@ -1,0 +1,495 @@
+diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
+index d4303e50be840091450e3ab307cc2950f963bbc5..0ac032628d76da4bb7c77c9e512634bb04a7c297 100644
+--- a/apps/desktop/electron-builder.config.d.mts
++++ b/apps/desktop/electron-builder.config.d.mts
+@@ -20,7 +20,7 @@ export interface DesktopElectronBuilderConfig {
+   readonly extraResources: readonly [
+     { readonly from: string, readonly to: 'runtime' },
+     { readonly from: string, readonly to: 'icon.png' },
+-    ...{ readonly from: string, readonly to: 'tray.ico' }[],
++    ...{ readonly from: string, readonly to: 'tray.ico' | 'studio-telemetry' }[],
+   ]
+   readonly mac: {
+     readonly icon: string
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index b9b8cd0eb63e30ad40def06b3f52d30be30f4195..56e0b53755ef349b04c6ca987ccad192c09fc5e5 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -168,6 +168,8 @@ export function createElectronBuilderConfig(
+     extraResources: [
+       { from: buildPaths.runtime, to: 'runtime' },
+       { from: productIcon || fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
++      ...(productName === 'AgentKit Studio' && env.DSH_STUDIO_TELEMETRY_RESOURCES
++        ? [{ from: env.DSH_STUDIO_TELEMETRY_RESOURCES, to: 'studio-telemetry' }] : []),
+       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
+       ...(packagesWindows ? [{ from: productTrayIcon || fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
+     ],
+diff --git a/apps/desktop/src/host-process.ts b/apps/desktop/src/host-process.ts
+index 2dfd007809bc35a850b264be4685fd20534d7901..330eef3330527f73c5c6bce1238beaf13b1f1eb6 100644
+--- a/apps/desktop/src/host-process.ts
++++ b/apps/desktop/src/host-process.ts
+@@ -190,6 +190,7 @@ export class DesktopHostProcess {
+    * @param packageManager - Bundled pnpm entry and Node launcher directory, scoped to package operations.
+    * @param onPlatformSession - Private credential updates for embedded Platform views.
+    * @param onPluginOperation - Optional diagnostic sink; malformed records are ignored without failing the Host.
++   * @param onStudioTelemetry - Optional Studio sink for local Run start and terminal statistics.
+    */
+   constructor(
+     private readonly node: string,
+@@ -203,6 +204,7 @@ export class DesktopHostProcess {
+ 
+     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
+     private readonly onPluginOperation?: (record: PluginOperationRecord) => void,
++    private readonly onStudioTelemetry?: (message: Record<string, unknown>) => void,
+   ) {}
+ 
+   /**
+@@ -230,6 +232,11 @@ export class DesktopHostProcess {
+     child.stderr?.on('data', (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-MAX_HOST_DIAGNOSTIC_CHARS) })
+     child.stdout?.pipe(process.stdout)
+     child.on('message', (message: unknown) => {
++      if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'studio-telemetry-run') {
++        try { this.onStudioTelemetry?.(message as Record<string, unknown>) }
++        catch { /* Telemetry IPC is optional and never drives the Host lifecycle. */ }
++        return
++      }
+       if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'plugin-operation') {
+         const record = 'record' in message ? parsePluginOperationRecord(message.record) : undefined
+         if (record !== undefined && record.runId === this.runId) {
+diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
+index aa9471f6f71ba78d44546d2466141fdde16c06c3..c2d2caef68b4eb1aef06ca61de60692b6dd65eef 100644
+--- a/apps/desktop/src/ipc.ts
++++ b/apps/desktop/src/ipc.ts
+@@ -5,6 +5,7 @@ import type { DesktopKeyboardApi, DesktopShortcutsApi } from '@deepseek-ai/dsh-c
+ import type { IpcMainInvokeEvent } from 'electron'
+ import type { DesktopBrowserBridge } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
+ import type { DesktopFileDrag } from '@deepseek-ai/dsh-util-file-drag'
++import type { StudioTelemetryCategory, StudioTelemetryStatus } from './studio-telemetry.ts'
+ 
+ /** IPC channel names kept private to the desktop application bundle. */
+ export const DESKTOP_IPC = {
+@@ -35,6 +36,11 @@ export const DESKTOP_IPC = {
+   updatesStatus: 'dsh-desktop:updates-status',
+   updatesOpen: 'dsh-desktop:updates-open',
+   updatesPresentation: 'dsh-desktop:updates-presentation',
++  studioTelemetryStatus: 'dsh-desktop:studio-telemetry-status',
++  studioTelemetrySet: 'dsh-desktop:studio-telemetry-set',
++  studioTelemetryStop: 'dsh-desktop:studio-telemetry-stop',
++  studioTelemetryPreview: 'dsh-desktop:studio-telemetry-preview',
++  studioTelemetryNotice: 'dsh-desktop:studio-telemetry-notice',
+   nativeThemeSet: 'dsh-desktop:native-theme-set',
+   windowFullscreen: 'dsh-desktop:window-fullscreen',
+   windowsAppearance: 'dsh-desktop:windows-appearance',
+@@ -98,6 +104,13 @@ export interface DshDesktopProductApi {
+     open(): Promise<void>
+     subscribe(listener: (state: DesktopUpdatePresentation) => void): () => void
+   }
++  readonly telemetry: {
++    status(): Promise<StudioTelemetryStatus | null>
++    set(category: StudioTelemetryCategory, enabled: boolean): Promise<StudioTelemetryStatus | null>
++    stop(clear: boolean): Promise<StudioTelemetryStatus | null>
++    preview(): Promise<string>
++    notice(): Promise<StudioTelemetryStatus | null>
++  }
+ }
+ 
+ /** Scheme of Desktop-owned application documents. */
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 22b8498defa791433fc98c56c7520d1cd5874e94..4f357fac3351b7b427c770b00734e5fd6017061d 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -67,6 +67,7 @@ import { DesktopUpdateOverlays } from './update-overlay.ts'
+ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
+ import { DesktopTray } from './tray.ts'
+ import { DesktopBackgroundNotice } from './background-notice.ts'
++import { openStudioTelemetry, showStudioTelemetryNotice, type StudioTelemetry } from './studio-telemetry.ts'
+ 
+ let focusPrimaryWindow = (): void => {}
+ let stopForRecovery = async (): Promise<void> => { await stopOperationReports() }
+@@ -83,6 +84,8 @@ let windowsLanguage: string | undefined = readDesktopLocaleCache(app.getPath('us
+  * failure while tearing down a ready backend still reads as `running`.
+  */
+ let backendReady = false
++let studioTelemetry: StudioTelemetry | undefined
++const launchStarted = performance.now()
+ /** Error-level console output of the primary window, attached to crash reports. */
+ const rendererConsole = new RendererConsoleTail()
+ 
+@@ -172,7 +175,11 @@ function persistCrashReport(error: unknown, source: CrashReportSource): Promise<
+   return report
+ }
+ 
+-function reportFatal(error: unknown, source: CrashReportSource): void {
++function reportFatal(error: unknown, source: CrashReportSource, code?: string): void {
++  const phase = backendReady ? 'running' : 'startup'
++  studioTelemetry?.finishLaunch('failed')
++  if (source === 'host') studioTelemetry?.track('host_unexpected_exit', { phase, error_code: 'PROCESS_EXIT' })
++  else studioTelemetry?.track('app_crash', { source, phase, error_code: code ?? 'OTHER' })
+   console.error(error)
+   if (shuttingDown) {
+     // No dialog during shutdown, but the report still records what failed on the way out.
+@@ -374,6 +381,11 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+ }
+ 
+ async function main(): Promise<void> {
++  const studioDesktop = desktopProductName() === 'AgentKit Studio'
++  if (studioDesktop) {
++    studioTelemetry = await openStudioTelemetry()
++    studioTelemetry?.beginLaunch()
++  }
+   const desktopSettings = readDesktopSettings(app.getPath('userData'))
+   void pruneCrashReports(app.getPath('logs'))
+   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
+@@ -530,6 +542,7 @@ async function main(): Promise<void> {
+     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
+       hostInspectPort, {
+         ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion(), AGENTKIT_STUDIO_DESKTOP_VERSION: app.getVersion(),
++        AGENTKIT_STUDIO_DESKTOP_SESSION: studioDesktop ? '1' : undefined,
+       }, onFailure,
+       primaryRuntime,
+       resources, (next) => { platformView.setSession(next) }, (record) => {
+@@ -537,7 +550,7 @@ async function main(): Promise<void> {
+           segmentBytes: 256 * 1024, recordBytes: 4096, queuedBytes: 64 * 1024,
+         })
+         operationJournal.enqueue(JSON.stringify(record))
+-      })
++      }, message => studioTelemetry?.localRun(message))
+     return {
+       start: async () => {
+         const ready = await host.start()
+@@ -622,6 +635,16 @@ async function main(): Promise<void> {
+   }
+   const publishUpdate = (state: DesktopUpdateState): DesktopUpdateState => {
+     updateJournal?.state(state)
++    if (updateState.phase === 'checking' && ['idle', 'available', 'error'].includes(state.phase)) {
++      const outcome = state.phase === 'idle' ? 'no_update' : state.phase === 'available' ? 'available' : 'failed'
++      studioTelemetry?.track('update_check_result', { outcome })
++    }
++    if (['downloading', 'verifying'].includes(updateState.phase) && !['downloading', 'verifying'].includes(state.phase)) {
++      const targetVersion = state.version ?? updateState.version
++      const outcome = state.phase === 'ready' ? 'ready' : state.phase === 'error' ? 'failed' : 'canceled'
++      if (targetVersion) studioTelemetry?.track('update_download_result', { target_version: targetVersion, outcome })
++    }
++    if (state.phase === 'error' && state.failedOperation === 'install') studioTelemetry?.finishUpdate('failed')
+     updateState = state
+     mandatoryUI?.sync()
+     for (const window of BrowserWindow.getAllWindows()) {
+@@ -718,6 +741,8 @@ async function main(): Promise<void> {
+       // The update lock rejects new HTTP requests, including analytics intake.
+       await track('desktop_upgrade_install_restart_click', {})
+       if (backend.host !== host) throw new DesktopUpdatePreparationError('tasks-unavailable', locale.messages.updateTasksUnavailable)
++      const targetVersion = updates.state.version
++      if (targetVersion) await studioTelemetry?.startUpdate(targetVersion).catch(() => {})
+       try {
+         const stillActive = await host.updateTasks('lock')
+         if (stillActive && !active) throw new DesktopUpdatePreparationError('tasks-changed', locale.messages.updateTasksChanged)
+@@ -884,6 +909,29 @@ async function main(): Promise<void> {
+     assertProductSender(event)
+     return presentDesktopUpdate(updates.state)
+   })
++  ipcMain.handle(DESKTOP_IPC.studioTelemetryStatus, (event) => {
++    assertProductSender(event)
++    return studioTelemetry?.status() ?? null
++  })
++  ipcMain.handle(DESKTOP_IPC.studioTelemetrySet, async (event, category: unknown, enabled: unknown) => {
++    const window = assertProductSender(event)
++    const state = await studioTelemetry?.setPreference(category, enabled)
++    if (state?.enabled.basic && window.isFocused() && enteredWorkspace) studioTelemetry?.activity()
++    return state ?? null
++  })
++  ipcMain.handle(DESKTOP_IPC.studioTelemetryStop, async (event, clear: unknown) => {
++    assertProductSender(event)
++    return await studioTelemetry?.stopAll({ clear: clear === true }) ?? null
++  })
++  ipcMain.handle(DESKTOP_IPC.studioTelemetryPreview, (event) => {
++    assertProductSender(event)
++    return studioTelemetry?.preview() ?? ''
++  })
++  ipcMain.handle(DESKTOP_IPC.studioTelemetryNotice, async (event) => {
++    const window = assertProductSender(event)
++    await privacyNoticeFor(window, true)
++    return studioTelemetry?.status() ?? null
++  })
+   ipcMain.handle(DESKTOP_IPC.deviceInfo, (event) => {
+     assertProductSender(event)
+     return readDeviceInfo()
+@@ -1181,12 +1229,34 @@ async function main(): Promise<void> {
+       window.hide()
+     }
+   }
++  let privacyNotice: Promise<void> | undefined
++  let privacyNoticeShown = false
++  const privacyNoticeFor = async (window: BrowserWindow, reopen = false): Promise<void> => {
++    const telemetry = studioTelemetry
++    if (!telemetry || window.isDestroyed() || !window.isVisible() || !telemetry.status().noticePending) return
++    if (!privacyNotice && (reopen || !privacyNoticeShown)) {
++      privacyNoticeShown = true
++      privacyNotice = showStudioTelemetryNotice(window, telemetry, locale.id)
++        .catch(() => {}).finally(() => { privacyNotice = undefined })
++    }
++    await privacyNotice
++    if (!window.isDestroyed() && window.isVisible() && !window.isMinimized()) telemetry.activity()
++  }
++  const openedWindow = (window: BrowserWindow): void => {
++    if (window.isDestroyed() || !window.isVisible() || window.isMinimized() || recovery.active || quitting) return
++    if (backendReady) studioTelemetry?.finishLaunch('ready', Math.round(performance.now() - launchStarted))
++    if (window === mainWindow && enteredWorkspace && backendReady) studioTelemetry?.finishUpdate('applied')
++    if (!window.isFocused()) return
++    studioTelemetry?.activity()
++    void privacyNoticeFor(window)
++  }
+   const createMainWindow = (): BrowserWindow => {
+     const window = createWindow(appPreload, false, true)
+     mainWindow = window
+     browserGuests.bind(window, (guest, name) => shortcuts.attachGuest(window, guest, name))
+     shortcuts.attach(window)
+     window.on('focus', automaticCheck)
++    window.on('focus', () => { if (enteredWorkspace) openedWindow(window) })
+     // Closing hides: the page and the Host keep running, and the next show resumes the same document.
+     window.on('close', (event) => {
+       if (quitting || shellInstallerOwnsQuit || sessionEnding) return
+@@ -1224,7 +1294,7 @@ async function main(): Promise<void> {
+     window.webContents.on('render-process-gone', (_event, details) => {
+       navigation = undefined
+       if (!quitting && !window.isDestroyed() && details.reason !== 'clean-exit') {
+-        reportFatal(new Error(`Desktop renderer exited: ${details.reason}`), 'renderer')
++        reportFatal(new Error(`Desktop renderer exited: ${details.reason}`), 'renderer', details.reason === 'oom' ? 'OOM' : 'PROCESS_EXIT')
+       }
+     })
+     return window
+@@ -1237,6 +1307,7 @@ async function main(): Promise<void> {
+     if (activate) window.show()
+     else window.showInactive()
+     enteredWorkspace = true
++    openedWindow(window)
+     if (welcomeWindow !== undefined) {
+       welcomeWindow.close()
+       window.webContents.send(DESKTOP_IPC.enterWorkspace)
+@@ -1294,6 +1365,8 @@ async function main(): Promise<void> {
+         skip: enterWorkspace,
+       })
+       const window = welcomeWindow
++      window.on('focus', () => openedWindow(window))
++      openedWindow(window)
+       window.once('closed', () => {
+         void welcomeBackend?.account.state().then((state) => {
+           if (state.attempt !== null && !enteredWorkspace) return welcomeBackend?.account.cancel(state.attempt.id)
+@@ -1371,7 +1444,10 @@ async function main(): Promise<void> {
+     updateSchedule.dispose()
+     updateDialog.dispose()
+     mandatoryUI?.dispose()
+-    void Promise.all([stopOperationReports(), Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()),
++    studioTelemetry?.finishLaunch('canceled')
++    void Promise.all([
++      stopOperationReports(), studioTelemetry?.drain() ?? Promise.resolve(),
++      Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()),
+       backend.close().then(async () => { await operationJournal?.drain(500) }, async (error: unknown) => {
+         await operationJournal?.drain(500)
+         throw error
+diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
+index 26266b4f1c8a497c3cc5c94d19a06a4b5ee3bf49..e271338325a74a1a8715d840f385bd7560de1ef6 100644
+--- a/apps/desktop/src/preload-app.ts
++++ b/apps/desktop/src/preload-app.ts
+@@ -33,6 +33,13 @@ function createProductApi(): DshDesktopProductApi {
+       }) },
+     },
+     deviceInfo: () => ipcRenderer.invoke(DESKTOP_IPC.deviceInfo) as Promise<string>,
++    telemetry: {
++      status: () => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetryStatus) as ReturnType<DshDesktopProductApi['telemetry']['status']>,
++      set: (category, enabled) => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetrySet, category, enabled) as ReturnType<DshDesktopProductApi['telemetry']['set']>,
++      stop: clear => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetryStop, clear) as ReturnType<DshDesktopProductApi['telemetry']['stop']>,
++      preview: () => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetryPreview) as Promise<string>,
++      notice: () => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetryNotice) as ReturnType<DshDesktopProductApi['telemetry']['notice']>,
++    },
+     keyboard: {
+       closeWindow: revision => ipcRenderer.invoke(DESKTOP_IPC.shortcutsCloseWindow, revision) as Promise<void>,
+       subscribe: (listener) => {
+diff --git a/apps/desktop/src/studio-telemetry.ts b/apps/desktop/src/studio-telemetry.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e2180484e5771fdd283696770d5094ed2c9d10a7
+--- /dev/null
++++ b/apps/desktop/src/studio-telemetry.ts
+@@ -0,0 +1,123 @@
++import { randomUUID } from 'node:crypto'
++import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
++import { join } from 'node:path'
++import { pathToFileURL } from 'node:url'
++import { app, dialog, type BrowserWindow } from 'electron'
++import { desktopUpdateChannel } from './update-channel.ts'
++
++export type StudioTelemetryCategory = 'basic' | 'crash' | 'run'
++export interface StudioTelemetryStatus {
++  readonly available: boolean
++  readonly defaultBasic: boolean
++  readonly selfHosted: boolean
++  readonly noticePending: boolean
++  readonly endpoint: string | null
++  readonly enabled: Record<StudioTelemetryCategory, boolean>
++  readonly installId: string | null
++  readonly queued: number
++}
++
++async function purgeOutbox(directory: string): Promise<void> {
++  const path = join(directory, 'outbox.jsonl')
++  const temporary = join(directory, 'outbox-' + randomUUID() + '.tmp')
++  try {
++    if ((await stat(path)).size > 6 * 1024 * 1024) return
++    const first = (await readFile(path, 'utf8')).split('\n', 1)[0]
++    const state = JSON.parse(first ?? '') as Record<string, unknown>
++    if (state.version !== 1) return
++    await writeFile(temporary, JSON.stringify({ ...state, launch: null, update: null, finishedRuns: {}, retryAt: 0 }) + '\n',
++      { mode: 0o600, flag: 'wx' })
++    await rename(temporary, path)
++  } catch { /* Missing state is normal and on-disk choices take precedence on upgrade. */ }
++  finally { await rm(temporary, { force: true }).catch(() => {}) }
++}
++
++export interface StudioTelemetry {
++  status(): StudioTelemetryStatus
++  applyNotice(choice: 'continue' | 'off'): Promise<StudioTelemetryStatus>
++  setPreference(category: unknown, enabled: unknown): Promise<StudioTelemetryStatus>
++  stopAll(options?: { clear?: boolean }): Promise<StudioTelemetryStatus>
++  preview(): string
++  beginLaunch(): void
++  finishLaunch(outcome: 'ready' | 'failed' | 'canceled', duration?: number): void
++  activity(): void
++  track(name: string, props: Record<string, unknown>): void
++  startUpdate(targetVersion: string): Promise<void>
++  finishUpdate(outcome: 'applied' | 'failed'): void
++  localRun(message: Record<string, unknown>): void
++  drain(): Promise<void>
++}
++
++interface StudioTelemetryExports {
++  resolveDesktopTelemetryConfig(options: {
++    release: unknown
++    selfHosted: string | undefined
++    disabled: string | undefined
++    packaged: boolean
++  }): unknown
++  createDesktopTelemetry(options: {
++    directory: string
++    config: unknown
++    dimensions: Record<string, string>
++  }): Promise<StudioTelemetry>
++}
++
++/**
++ * Load the Studio-owned sender from immutable packaging inputs. Native DSH
++ * artifacts don't carry it. A development run may point at its own staged inputs.
++ */
++export async function openStudioTelemetry(): Promise<StudioTelemetry | undefined> {
++  const source = app.isPackaged ? join(process.resourcesPath, 'studio-telemetry') : process.env.DSH_STUDIO_TELEMETRY_RESOURCES
++  if (!source) return undefined
++  const directory = join(app.getPath('userData'), 'studio-telemetry')
++  try {
++    const release = JSON.parse(await readFile(join(source, 'policy.json'), 'utf8')) as { buildOff?: boolean }
++    if (release.buildOff === true) {
++      await purgeOutbox(directory)
++      return undefined
++    }
++    const api = await import(pathToFileURL(join(source, 'desktop.mjs')).href) as StudioTelemetryExports
++    const config = api.resolveDesktopTelemetryConfig({
++      release, selfHosted: process.env.AGENTKIT_TELEMETRY_ENDPOINT,
++      disabled: process.env.AGENTKIT_TELEMETRY_DISABLED, packaged: app.isPackaged,
++    })
++    const manifest: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
++    return await api.createDesktopTelemetry({ directory, config, dimensions: {
++      app_version: app.getVersion(), channel: desktopUpdateChannel(manifest),
++      platform: process.platform, arch: process.arch,
++    } })
++  } catch {
++    console.warn('Studio telemetry is unavailable')
++    return undefined
++  }
++}
++
++/** Returns without a decision if the user closes or postpones the notice. */
++export async function showStudioTelemetryNotice(
++  window: BrowserWindow, telemetry: StudioTelemetry, locale: string,
++): Promise<void> {
++  const state = telemetry.status()
++  if (!state.noticePending || !state.endpoint || window.isDestroyed()) return
++  const zh = locale.toLowerCase().startsWith('zh')
++  const options = zh ? {
++    message: '数据与隐私',
++    detail: '基础统计用于了解安装环境的活跃、版本、启动和更新情况。崩溃统计和本地 Run 统计由你分别开启。遥测使用随机安装标识，包含类型、时长和计数。凭证、会话和完整日志保留在本机。接收方为 '
++      + state.endpoint + (state.selfHosted ? '，由自建服务管理留存和删除。' : '，事件保留 90 天。')
++      + '你可以在设置的「隐私与数据」中查看上报内容、关闭或清除本地数据，并按隐私说明请求删除已发送事件。',
++    buttons: ['继续', '关闭基础统计并继续', '稍后'],
++  } : {
++    message: 'Data and privacy',
++    detail: 'Basic statistics cover opening Studio, versions, startup and updates. Crash counts and local run statistics each have their own switch. Reports use a random installation ID and contain categories, durations and counts. Credentials, conversations and full logs stay local. Data is sent to '
++      + state.endpoint + (state.selfHosted ? '. The self-hosted service manages retention and deletion.' : ' and kept for 90 days.')
++      + ' In Settings you can inspect reports, turn collection off or clear local data, and follow the privacy notice to request deletion of sent data.',
++    buttons: ['Continue', 'Turn off basic statistics and continue', 'Later'],
++  }
++  const detail = options.detail + (state.defaultBasic
++    ? (zh ? '\n\n此版本默认开启基础统计。' : '\n\nBasic statistics are on by default for this distribution.')
++    : (zh ? '\n\n此版本默认关闭基础统计，可在设置中开启。' : '\n\nBasic statistics are off by default. You can enable them in Settings.'))
++  const { response } = await dialog.showMessageBox(window, {
++    type: 'info', message: options.message, detail, buttons: options.buttons,
++    defaultId: 0, cancelId: 2, noLink: true,
++  })
++  if (response === 0 || response === 1) await telemetry.applyNotice(response === 0 ? 'continue' : 'off')
++}
+diff --git a/packages/boot/app-boot/src/profile-context.ts b/packages/boot/app-boot/src/profile-context.ts
+index 3325c5563978b310ab3ac25548e44fe55a22f9f2..cdab128414e4ca50b2b7e01fe21a1f18c5616a7b 100644
+--- a/packages/boot/app-boot/src/profile-context.ts
++++ b/packages/boot/app-boot/src/profile-context.ts
+@@ -83,5 +83,16 @@ export function readProfilePatches(binName: string, context: ProfileContext, ini
+   const telemetryPatch = resolveTelemetryPatch(context.telemetryDisabledEnv,
+     composeEntries([patches]).some(row => row.id === TELEMETRY_ROW_ID))
+   if (telemetryPatch !== undefined) patches.push(telemetryPatch)
++  if (process.env.AGENTKIT_STUDIO_DESKTOP_SESSION === '1') {
++    const studioDisabled = new Set([TELEMETRY_ROW_ID, 'product-analytics', 'desktop-product-telemetry'])
++    const telemetryPackages = new Set([
++      '@deepseek-ai/dsh-session-telemetry-otel',
++      '@deepseek-ai/dsh-client-product-analytics',
++      '@deepseek-ai/dsh-host-product-telemetry-otel',
++    ])
++    for (const row of composeEntries([patches])) {
++      if (studioDisabled.has(row.id) || telemetryPackages.has(row.name)) patches.push({ id: row.id, disabled: true })
++    }
++  }
+   return patches
+ }
+diff --git a/packages/boot/app-boot/tests/profile.spec.ts b/packages/boot/app-boot/tests/profile.spec.ts
+index 0a67d476e16e419e113043268d9e71bd1ca7d65d..c126c75edbc3dc0eae4f2c1744e55ba2af3e0994 100644
+--- a/packages/boot/app-boot/tests/profile.spec.ts
++++ b/packages/boot/app-boot/tests/profile.spec.ts
+@@ -225,6 +225,34 @@ it('composes current files from profile data and retains launch overlay and tele
+   expect(composeEntries([readProfilePatches('test', { ...enabled, overlays: [] })])[0]?.disabled).toBe(false)
+ })
+ 
++it('keeps all inherited telemetry exporters disabled after Studio Desktop user overlays', () => {
++  const home = tmp()
++  const installAnchor = stageInstallation({ base: { patch: [
++    '- insert:',
++    '  - id: session-telemetry-otel',
++    '    name: telemetry',
++    '  - id: product-analytics',
++    '    name: analytics',
++    '  - id: old-exporter',
++    '    name: "@deepseek-ai/dsh-host-product-telemetry-otel"',
++  ].join('\n') + '\n' } })
++  const dir = resolveProfileDir('test', home)
++  initProfile(dir, ['base'])
++  const ids = ['session-telemetry-otel', 'product-analytics', 'old-exporter']
++  const context = {
++    name: 'test', dir, patchPath: join(dir, 'application.patch.yml'), installAnchor, home, cwd: home,
++    startedBundles: ['base'], overlays: ids.map(id => ({ id, disabled: false })), telemetryDisabledEnv: undefined,
++  }
++  vi.stubEnv('AGENTKIT_STUDIO_DESKTOP_SESSION', '1')
++  try {
++    const entries = composeEntries([readProfilePatches('test', context)])
++    expect(entries).toHaveLength(3)
++    expect(entries.every(row => row.disabled)).toBe(true)
++  } finally {
++    vi.unstubAllEnvs()
++  }
++})
++
+ describe('initProfile', () => {
+   it('creates manifest, user patch layer, and pnpm workspace once, never overwriting', () => {
+     const home = tmp()

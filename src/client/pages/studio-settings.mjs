@@ -5,6 +5,52 @@ export function createStudioSettingsSection({
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = versions;
   const SettingsGroup = (title, ...rows) => h('section', { 'data-studio-settings-group': true },
     h('h3', null, title), h('div', { className: 'studio-settings-panel studio-panel' }, ...rows));
+  function PrivacySettings({ bridge }) {
+    const [state, setState] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [preview, setPreview] = useState(null);
+    const [error, setError] = useState(false);
+    useEffect(() => {
+      let active = true;
+      bridge.status().then(result => { if (active) setState(result); })
+        .catch(() => { if (active) setError(true); });
+      return () => { active = false; };
+    }, [bridge]);
+    const update = async action => {
+      setBusy(true);
+      setError(false);
+      setPreview(null);
+      try { setState(await action()); }
+      catch { setError(true); }
+      finally { setBusy(false); }
+    };
+    const showPreview = async () => {
+      try { setPreview(await bridge.preview()); }
+      catch { setError(true); }
+    };
+    const switchRow = (key, label, detail) => h('div', { className: 'agentkit-settings-row' },
+      h('div', { className: 'agentkit-check-label' }, label),
+      h('div', { className: 'agentkit-form-note' }, detail),
+      h('button', { 'aria-label': label, 'aria-pressed': Boolean(state?.enabled[key]), style: buttonStyle(),
+        disabled: busy || !state?.available || state.noticePending,
+        onClick: () => void update(() => bridge.set(key, !state.enabled[key])) },
+      state?.enabled[key] ? '已开启' : '已关闭'));
+    return SettingsGroup('隐私与数据',
+      switchRow('basic', '基础运营统计', '打开次数、版本、启动和更新结果。'),
+      switchRow('crash', '崩溃统计', '故障来源、阶段和固定错误类别。'),
+      switchRow('run', '本地 Run 统计', '运行结果、时长和可用的用量计数。'),
+      state?.noticePending && h('button', { style: buttonStyle(), disabled: busy,
+        onClick: () => void update(() => bridge.notice()) }, '查看数据与隐私说明'),
+      state?.endpoint && h('div', { className: 'agentkit-form-note' }, `接收方 ${state.endpoint}`),
+      state?.installId && h('div', { className: 'agentkit-form-note' }, `安装标识 ${state.installId}`),
+      h('div', { className: 'agentkit-form-actions' },
+        h('button', { style: buttonStyle(), disabled: busy || !state?.available, onClick: () => void showPreview() }, '查看待发送数据'),
+        h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void update(() => bridge.stop(false)) }, '停止所有遥测'),
+        h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void update(() => bridge.stop(true)) }, '清除本地遥测数据')),
+      preview !== null && h('pre', { tabIndex: 0, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } },
+        preview || '当前没有待发送数据。'),
+      error && h('div', { role: 'status', className: 'agentkit-form-note' }, '无法读取或保存遥测设置。'));
+  }
   function StudioSettingsSection() {
     const [host, setHost] = useState({ status: 'loading', error: '' });
     const [promptPrediction, setPromptPrediction] = useState(() => {
@@ -13,6 +59,7 @@ export function createStudioSettingsSection({
     const [desktopUpdate, setDesktopUpdate] = useState({ phase: 'idle' });
     const updateLifetime = useRef({ active: false, revision: 0, opening: false });
     const desktopUpdates = typeof window === 'undefined' ? undefined : window.dshDesktop?.updates;
+    const desktopTelemetry = window?.dshDesktop?.telemetry;
     useEffect(() => {
       let active = true;
       hostRemote.settings().then(() => { if (active) setHost({ status: 'ready', error: '' }); })
@@ -83,6 +130,7 @@ export function createStudioSettingsSection({
           h('div', { className: 'agentkit-check-label' }, '桌面更新'),
           h('div', { role: 'status', className: 'agentkit-form-note' }, !desktopUpdates ? '请在 AgentKit Studio 桌面应用中检查更新。' : desktopUpdate.phase === 'error' ? '更新检查失败，可重试。' : desktopUpdate.version ? `目标版本：${desktopUpdate.version}` : '使用 Studio 的更新源检查新版本。')),
         h('button', { type: 'button', onClick: checkDesktopUpdate, disabled: !desktopUpdates || ['checking', 'downloading', 'verifying', 'installing'].includes(desktopUpdate.phase), style: buttonStyle() }, updateButtonLabel))),
+    desktopTelemetry && h(PrivacySettings, { bridge: desktopTelemetry }),
     h('div', { className: 'agentkit-guide-entry' },
       h('p', { className: 'agentkit-form-note' }, '模型配置在「模型与凭证」中。首次使用可打开配置引导。'),
       h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:credential-onboarding')), style: { ...buttonStyle(), marginTop: '12px' } }, '重新打开凭证引导')));

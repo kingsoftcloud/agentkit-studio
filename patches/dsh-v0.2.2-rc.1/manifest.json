@@ -2678,12 +2678,69 @@
       },
       "sequence": 54,
       "sha256": "7380ea061ed964fe8a450749a9f22f7a4f09439834940c46bd2d8cad11bef58e"
+    },
+    {
+      "id": "086",
+      "file": "086-studio-desktop-telemetry.patch",
+      "category": "product",
+      "risk": "high",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "maintainerRole": "Studio desktop maintainers",
+      "removeWhen": "Studio packaging and the upstream Host provide an equivalent first-party telemetry lifecycle and tested privacy gates.",
+      "contracts": [
+        "Studio Desktop disables inherited DSH product and session exporters after all profile overlays.",
+        "Studio telemetry is loaded only from the packaged product resource or a development fixture.",
+        "Only the Desktop main process allows collection after notice, persists the outbox and sends to its configured receiver.",
+        "Host Run messages and sender-bound settings operations do not expose a telemetry uploader to Web or renderer code."
+      ],
+      "affectedPackages": [
+        "apps/desktop",
+        "packages/boot/app-boot"
+      ],
+      "affectedFiles": [
+        "apps/desktop/electron-builder.config.d.mts",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/src/host-process.ts",
+        "apps/desktop/src/ipc.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/preload-app.ts",
+        "apps/desktop/src/studio-telemetry.ts",
+        "packages/boot/app-boot/src/profile-context.ts",
+        "packages/boot/app-boot/tests/profile.spec.ts"
+      ],
+      "dependsOn": [
+        "030",
+        "033",
+        "039",
+        "064",
+        "082",
+        "083"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio-specific collection policy and packaging resource."
+      },
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/preload-app.spec.ts",
+          "apps/desktop/tests/product-branding.spec.ts",
+          "packages/boot/app-boot/tests/profile.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "electron",
+          "product-profiles",
+          "macos",
+          "windows"
+        ]
+      },
+      "sha256": "345902a7a3ccd52bff0b6aaf86887a69c9472d8b11fdadb2ba73519e5d65df05"
     }
   ],
-  "patchedTree": "b5872d19d9d8b6bc5cc6f4ca3cf837a00028e080",
-  "patchedSourceSha256": "eba39d32e99d7d44693a6dac9e9c97837e019fbd757e30f94c8f28d4f2e00cd8",
+  "patchedTree": "77a293164e021fa8edeb219282bd4af0fb628b93",
+  "patchedSourceSha256": "dc88379444566099364ad7ca99f0fc40471e0f157e7a4eddfc9e78c37066194e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "2931f1cef423819654399b4c0ede6cdfc33d49099643103b87ab1512073bbd73"
+    "sha256": "f57d79742dd2647b26aea84727dfe60e3eb3ab3cd52e31a6c448ee763d9126b7"
   }
 }

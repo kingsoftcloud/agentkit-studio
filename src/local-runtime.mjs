@@ -1,6 +1,8 @@
 /** Studio DSH single-model bridge and Host-owned resource materialization.
  * DSH owns dsh-native loops; Harness execution belongs to the npm Native kernel. */
 import { readSse } from './sse.mjs';
+import { randomUUID } from 'node:crypto';
+import { runErrorCode, startDesktopRun } from './telemetry/host-run.mjs';
 import { modelFailureDetails } from './model-failure.mjs';
 import { formatSkillContext } from './skill-context.mjs';
 import { chatCompletionUsage } from './chat-usage.mjs';
@@ -444,7 +446,8 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       return;
     }
 
-    const runId = `run_local_${Date.now().toString(36)}`;
+    const runId = `run_local_${randomUUID()}`;
+    const reportRun = startDesktopRun('studio-local', runId);
     const traceEvents = [];
     let seq = 0;
     const noteTrace = (eventType, payload = {}) => traceEvents.push({ event_type: eventType, at: new Date().toISOString(), run_id: runId, payload });
@@ -545,11 +548,13 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         }
       }
       send({ kind: 'progress', lifecycle: 'completed', payload: { status: 'completed' } });
+      reportRun?.('completed', { usage: traceEvents.findLast(item => item.event_type === 'model.usage')?.payload.usage });
       await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'completed', events: [...traceEvents, { event_type: 'run.completed', at: new Date().toISOString(), run_id: runId }] }).catch(error => console.warn('[local-runtime] trace sync failed:', error?.message || error));
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.completed' } })}\n\n`);
       response.end('data: [DONE]\n\n');
     } catch (error) {
       if (signal?.aborted || error?.code === 'REQUEST_CANCELLED' || error?.name === 'AbortError') {
+        reportRun?.('canceled');
         await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'canceled', events: [...traceEvents, { event_type: 'run.canceled', at: new Date().toISOString(), run_id: runId, payload: { reason: 'client disconnected' } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
         if (!response.writableEnded && !response.destroyed) response.end('data: [DONE]\n\n');
         return;
@@ -559,7 +564,8 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
         message: String(error?.message || error).slice(0, 300),
         ...(error?.details && typeof error.details === 'object' ? { details: error.details } : {}),
       } });
-      await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'failed', events: [...traceEvents, { event_type: 'run.failed', at: new Date().toISOString(), run_id: runId, payload: { error: String(error?.message || error) } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
+      reportRun?.('failed', { error });
+      await observability?.syncTrace({ traceId: runId, sessionId: String(parsed.sessionId || ''), agentId, agentName, status: 'failed', events: [...traceEvents, { event_type: 'run.failed', at: new Date().toISOString(), run_id: runId, payload: { code: runErrorCode(error) } }] }).catch(traceError => console.warn('[local-runtime] trace sync failed:', traceError?.message || traceError));
       response.write(`data: ${JSON.stringify({ runId, runtimeEvent: { event_type: 'run.failed' } })}\n\n`);
       response.end('data: [DONE]\n\n');
     }

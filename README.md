@@ -4,6 +4,8 @@
 
 AgentKit Studio is a product plugin for the public [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) host. It provides Agent authoring, resource management, local conversations, deployment controls, automation, and plugin discovery in the Harness Web and desktop surfaces.
 
+The desktop app includes independent privacy controls for runtime statistics. See [Desktop telemetry](./docs/desktop-telemetry.md) for the event scope and controls.
+
 The Studio plugin is designed to run with the pinned DSH host version declared in [CONTRIBUTING.md](CONTRIBUTING.md). This repository contains Studio code, compatibility patches, tests, and packaging scripts; it does not vendor the DSH source tree or user credentials.
 
 ## What it provides

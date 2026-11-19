@@ -16,6 +16,7 @@ import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } fro
 
 /** Runtimes that run in their own process behind the stream seam. */
 import { dshModelFailure } from '../model-failure.mjs';
+import { startDesktopRun } from '../telemetry/host-run.mjs';
 import { createCodexToolRecorder, createResponsesToolRecorder } from './codex-tool-events.mjs';
 import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType } from '../runtime-contract.mjs';
@@ -663,6 +664,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           }
           const startedAt = new Date().toISOString();
           const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
+          const reportCodexRun = runtime === 'codex' ? startDesktopRun('codex', traceId) : undefined;
           const traceEvents = [{ event_type: 'run.started', at: startedAt, run_id: traceId, session_id: String(options.sessionId || '') }];
           const toolRecorder = createCodexToolRecorder(toolAgent?.session, { recordModelContext: true });
           let responseText = '';
@@ -779,6 +781,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
                 traceEvents.push({ event_type: 'memory.write.failed', at: new Date().toISOString(), run_id: traceId, payload: { code: String(error?.code || 'MEMORY_WRITE_FAILED') } });
               }
             }
+            reportCodexRun?.('completed', { usage: traceEvents.findLast(item => item.event_type === 'model.usage')?.payload.usage });
             await syncCodexTrace(observability, {
               traceId,
               sessionId: String(options.sessionId || ''),
@@ -790,6 +793,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
             });
           } catch (error) {
             const canceled = options.signal?.aborted || error?.code === 'CODEX_CANCELED';
+            reportCodexRun?.(canceled ? 'canceled' : 'failed', { error });
             await syncCodexTrace(observability, {
               traceId,
               sessionId: String(options.sessionId || ''),
