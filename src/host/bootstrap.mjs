@@ -284,6 +284,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     })) : undefined;
   if (starHarness) {
     ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
+    ctx.provide('studioStarHarnessClient', { get descriptor() { return starHarness.clientDescriptor; } });
     await starHarness.restoreClientAsset().catch(error => {
       console.warn('[agentkit-studio] Star Harness UI restore failed:', error?.code || 'STAR_HARNESS_UI_RESTORE_FAILED');
     });
@@ -732,5 +733,4 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // Host mount before its persisted Session presets are registered. Keep the
   // optional-registry catalog profile independent from this native startup.
   if (ctx.get('agentPresets')) await presetRegistryStartup.ready;
-  return { starHarness };
 }
