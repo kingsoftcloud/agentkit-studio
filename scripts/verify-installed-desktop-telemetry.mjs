@@ -1,18 +1,19 @@
 /** Run an installed Studio package against a loopback HTTPS collector with synthetic data. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { _electron as electron } from '@playwright/test';
-import { maxBodyBytes } from '../src/telemetry/contract.mjs';
+import { eventCategory, maxBodyBytes } from '../src/telemetry/contract.mjs';
 
 const fixturePort = 49331;
 const endpoint = `https://127.0.0.1:${fixturePort}/v1/logs`;
 const basicOnly = { basic: true, crash: false, run: false };
+const allOn = { basic: true, crash: true, run: true };
 const allOff = { basic: false, crash: false, run: false };
 
 async function eventually(probe, label, timeout = 90_000) {
@@ -119,7 +120,7 @@ async function open(executable, profile, cert, version, baseline = false) {
     DSH_HOME: join(profile, 'dsh'), AGENTKIT_HOME: join(profile, 'studio'),
     NODE_EXTRA_CA_CERTS: cert, DSH_DESKTOP_OPEN_DEVTOOLS: '0',
   });
-  if (baseline) env.DSH_TELEMETRY_DISABLED = '1';
+  if (baseline) Object.assign(env, { DSH_TELEMETRY_DISABLED: '1', AGENTKIT_TELEMETRY_DISABLED: '1' });
   const app = await electron.launch({ executablePath: executable, args: [`--user-data-dir=${userData}`],
     cwd: profile, env, timeout: 120_000 });
   try {
@@ -196,7 +197,7 @@ async function main() {
   const appPath = windows ? await installWindows(resolve(values.installer), join(root, 'current')) : resolve(values.app);
   const { executable, resources } = packagePaths(appPath);
   const release = JSON.parse(await readFile(join(resources, 'studio-telemetry', 'policy.json'), 'utf8'));
-  assert.deepEqual(release, { endpoint, defaultBasic: true, policyRevision: 'qualification-v1' });
+  assert.deepEqual(release, { endpoint, defaultBasic: false, policyRevision: 'qualification-v1' });
   const profile = join(root, 'primary');
   const outbox = join(profile, 'electron', 'studio-telemetry', 'outbox.jsonl');
   const receiver = await listen(root);
@@ -207,16 +208,11 @@ async function main() {
       await triggerForeground(app);
       const privacy = await privacySettings(page);
       const basic = privacy.getByRole('switch', { name: '基础运营统计' });
-      assert.equal(await basic.isChecked(), false);
-      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
-      await wait(31_000);
+      const crash = privacy.getByRole('switch', { name: '崩溃统计' });
+      const run = privacy.getByRole('switch', { name: '本地 Run 统计' });
+      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOn);
+      for (const toggle of [basic, crash, run]) assert.equal(await toggle.isChecked(), true);
       await assertNoPrivacyDialog(app);
-      assert.equal(receiver.requests.length, 0);
-      await assert.rejects(access(outbox), { code: 'ENOENT' });
-      await basic.press('Space');
-      await eventually(() => basic.isChecked(), 'Basic statistics did not enable in settings');
-      await assertNoPrivacyDialog(app);
-      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, basicOnly);
       const initial = await page.evaluate(() => window.dshDesktop.telemetry.preview('example'));
       const sample = JSON.parse(initial).resourceLogs[0].scopeLogs[0].logRecords;
       assert.equal(sample.length, 1);
@@ -229,14 +225,21 @@ async function main() {
       for (const event of ['app_install', 'desktop_active_day']) {
         assert.equal(acceptedNames.filter(name => name === event).length, 1);
       }
-      assert.ok(acceptedNames.every(name => ['app_install', 'desktop_active_day', 'update_check_result'].includes(name)),
-        'Only basic telemetry is enabled in this profile');
+      assert.ok(acceptedNames.every(name => eventCategory(name) === 'basic'), 'Idle startup reports only basic events');
       await eventually(async () => {
         const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
         return status.queued === 0 && status.diagnostics.send_failed === 1;
       }, 'Queue confirmation or the package diagnostic counter is missing', 15_000);
-      const stopped = await page.evaluate(() => window.dshDesktop.telemetry.stop(false));
-      assert.deepEqual(stopped.enabled, allOff);
+      for (const toggle of [crash, run]) {
+        await eventually(() => toggle.isEnabled(), 'Statistics switch stayed disabled');
+        await toggle.press('Space');
+        await eventually(async () => !await toggle.isChecked(), 'Statistics switch stayed on');
+      }
+      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, basicOnly);
+      await eventually(() => basic.isEnabled(), 'Basic statistics switch stayed disabled');
+      await basic.press('Space');
+      await eventually(async () => !await basic.isChecked(), 'Basic statistics switch stayed on');
+      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
       const journal = JSON.parse((await readFile(outbox, 'utf8')).split('\n')[0]);
       assert.deepEqual(journal.choices, allOff);
     } finally {
@@ -259,7 +262,7 @@ async function main() {
       await restarted.close();
     }
 
-    console.log('Verified opt-out after restart and silent startup on a fresh profile');
+    console.log('Verified defaults on a fresh profile, silent startup, and per-category opt-out after restart');
 
     let upgradedFrom = null;
     if (values.baseline) {
@@ -288,11 +291,10 @@ async function main() {
       try {
         const page = await workspace(upgraded);
         await triggerForeground(upgraded);
-        await wait(31_000);
         await assertNoPrivacyDialog(upgraded);
-        assert.equal(receiver.requests.length, requestsAfterOptOut);
         assert.equal(await readFile(marker, 'utf8'), 'keep this installed profile');
-        assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
+        const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
+        assert.deepEqual(status.enabled, allOn);
         upgradedFrom = values['baseline-version'];
       } finally {
         await upgraded.close();
@@ -307,7 +309,7 @@ async function main() {
       testInputs: 'Injected foreground, Privacy settings UI, loopback HTTPS, isolated profiles',
       credentialFree: true,
       nativePrivacyDialogShown: false,
-      beforeOptInRequests: 0,
+      freshProfileDefaults: allOn,
       retryKeptEventIds: true,
       acceptedRecords: receiver.requests[1].length,
       fixedSampleVerified: true,

@@ -2,11 +2,13 @@
 
 Open **Settings → AgentKit Studio → Privacy and data** to read the telemetry disclosure, see the receiving address and choose which statistics to enable. Studio works without a telemetry connection and does not need cloud or model credentials to send an enabled report.
 
-| Setting | Data sent | Initial state |
+| Setting | Data sent | New official installations |
 | --- | --- | --- |
-| Basic statistics | First and daily opens, desktop version and platform, and startup and update outcomes | Off |
-| Crash statistics | Fault source, phase, and a fixed error category | Off |
-| Local Run statistics | Local runner type, final status, duration and available token counts | Off |
+| Basic statistics | First and daily opens, desktop version and platform, and startup and update outcomes | On |
+| Crash statistics | Fault source, phase, and a fixed error category | On |
+| Local Run statistics | Local runner type, final status, duration and available token counts | On |
+
+All three switches can be turned off independently. Upgrades preserve the saved settings for the same receiver and policy. Development builds and self-hosted receivers start with all statistics off.
 
 An enabled report carries a random installation ID and comes from the one desktop sender. Prompts, conversations, credentials, tool input and output, account identifiers and complete diagnostic files stay outside telemetry. The [v1 event schema](../src/telemetry/schema-v1.json) lists the accepted fields.
 
@@ -16,6 +18,6 @@ You can set `AGENTKIT_TELEMETRY_DISABLED=1` to turn all categories off. To self-
 
 ## Packaging
 
-The Studio packaging step accepts a public JSON policy through `AGENTKIT_TELEMETRY_RELEASE_FILE` or `AGENTKIT_TELEMETRY_RELEASE_POLICY`. The macOS and Windows workflows read the `STUDIO_TELEMETRY_RELEASE_POLICY` Actions variable. With an empty variable, the official receiver is unconfigured. Keep `defaultBasic` and `policyRevision` consistent when upgrading a distribution under the same policy so existing choices carry over. Build with `AGENTKIT_TELEMETRY_BUILD=off` to omit the sender.
+The Studio packaging step accepts a public JSON policy through `AGENTKIT_TELEMETRY_RELEASE_FILE` or `AGENTKIT_TELEMETRY_RELEASE_POLICY`. The macOS and Windows workflows read the `STUDIO_TELEMETRY_RELEASE_POLICY` Actions variable. A configured HTTPS endpoint and policy revision enable the defaults for new installations. With an empty variable, the official receiver is unconfigured. Keep the legacy `defaultBasic` field and `policyRevision` consistent so prior choices carry over. Build with `AGENTKIT_TELEMETRY_BUILD=off` to omit the sender.
 
 The two release workflows offer `qualify_telemetry` to exercise signed installations against a loopback HTTPS receiver. These fixture candidates have dedicated artifact names for test builds.

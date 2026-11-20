@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -20,17 +20,18 @@ async function fixture(t, overrides = {}) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const fetches = [];
   let now = Date.parse('2026-11-19T15:59:00Z');
-  const options = { directory, dimensions, config: resolveDesktopTelemetryConfig({ release, packaged: true }),
+  const options = { directory, dimensions, config: resolveDesktopTelemetryConfig({ release, packaged: false }),
     now: () => now, random: () => 0, batchDelay: 120_000,
     fetchImpl: async (url, request) => { fetches.push({ url, request }); return ack(); },
     ...overrides };
   return { directory, options, fetches, advance: ms => { now += ms; }, telemetry: await createDesktopTelemetry(options) };
 }
 
-test('release policy gates basic by package and first-party receiver', () => {
-  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true }).defaultBasic, true);
-  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: false }).defaultBasic, false);
-  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true, selfHosted: endpoint }).defaultBasic, false);
+test('release defaults require a packaged first-party receiver and policy revision', () => {
+  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true }).defaultEnabled, true);
+  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: false }).defaultEnabled, false);
+  assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true, selfHosted: endpoint }).defaultEnabled, false);
+  assert.equal(resolveDesktopTelemetryConfig({ release: { endpoint }, packaged: true }).defaultEnabled, false);
   assert.equal(resolveDesktopTelemetryConfig({ release, packaged: true, disabled: '0' }).disabled, true);
   assert.equal(resolveDesktopTelemetryConfig({ release, selfHosted: 'https://user:pass@example.test/v1/logs' }).endpoint, null);
 });
@@ -50,7 +51,7 @@ test('the workflow policy is validated and written as a package resource', async
   }), /Use one desktop telemetry release policy input/);
 });
 
-test('no allocation before opt-in, one consent-gated event per Beijing day', async t => {
+test('development requires opt-in and sends one active event per Beijing day', async t => {
   const { telemetry, options, directory, fetches, advance } = await fixture(t);
   telemetry.beginLaunch();
   telemetry.activity();
@@ -80,6 +81,35 @@ test('no allocation before opt-in, one consent-gated event per Beijing day', asy
   await restarted.drain();
 });
 
+test('a new official installation defaults every category on and preserves per-category opt-outs', async t => {
+  const config = resolveDesktopTelemetryConfig({ release: { ...release, defaultBasic: false }, packaged: true });
+  const { telemetry, options } = await fixture(t, { config });
+  assert.deepEqual(telemetry.status().enabled, { basic: true, crash: true, run: true });
+  telemetry.activity();
+  assert.deepEqual(eventNames(telemetry.preview()), ['app_install', 'desktop_active_day']);
+  await telemetry.setPreference('crash', false);
+  await telemetry.drain();
+  const restarted = await createDesktopTelemetry(options);
+  assert.deepEqual(restarted.status().enabled, { basic: true, crash: false, run: true });
+  await restarted.drain();
+});
+
+test('new release defaults preserve an older journal and fail closed on an unreadable journal', async t => {
+  const config = resolveDesktopTelemetryConfig({ release, packaged: true });
+  const { telemetry, options, directory, fetches } = await fixture(t, { config: { ...config, defaultEnabled: false } });
+  await telemetry.setPreference('basic', true);
+  await telemetry.drain();
+  const upgraded = await createDesktopTelemetry({ ...options, config });
+  assert.deepEqual(upgraded.status().enabled, { basic: true, crash: false, run: false });
+  await upgraded.drain();
+  await writeFile(join(directory, 'outbox.jsonl'), 'invalid journal\n');
+  const unreadable = await createDesktopTelemetry({ ...options, config });
+  assert.deepEqual(unreadable.status().enabled, { basic: false, crash: false, run: false });
+  assert.equal(unreadable.status().installId, null);
+  assert.equal(fetches.length, 0);
+  await unreadable.drain();
+});
+
 test('the fixed sample is local and independent of policy, queue and installation identity', async t => {
   const { telemetry, directory, fetches } = await fixture(t, {
     config: resolveDesktopTelemetryConfig({ release: {}, packaged: true }),
@@ -100,7 +130,7 @@ test('address or policy changes drop queued data and require fresh opt-in', asyn
   await telemetry.setPreference('crash', false);
   const next = await createDesktopTelemetry({
     ...options,
-    config: resolveDesktopTelemetryConfig({ release: { ...release, defaultBasic: false }, packaged: true }),
+    config: resolveDesktopTelemetryConfig({ release: { ...release, policyRevision: 'test-2' }, packaged: false }),
   });
   assert.deepEqual(next.status().enabled, { basic: false, crash: false, run: false });
   assert.deepEqual(eventNames(next.preview()), []);

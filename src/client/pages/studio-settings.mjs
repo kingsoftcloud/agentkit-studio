@@ -62,7 +62,7 @@ export function createStudioSettingsSection({
         state?.endpoint && !state.available ? h('p', { className: 'agentkit-form-note' }, '当前桌面配置已停用上报。') : null,
         state ? h('details', { className: 'studio-privacy-details', open: state.noticePending || undefined },
           h('summary', { className: 'studio-privacy-summary' }, '数据与隐私说明'),
-          h('p', { className: 'agentkit-form-note' }, '首次使用时，以下统计均为关闭，可按需开启。上报使用随机安装标识，凭证、会话内容和完整日志保留在本机。'),
+          h('p', { className: 'agentkit-form-note' }, '可随时开启或关闭各项统计。上报使用随机安装标识，凭证、会话内容和完整日志保留在本机。'),
           state.endpoint ? h('p', { className: 'agentkit-form-note' }, `接收方 ${state.endpoint}`) : null,
           state.endpoint && !state.selfHosted ? h('p', { className: 'agentkit-form-note' },
             '官方接收方保留事件 90 天。如需删除已上报的数据，可通过私密支持渠道提供「上报详情」中的安装标识。') : null) : null,
