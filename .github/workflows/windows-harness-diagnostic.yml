@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: kingsoftcloud/ksadk-harness
-          ref: 0a58bd9088395eb42680b03c5c3f0bc6deaccb46
+          ref: a570f69599e00880b3b7e2137499d79cd965a2fc
           path: harness-candidate
       - uses: actions/setup-node@v4
         with:
@@ -25,18 +25,33 @@ jobs:
           npm ci --ignore-scripts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm run build
-      - name: Print the underlying workspace persistence error from the fixture
-        working-directory: harness-candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentkit-studio-0.2.2-rc.1.20261120.10-win-x64
+          run-id: '44714203818'
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Install verified candidate in runner scratch
         shell: pwsh
         run: |
-          $file = 'packages/agentkit-harness-node/src/native/workspace-tools.mjs'
-          $source = Get-Content $file -Raw
-          $target = "if (mutations.size) return { status: 'uncertain', workspaceChangedPaths: [...mutations],"
-          $previous = "} catch (e) {"
-          $anchor = $source.IndexOf($target)
-          if ($anchor -lt 0) { throw 'Missing fixture catch' }
-          $offset = $source.LastIndexOf($previous, $anchor)
-          if ($offset -lt 0) { throw 'Missing fixture persistence catch' }
-          $source = $source.Insert($offset + $previous.Length, "`n      console.error(e);")
-          Set-Content -LiteralPath $file -Value $source -Encoding utf8
-          node --test packages/agentkit-harness-node/test/native-engine-private-state.test.mjs
+          $installer = @(Get-ChildItem candidate -Recurse -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw 'Expected a single signed installer' }
+          $sig = Get-AuthenticodeSignature $installer[0].FullName
+          if ($sig.Status -ne 'Valid' -or -not $sig.TimeStamperCertificate) { throw 'Invalid installed candidate signature' }
+          $dest = Join-Path $env:RUNNER_TEMP 'studio-harness-diagnostic'
+          $install = Start-Process $installer[0].FullName -ArgumentList @('/S', "/D=$dest") -Wait -PassThru
+          if ($install.ExitCode) { throw 'Installer failed' }
+          $app = Join-Path $dest 'AgentKit Studio.exe'
+          $appSig = Get-AuthenticodeSignature $app
+          if ($appSig.Status -ne 'Valid' -or $appSig.SignerCertificate.Thumbprint -ne $sig.SignerCertificate.Thumbprint) { throw 'Invalid installed app signature' }
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $script = Join-Path $env:GITHUB_WORKSPACE 'ci/windows-harness-diagnostic/probe.mjs'
+          $archive = Join-Path $dest 'resources/app.asar'
+          $stdout = Join-Path $dest 'probe.stdout'
+          $stderr = Join-Path $dest 'probe.stderr'
+          $harness = Join-Path $env:GITHUB_WORKSPACE 'harness-candidate/packages/agentkit-harness-node'
+          $arguments = @($script, $archive, $harness) | ForEach-Object { '"' + $_ + '"' }
+          $run = Start-Process -FilePath $app -ArgumentList $arguments -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          Get-Content $stdout
+          Get-Content $stderr
+          if ($run.ExitCode) { throw 'Diagnostic process failed' }
