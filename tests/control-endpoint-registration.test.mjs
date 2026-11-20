@@ -39,7 +39,7 @@ test('the probe endpoints are registered on both registries', async () => {
   const registered = new Set(STUDIO_OPERATION_IDS);
   const serverSource = await readFile(new URL('../src/host/routes/server.mjs', import.meta.url), 'utf8');
   const dispatched = new Set([...serverSource.matchAll(/action === '([^']+)'/g)].map(match => match[1]));
-  for (const endpoint of ['models/probe', 'models/wire']) {
+  for (const endpoint of ['models/probe', 'models/wire', 'models/efforts']) {
     assert.ok(registered.has(endpoint), `${endpoint} must be in STUDIO_OPERATION_IDS`);
   }
   // `models/probe` predates the dispatcher's `models/*` handling and is served

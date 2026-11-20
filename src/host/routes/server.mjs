@@ -16,7 +16,7 @@ export function createServerActionRoutes({ serverClientPromise, models, syncMode
             // The settings form's「探测接口」button. Read-only: it reports a
             // wire and never writes the profile.
             if (action === 'models/wire')
-                return { ok: true, value: await models.probeWire(body) };
+                return { ok: true, value: await models.probeWire(body, signal) };
             if (action === 'models/sync-credential')
                 return { ok: true, value: await syncModelCredential() };
             if (action === 'models/credential-status')

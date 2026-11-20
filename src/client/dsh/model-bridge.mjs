@@ -46,6 +46,10 @@ export function createModelBridge({ hostRemote }) {
     const applyProfiles = async ({ profiles, keys = {} }) => {
       const document = await describe();
       const namespace = (document.namespaces || []).find(item => item.ns === DSH_MODEL_SETTINGS_NS);
+      // Studio's bundled Host exposes model-specific defaults. A stock Host
+      // can still take a route default when the route serves a single model.
+      const supportsModelDefaults = Object.values(namespace?.schema?.refs || {})
+        .some(schema => Object.hasOwn(schema?.dict || {}, 'defaultReasoningEffort'));
       const valid = profiles.filter(profile => profile?.enabled !== false && String(profile?.modelName || '').trim())
         .sort((left, right) => Number(right.default === true) - Number(left.default === true));
       if (!valid.length) throw new Error('至少保留一个模型配置');
@@ -59,27 +63,26 @@ export function createModelBridge({ hostRemote }) {
         if (!baseUrl) throw new Error(`模型 ${modelName} 需要填写 API 地址`);
         const credentialName = modelCredentialName(profile, index);
         const reasoning = studioReasoning(profile);
+        const reasoningEfforts = reasoning?.efforts ?? (profile.reasoningLevels?.length === 0 ? false : undefined);
         // Kspmas model metadata is multimodal, but custom DSH routes fall
         // back to text-only unless the capability is declared explicitly.
         // Keep the input contract on each profile so read_image and native
         // image messages are admitted consistently with the upstream model.
-        const models = (catalogs[index]?.items?.length ? catalogs[index].items : [{ id: modelName, name: modelName, input: profile.input || ['text'] }])
+        const items = catalogs[index]?.items || [];
+        const fallback = { id: modelName, name: modelName, input: profile.input || ['text'] };
+        const configuredModel = items.find(item => item.id === modelName);
+        // Keep catalog siblings on legacy routes for existing selections.
+        const routedModels = profile.modelOnly ? [configuredModel || fallback] : configuredModel ? items : [...items, fallback];
+        const dedicated = routedModels.length === 1;
+        const models = routedModels
           .map(model => {
-            const capability = admitModelCapabilities({ ...profile, input: model.id === modelName ? profile.input : undefined }, model);
+            const configured = model.id === modelName;
+            const capability = admitModelCapabilities({ ...profile, input: configured ? profile.input : undefined }, model);
             return { id: model.id, name: model.name || model.id, contextWindow: capability.contextWindow,
               maxTokens: capability.maxOutputTokens, input: capability.input,
-              ...(reasoning && model.id === modelName ? { reasoningEfforts: reasoning.efforts } : {}) };
+              ...(configured && reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
+              ...(configured && reasoning && supportsModelDefaults && !dedicated ? { defaultReasoningEffort: reasoning.defaultEffort } : {}) };
           });
-        // A route default is applied to every model the route serves, and the
-        // gateway catalog arrives as sibling models whose reasoning capability
-        // Studio cannot know (they declare no `reasoningEfforts`, so DSH reads
-        // them as non-reasoning). Declaring the default anyway makes every turn
-        // on a sibling fail with `UNSUPPORTED_REASONING_EFFORT` before the
-        // request leaves DSH — this is exactly how switching to
-        // `kimi-k3.1-pro-highspeed` broke after a `reasoning: max` profile.
-        // Keep the default only for a route that serves this profile's model
-        // alone; on a catalog route the session-level choice carries it.
-        const dedicated = models.length === 1 && models[0].id === modelName;
         const wire = providerWireApi(profile);
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
           displayName: `${provider} · ${modelName}`, api: wire, apiKeyEnv: credentialName,
@@ -101,9 +104,7 @@ export function createModelBridge({ hostRemote }) {
           // case a profile declaring `protocol: openai-responses` creates —
           // so it is conditional on the wire this route actually uses.
           compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
-          // A concrete route default keeps fresh sessions on a thinking level
-          // instead of DSH's "provider default" row, which would omit the
-          // parameter and leave thinking to the gateway's own default.
+          // A route default would also be sent to every catalog sibling.
           ...(reasoning && dedicated ? { reasoning: reasoning.defaultEffort } : {}),
           models,
         } } };

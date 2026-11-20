@@ -109,7 +109,9 @@ test('parent Studio mounting preserves local composer services and never install
 
 test('model settings keep multiple providers and profiles independently configurable', () => {
   assert.match(clientSource, /modelProfiles/);
-  assert.match(clientSource, /添加提供商或模型/);
+  assert.match(clientSource, /添加提供商/);
+  assert.match(clientSource, /移除提供商/);
+  assert.match(clientSource, /从目录添加模型/);
   assert.match(clientSource, /modelProfileKeys/);
   assert.match(clientSource, /ksp\.console\.ksyun\.com\/#\/apiKey/);
   assert.match(clientSource, /applyProfiles/);

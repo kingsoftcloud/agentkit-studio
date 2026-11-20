@@ -1,0 +1,308 @@
+diff --git a/packages/llm/llm-pi-ai/README.md b/packages/llm/llm-pi-ai/README.md
+index 2b1b28395f0e4b11fadb88aa95cc34f85fe6b0b4..919f02c69ae3e6526e8b17bf2fcaa67906f09ab3 100644
+--- a/packages/llm/llm-pi-ai/README.md
++++ b/packages/llm/llm-pi-ai/README.md
+@@ -106,7 +106,7 @@ A profile's `models` list replaces the route's installed catalog rather than ext
+ 
+ `reasoningEfforts` declares a model's selectable thinking levels: each key is a level selectors offer, its value the spelling dispatch sends on the wire, so `max: ultra` renames a level for a gateway with its own vocabulary. Omitting the field keeps the installed catalog entry's capability; `false` declares a non-reasoning model. `compat` switches reshape the request for endpoints pi-ai cannot recognize — which role carries the system prompt, which field caps output, how a thinking level travels — configurable per route and per model. A model neither the entry nor the installed catalog sizes takes the route's `defaultContextWindow` and `defaultMaxTokens` fallbacks.
+ 
+-Exact-model metadata lists `reasoning.efforts` from least to greatest selectable effort. A configuration function can select from that list before `prepareCall()` validates the concrete effort. The adapter receives only the resolved controls. Selecting `off` does not guarantee disabled reasoning: a protocol that expresses it by omitting the reasoning field leaves the gateway's default in effect. Reasoning tokens at any selected level count toward the request's output cap.
++Exact-model metadata lists `reasoning.efforts` from least to greatest selectable effort. A supported `defaultReasoningEffort` on a model entry overrides the route's `reasoning` for that model. An explicitly selected effort takes precedence over both. A configuration function can select from the list before `prepareCall()` validates the concrete effort. A protocol that omits the reasoning field for `off` leaves the gateway's default in effect. Reasoning tokens at any selected level count toward the request's output cap.
+ 
+ For self-hosted Chat Completions endpoints, `thinkingTokenBudgetField` selects the reasoning-budget parameter, and `vllmPriority` sets an integer scheduler priority when the server enables priority scheduling. Template arguments accept `$var: thinking.budget`. `openai-responses` gateways can set `supportsMaxOutputTokens: false` to omit `max_output_tokens`; Azure and Codex transports ignore this shared compatibility field. These controls are opt-in; catalog-owned Anthropic effort and fallback capabilities are not configurable switches.
+ 
+diff --git a/packages/llm/llm-pi-ai/README.zh.md b/packages/llm/llm-pi-ai/README.zh.md
+index 0a717288d7dd9089585c30964148a6f333b42951..53b297bc20f9177b1b77a1346a8b246d9b21eb2d 100644
+--- a/packages/llm/llm-pi-ai/README.zh.md
++++ b/packages/llm/llm-pi-ai/README.zh.md
+@@ -106,7 +106,7 @@ profile 的 `models` 列表会替换而非扩展路由的已安装目录；每
+ 
+ `reasoningEfforts` 声明模型可选择的 thinking 等级：每个键都是选择器提供的等级，其值是分派时在协议中发送的拼写，因此 `max: ultra` 可以为拥有自有词汇的网关重命名等级。省略该字段时保留已安装目录条目的能力；`false` 声明非推理模型。对于 pi-ai 无法识别的端点，`compat` 开关重塑请求——哪个角色携带系统提示词、哪个字段限制输出、thinking 等级如何传递——可逐路由、逐模型配置。条目与已安装目录都没有尺寸的模型，会采用路由的 `defaultContextWindow` 与 `defaultMaxTokens` 回退值。
+ 
+-确切模型元数据将 `reasoning.efforts` 按可选强度从低到高排列。配置函数可从该列表中选择，再由 `prepareCall()` 校验具体强度。适配器只接收解析后的控制项。选择 `off` 不保证禁用推理：以省略推理字段表达该值的协议会沿用网关默认行为。所选等级下产生的推理 token 都计入该请求的输出上限。
++确切模型元数据将 `reasoning.efforts` 按可选强度从低到高排列。模型条目可用其支持的 `defaultReasoningEffort` 覆盖路由的 `reasoning`。调用方显式选择的等级优先于两者。配置函数可从该列表中选择，再由 `prepareCall()` 校验具体强度。以省略推理字段表达 `off` 的协议会沿用网关默认行为。所选等级下产生的推理 token 都计入该请求的输出上限。
+ 
+ 对于自托管 Chat Completions 端点，`thinkingTokenBudgetField` 选择推理预算参数，`vllmPriority` 在服务端启用优先级调度时设置整数调度优先级。模板参数接受 `$var: thinking.budget`。`openai-responses` 网关可设置 `supportsMaxOutputTokens: false` 来省略 `max_output_tokens`；Azure 与 Codex 传输会忽略这个共享兼容字段。这些控制均需显式启用；目录拥有的 Anthropic effort 和回退能力不是可配置开关。
+ 
+diff --git a/packages/llm/llm-pi-ai/src/adapter.ts b/packages/llm/llm-pi-ai/src/adapter.ts
+index 1302589633c7944786343562a404be6af19ac6ae..bdd0fa9c3f3223c5464d80269319848a42dabb82 100644
+--- a/packages/llm/llm-pi-ai/src/adapter.ts
++++ b/packages/llm/llm-pi-ai/src/adapter.ts
+@@ -58,9 +58,10 @@ import type {
+ } from '@deepseek-ai/dsh-llm'
+ import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+ import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
++import { getSupportedThinkingLevels } from './catalog.ts'
+ import type { ResolvedPiAiProviderProfile } from './config.ts'
+ import { requestImageTarget, toPiContext } from './context.ts'
+-import { conversationUpdates, createModels, getSupportedThinkingLevels } from './models.ts'
++import { conversationUpdates, createModels } from './models.ts'
+ import { toStreamChunks } from './stream.ts'
+ import type { PiAiRequestHeaderContext } from './types.ts'
+ 
+@@ -367,7 +368,7 @@ export class PiAiAdapter extends LlmAdapter {
+   private modelInfo(snapshot: PiAiSnapshot, provider: string, model: string): LlmResolvedModelInfo {
+     const profile = this.profileOf(snapshot, provider)
+     const resolvedModel = this.modelOf(snapshot, provider, model)
+-    const defaultLevel = describableReasoningLevel(resolvedModel, profile.reasoning)
++    const defaultLevel = describableReasoningLevel(resolvedModel, profile.defaultReasoningEfforts.get(model) ?? profile.reasoning)
+     // Only a cap the deployment configured is a request default; the
+     // catalog's `maxTokens` sizes the model and stops there.
+     const configuredMaxTokens = profile.configuredMaxTokens.get(model)
+@@ -421,7 +422,7 @@ export class PiAiAdapter extends LlmAdapter {
+       : options
+     const reasoning = resolveReasoningLevel(
+       model,
+-      options.reasoningEffort ?? profile.reasoning,
++      options.reasoningEffort ?? profile.defaultReasoningEfforts.get(options.model) ?? profile.reasoning,
+     )
+     const apiKey = await this.config.resolveApiKey(options.provider, profile)
+ 
+diff --git a/packages/llm/llm-pi-ai/src/catalog.ts b/packages/llm/llm-pi-ai/src/catalog.ts
+index b2103095743bae6408d2359d3a886f749f63a950..75c8b2846c5131af1d73bf229ffabab666b2412c 100644
+--- a/packages/llm/llm-pi-ai/src/catalog.ts
++++ b/packages/llm/llm-pi-ai/src/catalog.ts
+@@ -85,6 +85,21 @@ const THINKING_LEVEL_GATE: Record<ModelThinkingLevel, true> = {
+ /** Every pi-ai thinking level a profile may declare, in escalation order. */
+ export const THINKING_LEVELS = Object.keys(THINKING_LEVEL_GATE) as readonly ModelThinkingLevel[]
+ 
++/**
++ * Resolve the selectable efforts in pi-ai's escalation order.
++ * @param model - model with reasoning support and wire mappings.
++ * @returns the efforts the model supports.
++ */
++export function getSupportedThinkingLevels(model: Model<Api>): ModelThinkingLevel[] {
++  if (!model.reasoning) return ['off']
++  return THINKING_LEVELS.filter((level) => {
++    const mapped = model.thinkingLevelMap?.[level]
++    if (mapped === null) return false
++    if (level === 'xhigh' || level === 'max') return mapped !== undefined
++    return true
++  })
++}
++
+ /** One reasoning-dispatch wire format a profile may name. */
+ export type PiAiThinkingFormat = NonNullable<OpenAICompletionsCompat['thinkingFormat']>
+ 
+@@ -635,6 +650,8 @@ export interface PiAiModelProfile {
+    * declares the offered levels and their wire spellings.
+    */
+   reasoningEfforts?: false | PiAiReasoningEfforts
++  /** Supported effort used for this model before the route's reasoning default. */
++  defaultReasoningEffort?: ModelThinkingLevel
+   /** pi-ai wire-compatibility switches for this model, winning over the route's per field; one its protocol does not declare is refused. */
+   compat?: PiAiCompatProfile
+ }
+@@ -827,7 +844,7 @@ function resolveModelCompat(
+   return { compat: { ...inherited, ...configured } as ModelCompat }
+ }
+ 
+-/** One route's materialized catalog, plus the request caps its profile chose. */
++/** One route's materialized catalog and configured request defaults. */
+ export interface RouteCatalog {
+   /** The materialized models in configuration order. */
+   models: readonly Model<Api>[]
+@@ -844,6 +861,8 @@ export interface RouteCatalog {
+    * picked, so only an explicit configuration lands here.
+    */
+   configuredMaxTokens: ReadonlyMap<string, number>
++  /** Explicit reasoning defaults by model id. */
++  defaultReasoningEfforts: ReadonlyMap<string, ModelThinkingLevel>
+ }
+ 
+ /**
+@@ -853,7 +872,7 @@ export interface RouteCatalog {
+  * `providers: { deepseek: { apiKeyEnv: … } }` profile working untouched.
+  * @param request - the route-level catalog facts.
+  * @param validation - strict writes reject every error; deferred reads retain model diagnostics.
+- * @returns the materialized models and the explicitly configured request caps.
++ * @returns the materialized models and explicitly configured request defaults.
+  */
+ export function resolveRouteModels(
+   request: RouteCatalogRequest,
+@@ -909,6 +928,7 @@ export function resolveRouteModels(
+   assertOfferedCompatFields(provider, 'route', request.compat)
+   const seen = new Set<string>()
+   const configuredMaxTokens = new Map<string, number>()
++  const defaultReasoningEfforts = new Map<string, ModelThinkingLevel>()
+   const resolveEntry = (entry: PiAiModelProfile): Model<Api> => {
+     assertOfferedCompatFields(provider, `model "${entry.id}"`, entry.compat)
+     if (entry.id.length === 0) invalid(provider, 'has a model with an empty id')
+@@ -939,7 +959,7 @@ export function resolveRouteModels(
+     // Only a value the profile named is a deployment choice; the catalog's is
+     // the model's capability and stays out of request defaults.
+     if (entry.maxTokens !== undefined) configuredMaxTokens.set(entry.id, entry.maxTokens)
+-    return {
++    const model: Model<Api> = {
+       // The installed entry lays the floor, and the fields below override it.
+       // Enumerating instead would silently drop every `Model` field this
+       // package does not model — reasoning-level spellings, compatibility
+@@ -958,6 +978,13 @@ export function resolveRouteModels(
+       ...resolveModelReasoning(provider, entry, base),
+       ...resolveModelCompat(provider, entry, request.compat, base, api),
+     }
++    if (entry.defaultReasoningEffort !== undefined) {
++      if (!model.reasoning || !getSupportedThinkingLevels(model).includes(entry.defaultReasoningEffort)) {
++        invalid(provider, `model "${entry.id}" does not support defaultReasoningEffort "${entry.defaultReasoningEffort}"`)
++      }
++      defaultReasoningEfforts.set(entry.id, entry.defaultReasoningEffort)
++    }
++    return model
+   }
+   const models: Model<Api>[] = []
+   for (const entry of entries) {
+@@ -983,5 +1010,5 @@ export function resolveRouteModels(
+     invalid(provider, `sets compat "${field}", but no model on the route speaks a protocol that takes it;`
+       + ` it exists on ${takers.join(', ')}`)
+   }
+-  return { models: serviceableModels, configuredMaxTokens, modelErrors }
++  return { models: serviceableModels, configuredMaxTokens, defaultReasoningEfforts, modelErrors }
+ }
+diff --git a/packages/llm/llm-pi-ai/src/config.ts b/packages/llm/llm-pi-ai/src/config.ts
+index 9de6c4416eb61d2a95139c4530488148266ed29a..b92caf6a368225879a65c6e35bd199a2191a5471 100644
+--- a/packages/llm/llm-pi-ai/src/config.ts
++++ b/packages/llm/llm-pi-ai/src/config.ts
+@@ -245,6 +245,8 @@ export interface ResolvedPiAiProviderProfile
+    * own, so a catalog capability must not appear here.
+    */
+   configuredMaxTokens: ReadonlyMap<string, number>
++  /** Default reasoning efforts explicitly set on individual models. */
++  defaultReasoningEfforts: ReadonlyMap<string, ModelThinkingLevel>
+ }
+ 
+ /** Plugin configuration: the provider routes this instance owns. */
+@@ -341,6 +343,7 @@ const modelFields = {
+   // `{}`, and absent must stay distinguishable — it means "inherit the
+   // installed catalog's capability", while `false` disables reasoning.
+   reasoningEfforts: z.union([z.const(false), reasoningEfforts]),
++  defaultReasoningEffort: z.union(THINKING_LEVELS),
+   compat: compatProfile,
+ }
+ 
+@@ -542,6 +545,7 @@ export function resolveProfiles(
+       ...rest.headers === undefined ? {} : { headers: { ...rest.headers } },
+       ...rest.thinkingBudgets === undefined ? {} : { thinkingBudgets: { ...rest.thinkingBudgets } },
+       configuredMaxTokens: catalog?.configuredMaxTokens ?? new Map(),
++      defaultReasoningEfforts: catalog?.defaultReasoningEfforts ?? new Map(),
+       modelErrors: catalog?.modelErrors ?? new Map(),
+       ...piProvider === undefined ? {} : { piProvider },
+       ...catalogError === undefined ? {} : { catalogError },
+diff --git a/packages/llm/llm-pi-ai/src/models.ts b/packages/llm/llm-pi-ai/src/models.ts
+index bde2148f1bdcbc7ecc56881fe140be4479a1fc42..772e407597917857887e456dabf208e4d7618126 100644
+--- a/packages/llm/llm-pi-ai/src/models.ts
++++ b/packages/llm/llm-pi-ai/src/models.ts
+@@ -5,14 +5,12 @@ import type {
+   Api,
+   CreateModelsOptions,
+   Model,
+-  ModelThinkingLevel,
+   MutableModels,
+   Provider,
+   ProviderAuth,
+   ProviderStreams,
+ } from '@earendil-works/pi-ai'
+ import type { LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm'
+-import { THINKING_LEVELS } from './catalog.ts'
+ 
+ /** Input accepted by the static, single-protocol providers this package builds. */
+ interface StaticProviderOptions {
+@@ -53,21 +51,6 @@ export function createProvider(input: StaticProviderOptions): Provider {
+ }
+ 
+ /**
+- * Resolve selectable reasoning levels from pi-ai's public model metadata.
+- * @param model - model descriptor carrying reasoning support and wire mappings.
+- * @returns supported levels in pi-ai's escalation order.
+- */
+-export function getSupportedThinkingLevels(model: Model<Api>): ModelThinkingLevel[] {
+-  if (!model.reasoning) return ['off']
+-  return THINKING_LEVELS.filter((level) => {
+-    const mapped = model.thinkingLevelMap?.[level]
+-    if (mapped === null) return false
+-    if (level === 'xhigh' || level === 'max') return mapped !== undefined
+-    return true
+-  })
+-}
+-
+-/**
+  * Resolve transcript update modes from the exact model's protocol capabilities.
+  * @param model - Materialized pi-ai model, including catalog compatibility flags.
+  * @returns Update modes consumed by prompt admission and tool-history projection.
+diff --git a/packages/llm/llm-pi-ai/tests/adapter.spec.ts b/packages/llm/llm-pi-ai/tests/adapter.spec.ts
+index d14f1202050f1e913c3f1f16cd3e70ef8254ae53..de284becab712186740cbd5ae20a5670efe7f25d 100644
+--- a/packages/llm/llm-pi-ai/tests/adapter.spec.ts
++++ b/packages/llm/llm-pi-ai/tests/adapter.spec.ts
+@@ -688,6 +688,44 @@ describe('provider profile lifecycle', () => {
+     })
+   })
+ 
++  it('uses each model’s default for selection and dispatch on a shared route', async () => {
++    vi.stubEnv('PI_TEST_KEY', 'test-key')
++    const server = await mockServer(Array.from({ length: 4 }, () => ({ events: textEvents })))
++    const ctx = new Context()
++    await ctx.plugin(LlmRuntime)
++    const provider = 'acme-gateway'
++    const reasoningEfforts = { low: 'low', high: 'high' }
++    await ctx.plugin(LlmPiAi, {
++      providers: {
++        [provider]: {
++          apiKeyEnv: 'PI_TEST_KEY',
++          api: 'openai-completions',
++          baseURL: `${server.url}/v1`,
++          models: [
++            { id: 'fast', reasoningEfforts, defaultReasoningEffort: 'low' },
++            { id: 'careful', reasoningEfforts, defaultReasoningEffort: 'high' },
++            { id: 'plain' },
++          ],
++        },
++      },
++    })
++
++    await expect(ctx.llm.resolveModelInfo(provider, 'fast')).resolves.toMatchObject({ reasoning: { defaultEffort: 'low' } })
++    await expect(ctx.llm.resolveModelInfo(provider, 'careful')).resolves.toMatchObject({ reasoning: { defaultEffort: 'high' } })
++    expect((await ctx.llm.resolveModelInfo(provider, 'plain')).reasoning).toBeUndefined()
++    await assemble(ctx, { provider, model: 'fast', messages: [] })
++    await assemble(ctx, { provider, model: 'careful', messages: [] })
++    await assemble(ctx, { provider, model: 'careful', reasoningEffort: ReasoningEffortId('low'), messages: [] })
++    await assemble(ctx, { provider, model: 'plain', messages: [] })
++    expect(server.requests).toMatchObject([
++      { model: 'fast', reasoning_effort: 'low' },
++      { model: 'careful', reasoning_effort: 'high' },
++      { model: 'careful', reasoning_effort: 'low' },
++      { model: 'plain' },
++    ])
++    expect(server.requests[3]).not.toHaveProperty('reasoning_effort')
++  })
++
+   it('sends the declared wire spelling and refuses undeclared levels before network I/O', async () => {
+     vi.stubEnv('PI_TEST_KEY', 'test-key')
+     const server = await mockServer([{ events: textEvents }])
+diff --git a/packages/llm/llm-pi-ai/tests/catalog.spec.ts b/packages/llm/llm-pi-ai/tests/catalog.spec.ts
+index 32bb8f39933cd905163eea6e8870575656e0b5d8..4140cadaa2c73c5f896640a274f0e676d6b3569d 100644
+--- a/packages/llm/llm-pi-ai/tests/catalog.spec.ts
++++ b/packages/llm/llm-pi-ai/tests/catalog.spec.ts
+@@ -11,9 +11,9 @@ import { getAllBuiltinModels, getBuiltinModels, getBuiltinProviders } from '@ear
+ import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream'
+ import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript'
+ import type { Api, Model, OpenAICompletionsCompat, Provider } from '@earendil-works/pi-ai'
+-import { catalogModels, catalogProvider } from '../src/catalog.ts'
++import { catalogModels, catalogProvider, getSupportedThinkingLevels } from '../src/catalog.ts'
+ import { resolveProfiles } from '../src/config.ts'
+-import { createModels, createProvider, getSupportedThinkingLevels } from '../src/models.ts'
++import { createModels, createProvider } from '../src/models.ts'
+ import { buildProvider, supportedProtocols } from '../src/provider.ts'
+ import { assemble } from './assemble.ts'
+ import { memoryAuth } from './auth-double.ts'
+@@ -717,6 +717,12 @@ describe('per-model reasoning efforts', () => {
+     expect(getSupportedThinkingLevels(model)).toEqual(['high'])
+   })
+ 
++  it('rejects a model default that the model does not offer', () => {
++    expect(() => modelOf(declared([{
++      id: 'm', reasoningEfforts: { high: 'high' }, defaultReasoningEffort: 'low',
++    }]))).toThrow(/model "m" does not support defaultReasoningEffort "low"/)
++  })
++
+   it('narrows a catalog model’s levels in place', () => {
+     const [catalogModel] = getBuiltinModels('deepseek')
+     if (catalogModel === undefined) throw new Error('the installed catalog ships no deepseek model')

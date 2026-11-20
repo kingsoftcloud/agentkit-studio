@@ -227,7 +227,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         settings: () => studioCall('settings/get'),
         modelCatalog: profileId => studioCall('models/catalog', { profileId }),
         probeModelEndpoint: payload => studioCall('models/probe', payload || {}),
-        probeModelWire: payload => studioCall('models/wire', payload || {}),
+        probeModelWire: (payload, signal) => studioBridgeOperation('models/wire', payload || {}, signal),
+        probeModelEfforts: (payload, signal) => studioBridgeOperation('models/efforts', payload, signal),
         updateSettings: payload => studioCall('settings/update', payload),
         runtimes: () => directServer()
             ? Promise.resolve({ items: [{ runtimeType: 'dsh-native', label: 'DSH Native Harness', source: 'dsh' }], source: 'dsh' })

@@ -50,18 +50,6 @@ export default String.raw`
 [data-agentkit-studio="product-application"] [data-studio-tabs] > button { flex: 0 0 auto; white-space: nowrap; }
 [data-agentkit-studio="product-application"] [data-studio-heading],
 [data-agentkit-studio="product-application"] [data-studio-content-intro] { flex-wrap: wrap; align-items: flex-start; }
-[data-studio-model-settings] { container-type: inline-size; }
-[data-studio-model-settings] input, [data-studio-model-settings] select { min-width: 0; box-sizing: border-box; }
-[data-studio-model-settings] { font-size: 14px; line-height: 22px; }
-[data-studio-model-settings] label { font-size: 14px !important; font-weight: 500 !important; }
-[data-studio-model-settings] input, [data-studio-model-settings] select { height: 32px; font: inherit !important; border-radius: var(--dsw-radius-md, 12px) !important; }
-[data-studio-model-settings] details { font-size: 13px !important; }
-[data-studio-model-settings] form > section:last-of-type { border: 0 !important; border-top: 1px solid var(--dsw-alias-border-l3, #d4d4d4) !important; border-radius: 0 !important; padding: 20px 0 0 !important; background: transparent !important; }
-[data-studio-model-settings] h3 { font-size: 16px !important; font-weight: 600 !important; }
-[data-studio-model-settings] section > div > div > p { font-size: 13px !important; line-height: 1.5; margin-top: 6px !important; }
-@container (max-width: 540px) {
-  [data-studio-model-settings] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
-}
 @media (max-width: 960px) {
   [data-agentkit-studio="product-application"] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
   [data-agentkit-studio="product-application"] [data-studio-agent-grid],

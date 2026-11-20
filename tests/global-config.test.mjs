@@ -119,6 +119,20 @@ test('global config keeps exactly one explicit default when profiles are reorder
   assert.deepEqual(profiles.map(profile => [profile.id, profile.default]), [['first', false], ['second', true], ['third', false]]);
 });
 
+test('a provider can be saved and removed without adding a model', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-providers-'));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home }, inheritLegacy: false });
+  const provider = { id: 'provider-test', provider: 'custom', baseUrl: 'gateway.test/v1/models', connectionName: 'Research', credentialName: 'RESEARCH_KEY' };
+  await config.update({ modelConnections: [provider], modelProfileKeys: { RESEARCH_KEY: 'provider-fixture' } });
+  const described = await config.describe();
+  assert.equal(described.modelProfiles[0].id, 'default');
+  assert.deepEqual(described.modelConnections, [{ ...provider, baseUrl: 'https://gateway.test/v1', credentialConfigured: true }]);
+  assert.equal((await config.resolve()).values.modelConnections[0].apiKey, 'provider-fixture');
+  await assert.rejects(config.update({ modelConnections: [provider, provider] }), { code: 'CONFIGURATION_INVALID' });
+  await config.update({ modelConnections: [] });
+  assert.deepEqual((await config.describe()).modelConnections, []);
+});
+
 test('Codex API format persists per profile without changing default or credentials', async () => {
   const home = await mkdtemp(join(tmpdir(), 'agentkit-codex-format-'));
   const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home } });

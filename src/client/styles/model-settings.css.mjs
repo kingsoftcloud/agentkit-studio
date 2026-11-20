@@ -1,13 +1,4 @@
 export default String.raw`
-[data-studio-model-settings] .ms-section.studio-panel, [data-studio-model-settings] .ms-cloud.studio-panel { padding: 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }
-[data-studio-model-settings] .studio-panel .ms-grid-2 { grid-template-columns: minmax(0,1fr); gap: 0; }
-[data-studio-model-settings] .ms-field.studio-srow { display: grid; grid-template-columns: minmax(120px,1fr) minmax(0,2fr); align-items: center; gap: 6px 20px; min-height: 56px; padding: 12px 0; border-bottom: .5px solid var(--dsw-alias-border-l2); }
-[data-studio-model-settings] .studio-srow > .ms-label { grid-column: 1; font-size: 14px; font-weight: 500; }
-[data-studio-model-settings] .studio-srow > :not(.ms-label):not(.ms-hint) { grid-column: 2; min-width: 0; }
-[data-studio-model-settings] .studio-srow > .ms-hint { grid-column: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-[data-studio-model-settings] .ms-section .ms-section-title, [data-studio-model-settings] .ms-cloud-title h4 { font-size: 14px; font-weight: 500; }
-[data-studio-model-settings] .ms-panel { border: 0; box-shadow: none; }
-@container ms (max-width: 480px) { [data-studio-model-settings] .ms-field.studio-srow { grid-template-columns: minmax(0,1fr); } [data-studio-model-settings] .studio-srow > :not(.ms-label):not(.ms-hint) { grid-column: 1; } }
 /*
  * Model & credential settings surface.
  *
@@ -21,17 +12,13 @@ export default String.raw`
   --ms-space-2: 8px;
   --ms-space-3: 12px;
   --ms-space-4: 16px;
-  --ms-space-5: 20px;
-  --ms-space-6: 24px;
-  --ms-space-8: 32px;
 
   --ms-radius-sm: 8px;
   --ms-radius-md: 10px;
   --ms-radius-lg: 16px;
 
-  --ms-h-sm: 32px;
-  --ms-h: 36px;
-  --ms-h-lg: 40px;
+  --ms-h-sm: 30px;
+  --ms-h: 34px;
 
   --ms-ink: var(--dsw-alias-label-primary, #0f1115);
   --ms-ink-2: var(--dsw-alias-label-secondary, #61666b);
@@ -60,26 +47,30 @@ export default String.raw`
   letter-spacing: 0;
 }
 
-/*
- * Frame: one hairline-bordered panel owns the whole surface. The list and the
- * editor are two regions of that panel, so no card sits inside another card.
- */
 [data-studio-model-settings] .ms-form {
   display: grid;
-  gap: var(--ms-space-5);
+  gap: var(--ms-space-3);
   width: 100%;
   max-width: 1040px;
-  /* Centre the column: a capped width pinned to the left edge left a dead
-     column on the right of a full-screen window. */
   margin-inline: auto;
+}
+
+[data-studio-model-settings] .ms-form-content {
+  display: grid;
+  gap: var(--ms-space-3);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 [data-studio-model-settings] .ms-intro {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--ms-space-4);
+  gap: var(--ms-space-3);
   flex-wrap: wrap;
+  margin-bottom: var(--ms-space-3);
 }
 
 [data-studio-model-settings] .ms-intro h3 {
@@ -89,61 +80,18 @@ export default String.raw`
   font-weight: 600;
   line-height: 24px;
   letter-spacing: -.01em;
-}
-
-[data-studio-model-settings] .ms-intro p {
-  max-width: 62ch;
-  margin: var(--ms-space-1) 0 0;
-  color: var(--ms-ink-3);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-/* Running default: a status strip, not a card. Detail lives in the list. */
-[data-studio-model-settings] .ms-status {
-  display: flex;
-  align-items: center;
-  gap: var(--ms-space-2);
-  flex-wrap: wrap;
-  min-height: var(--ms-h);
-  padding: var(--ms-space-2) var(--ms-space-3);
-  border-radius: var(--ms-radius-md);
-  background: var(--ms-fill);
-}
-
-[data-studio-model-settings] .ms-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--ms-success);
-}
-
-[data-studio-model-settings] .ms-status-label {
-  color: var(--ms-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .04em;
-}
-
-[data-studio-model-settings] .ms-status-model {
-  min-width: 0;
-  color: var(--ms-ink);
-  font-size: 13px;
-  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-[data-studio-model-settings] .ms-status-meta {
-  margin-left: auto;
-  color: var(--ms-ink-3);
+[data-studio-model-settings] .ms-intro p {
+  margin: 2px 0 0;
+  color: var(--ms-ink-2);
   font-size: 12px;
-  white-space: nowrap;
+  line-height: 18px;
+  overflow-wrap: anywhere;
 }
 
 [data-studio-model-settings] .ms-panel {
-  display: grid;
-  grid-template-columns: 252px minmax(0, 1fr);
   border: 1px solid var(--ms-line);
   border-radius: var(--ms-radius-lg);
   background: var(--ms-surface);
@@ -151,52 +99,73 @@ export default String.raw`
   overflow: hidden;
 }
 
-[data-studio-model-settings] .ms-panel[data-rail="false"] {
-  grid-template-columns: minmax(0, 1fr);
+[data-studio-model-settings] :is(.ms-directory-toolbar, .ms-import-toolbar) {
+  display: grid;
+  gap: var(--ms-space-2);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ms-line);
 }
 
-/* List rail */
-[data-studio-model-settings] .ms-rail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ms-space-2);
+[data-studio-model-settings] .ms-search {
+  position: relative;
+  display: block;
   min-width: 0;
-  padding: var(--ms-space-3) var(--ms-space-2);
-  border-right: 1px solid var(--ms-line);
+  color: var(--ms-ink-2);
+}
+
+[data-studio-model-settings] .ms-search::before,
+[data-studio-model-settings] .ms-search::after {
+  position: absolute;
+  z-index: 1;
+  inset-inline-start: 10px;
+  content: "";
+  pointer-events: none;
+}
+
+[data-studio-model-settings] .ms-search::before {
+  top: 10px;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+[data-studio-model-settings] .ms-search::after {
+  top: 20px;
+  inset-inline-start: 18px;
+  width: 5px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+[data-studio-model-settings] .ms-search .ms-input {
+  padding-inline-start: 31px;
+  border-color: transparent;
   background: var(--ms-fill);
 }
 
-[data-studio-model-settings] .ms-rail-head {
+[data-studio-model-settings] :is(.ms-group-list, .ms-catalog-list) {
+  max-block-size: min(51vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior-block: contain;
+  scrollbar-width: thin;
+}
+
+[data-studio-model-settings] .ms-provider-row + .ms-provider-row {
+  border-top: 1px solid var(--ms-line);
+}
+
+[data-studio-model-settings] :is(.ms-provider-row, .ms-model-row, .ms-back) {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--ms-space-2);
-  padding: 0 var(--ms-space-2) var(--ms-space-1);
-  color: var(--ms-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .04em;
-}
-
-[data-studio-model-settings] .ms-rail-count {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-}
-
-[data-studio-model-settings] .ms-rail-items {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-[data-studio-model-settings] .ms-rail-item {
-  display: grid;
-  gap: 1px;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  padding: var(--ms-space-2) var(--ms-space-2);
-  border: 1px solid transparent;
-  border-radius: var(--ms-radius-md);
+  border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -204,80 +173,242 @@ export default String.raw`
   cursor: pointer;
 }
 
-[data-studio-model-settings] .ms-rail-item:hover {
+[data-studio-model-settings] .ms-provider-row {
+  min-height: 56px;
+  padding: 8px 14px;
+}
+
+[data-studio-model-settings] :is(.ms-provider-row, .ms-model-row, .ms-back):hover,
+[data-studio-model-settings] .ms-catalog-row:not([data-configured="true"]):hover {
   background: var(--ms-fill-hover);
 }
 
-[data-studio-model-settings] .ms-rail-item[data-selected="true"] {
-  border-color: var(--ms-line);
-  background: var(--ms-surface);
-  box-shadow: var(--ms-shadow-1);
-}
-
-[data-studio-model-settings] .ms-rail-item:focus-visible {
+[data-studio-model-settings] :is(.ms-provider-row, .ms-model-row, .ms-back):focus-visible {
   outline: 2px solid var(--ms-accent);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 
-[data-studio-model-settings] .ms-rail-name-row {
-  display: flex;
-  align-items: center;
-  gap: var(--ms-space-1);
+[data-studio-model-settings] .ms-chevron {
+  box-sizing: border-box;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-inline: 2px 3px;
+  border-right: 1.4px solid currentColor;
+  border-top: 1.4px solid currentColor;
+  color: var(--ms-ink-2);
+  transform: rotate(45deg);
+}
+
+[data-studio-model-settings] .ms-connection-text {
+  flex: 1;
   min-width: 0;
 }
 
-[data-studio-model-settings] .ms-rail-name {
-  overflow: hidden;
-  flex: 1 1 auto;
+[data-studio-model-settings] .ms-connection-name {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--ms-space-1);
   color: var(--ms-ink);
-  font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 18px;
+}
+
+[data-studio-model-settings] :is(.ms-connection-address, .ms-connection-count, .ms-connection-warning, .ms-row-status) {
+  color: var(--ms-ink-2);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+[data-studio-model-settings] .ms-connection-address {
+  display: block;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-studio-model-settings] .ms-rail-item[data-selected="true"] .ms-rail-name {
+[data-studio-model-settings] :is(.ms-connection-count, .ms-connection-warning, .ms-row-status) {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+[data-studio-model-settings] :is(.ms-connection-warning, .ms-row-status[data-tone="draft"]) {
+  color: var(--ms-warn);
+}
+
+[data-studio-model-settings] :is(.ms-model-list, .ms-catalog-list) {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-studio-model-settings] .ms-model-row {
+  min-height: 36px;
+  padding: 4px 14px;
+}
+
+[data-studio-model-settings] .ms-provider-model-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ms-space-2);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ms-line);
+}
+
+[data-studio-model-settings] .ms-provider-model-head h4 {
+  margin: 0;
+  font-size: 13px;
   font-weight: 600;
 }
 
-[data-studio-model-settings] .ms-rail-foot {
-  margin: var(--ms-space-2) 0 0;
-  padding: 0 var(--ms-space-2);
-  margin-top: auto;
-  color: var(--ms-ink-3);
-  font-size: 11px;
-  line-height: 16px;
+[data-studio-model-settings] .ms-provider-model-head button { margin-inline-start: auto; }
+
+[data-studio-model-settings] .ms-remove-confirm {
+  margin-bottom: var(--ms-space-3);
+  padding: var(--ms-space-3);
+  border: 1px solid var(--ms-line);
+  border-radius: var(--ms-radius-md);
+  background: var(--ms-fill);
 }
 
-[data-studio-model-settings] .ms-rail-sub {
-  display: flex;
-  align-items: center;
-  gap: var(--ms-space-1);
+[data-studio-model-settings] .ms-remove-confirm p {
+  margin: 4px 0 var(--ms-space-2);
+  color: var(--ms-ink-2);
+  font-size: 12px;
+}
+
+[data-studio-model-settings] .ms-manual-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ms-space-2);
+}
+
+[data-studio-model-settings] .ms-model-list li + li,
+[data-studio-model-settings] .ms-catalog-list li + li {
+  border-top: 1px solid var(--ms-line);
+}
+
+[data-studio-model-settings] .ms-model-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  color: var(--ms-ink-3);
-  font-size: 11px;
-  line-height: 16px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-studio-model-settings] .ms-rail-sub > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
+[data-studio-model-settings] .ms-back {
+  width: fit-content;
+  min-height: 30px;
+  padding: 0 8px;
+  margin: 0 0 var(--ms-space-2) -8px;
+  border-radius: var(--ms-radius-sm);
+  color: var(--ms-ink-2);
+  font-size: 12px;
+}
+
+[data-studio-model-settings] .ms-back .ms-chevron {
+  transform: rotate(-135deg);
+}
+
+[data-studio-model-settings] :is(.ms-catalog-row, .ms-catalog-message) {
+  display: flex;
+  align-items: center;
+  gap: var(--ms-space-2);
+}
+
+[data-studio-model-settings] .ms-provider-catalog {
+  margin-top: var(--ms-space-3);
+}
+
+[data-studio-model-settings] .ms-provider-catalog .ms-catalog-list {
+  max-block-size: min(31vh, 238px);
+}
+
+[data-studio-model-settings] .ms-catalog-meta {
+  max-width: 49%;
+  white-space: normal;
+  text-align: end;
+}
+
+[data-studio-model-settings] .ms-effort-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ms-space-2);
+}
+
+[data-studio-model-settings] .ms-effort-report {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-studio-model-settings] .ms-catalog-list .ms-effort-report {
+  padding: 0 14px 8px 40px;
+}
+
+[data-studio-model-settings] .ms-catalog-row {
+  min-height: 38px;
+  padding: 4px 14px;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+[data-studio-model-settings] .ms-catalog-row[data-configured="true"] {
+  color: var(--ms-ink-2);
+  cursor: default;
+}
+
+[data-studio-model-settings] .ms-catalog-row:has(input:checked:not(:disabled)) {
+  background: var(--ms-accent-soft);
+}
+
+[data-studio-model-settings] .ms-catalog-row input {
+  width: 14px;
+  height: 14px;
+  margin: 0 4px 0 0;
+  flex: none;
+  accent-color: var(--ms-accent);
+}
+
+[data-studio-model-settings] :is(.ms-empty, .ms-catalog-message) {
+  margin: 0;
+  padding: var(--ms-space-4);
+  color: var(--ms-ink-2);
+}
+
+[data-studio-model-settings] .ms-catalog-message {
+  flex-wrap: wrap;
 }
 
 /* Editor */
 [data-studio-model-settings] .ms-detail {
   display: grid;
-  gap: var(--ms-space-4);
+  gap: var(--ms-space-3);
   align-content: start;
   min-width: 0;
-  padding: var(--ms-space-5) var(--ms-space-6) var(--ms-space-6);
+  padding: var(--ms-space-4);
+}
+
+[data-studio-model-settings] .ms-editor-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ms-space-2);
+  padding-top: var(--ms-space-3);
+  border-top: 1px solid var(--ms-line);
+}
+
+[data-studio-model-settings] .ms-editor-section-head h5 {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
 }
 
 [data-studio-model-settings] .ms-detail-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--ms-space-3);
   flex-wrap: wrap;
@@ -327,49 +458,9 @@ export default String.raw`
   flex-wrap: wrap;
 }
 
-/* Sections */
-[data-studio-model-settings] .ms-section {
+[data-studio-model-settings] .ms-advanced-group {
   display: grid;
-  gap: var(--ms-space-3);
-  min-width: 0;
-  padding-top: var(--ms-space-4);
   border-top: 1px solid var(--ms-line);
-}
-
-[data-studio-model-settings] .ms-section-head {
-  display: flex;
-  align-items: center;
-  gap: var(--ms-space-2);
-  min-height: 20px;
-}
-
-[data-studio-model-settings] .ms-step {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  border-radius: 6px;
-  background: var(--ms-fill);
-  color: var(--ms-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-[data-studio-model-settings] .ms-section-title {
-  margin: 0;
-  color: var(--ms-ink);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 20px;
-}
-
-[data-studio-model-settings] .ms-section-extra {
-  margin-left: auto;
-  color: var(--ms-ink-3);
-  font-size: 12px;
 }
 
 [data-studio-model-settings] .ms-grid {
@@ -386,10 +477,18 @@ export default String.raw`
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+[data-studio-model-settings] .ms-model-fields { row-gap: var(--ms-space-2); }
+
 /* Fields */
+[data-studio-model-settings] .ms-field-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--ms-space-1);
+}
 [data-studio-model-settings] .ms-field {
   display: grid;
-  gap: 6px;
+  gap: var(--ms-space-1);
   align-content: start;
   min-width: 0;
 }
@@ -446,33 +545,23 @@ export default String.raw`
 }
 
 [data-studio-model-settings] .ms-input::placeholder {
-  color: var(--dsw-alias-label-dimmed, #a9adb5);
+  color: var(--ms-ink-3);
 }
 
 [data-studio-model-settings] .ms-static {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ms-space-2);
   box-sizing: border-box;
-  min-height: var(--ms-h);
+  height: var(--ms-h);
+  min-width: 0;
   padding: 0 10px;
-  border: 1px dashed var(--ms-line-strong);
+  border: 1px solid var(--ms-line);
   border-radius: var(--ms-radius-md);
   background: var(--ms-fill);
   color: var(--ms-ink-2);
   font-size: 12px;
-  line-height: 16px;
-}
-
-[data-studio-model-settings] .ms-static > span:first-child {
+  line-height: calc(var(--ms-h) - 2px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-[data-studio-model-settings] .ms-static .ms-chip {
-  flex: 0 0 auto;
 }
 
 [data-studio-model-settings] .ms-hint {
@@ -580,55 +669,12 @@ export default String.raw`
   background: currentColor;
 }
 
-[data-studio-model-settings] .ms-rail-draft {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border: 1.5px solid var(--ms-accent);
-  border-radius: 50%;
-  background: transparent;
-}
-
-[data-studio-model-settings] .ms-dot {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--ms-ink-3);
-}
-
-[data-studio-model-settings] .ms-dot[data-tone="success"] {
-  background: var(--ms-success);
-}
-
-[data-studio-model-settings] .ms-dot[data-tone="warn"] {
-  background: var(--ms-warn);
-}
-
-[data-studio-model-settings] .ms-dot[data-tone="danger"] {
-  background: var(--ms-danger);
-}
-
-/* Capability row: metadata, never another banded box. */
 [data-studio-model-settings] .ms-capability {
   display: flex;
   align-items: center;
   gap: var(--ms-space-1);
   flex-wrap: wrap;
   min-height: 20px;
-}
-
-[data-studio-model-settings] .ms-capability-label {
-  margin-right: var(--ms-space-1);
-  color: var(--ms-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .04em;
-}
-
-[data-studio-model-settings] .ms-capability .ms-hint {
-  margin-left: var(--ms-space-1);
 }
 
 /* Buttons */
@@ -699,11 +745,6 @@ export default String.raw`
   color: var(--ms-danger);
 }
 
-[data-studio-model-settings] .ms-btn[data-size="lg"] {
-  height: var(--ms-h-lg);
-  padding: 0 var(--ms-space-4);
-}
-
 [data-studio-model-settings] .ms-link {
   color: var(--ms-accent-ink);
   font-size: 12px;
@@ -723,11 +764,10 @@ export default String.raw`
 /* Advanced disclosure */
 [data-studio-model-settings] .ms-advanced {
   min-width: 0;
-  padding-top: var(--ms-space-3);
-  border-top: 1px solid var(--ms-line);
 }
 
-[data-studio-model-settings] .ms-advanced > summary {
+[data-studio-model-settings] .ms-advanced > summary,
+[data-studio-model-settings] details > .ms-cloud-title {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -735,29 +775,34 @@ export default String.raw`
   font-size: 12px;
   font-weight: 500;
   line-height: 20px;
+  min-height: 30px;
   list-style: none;
   cursor: pointer;
 }
 
-[data-studio-model-settings] .ms-advanced > summary::-webkit-details-marker {
+[data-studio-model-settings] .ms-advanced > summary::-webkit-details-marker,
+[data-studio-model-settings] .ms-cloud-title::-webkit-details-marker {
   display: none;
 }
 
-[data-studio-model-settings] .ms-advanced > summary::before {
+[data-studio-model-settings] .ms-advanced > summary::before,
+[data-studio-model-settings] details > .ms-cloud-title::before {
   content: "";
   width: 6px;
   height: 6px;
+  flex: none;
+  margin-inline: 2px 3px;
   border-right: 1.4px solid currentColor;
   border-bottom: 1.4px solid currentColor;
   transform: rotate(-45deg);
   transition: transform 120ms ease;
 }
 
-[data-studio-model-settings] .ms-advanced[open] > summary::before {
+[data-studio-model-settings] :is(.ms-advanced[open] > summary, .ms-cloud[open] > summary)::before {
   transform: rotate(45deg);
 }
 
-[data-studio-model-settings] .ms-advanced > summary:focus-visible {
+[data-studio-model-settings] :is(.ms-advanced > summary, .ms-cloud-title):focus-visible {
   outline: 2px solid var(--ms-accent);
   outline-offset: 2px;
   border-radius: 4px;
@@ -767,9 +812,12 @@ export default String.raw`
   margin-bottom: var(--ms-space-3);
 }
 
-/* The advanced section may hold more than one disclosure; they stay siblings. */
 [data-studio-model-settings] .ms-advanced + .ms-advanced {
-  margin-top: var(--ms-space-3);
+  border-top: 1px solid var(--ms-line);
+}
+
+[data-studio-model-settings] .ms-advanced > .ms-hint {
+  margin: var(--ms-space-2) 0;
 }
 
 /*
@@ -802,48 +850,36 @@ export default String.raw`
   white-space: nowrap;
 }
 
-/* Cloud credentials sit below the model panel on a quieter layer. */
 [data-studio-model-settings] .ms-cloud {
-  display: grid;
-  gap: var(--ms-space-3);
   min-width: 0;
-  padding-top: var(--ms-space-5);
-  border-top: 1px solid var(--ms-line);
-}
-
-[data-studio-model-settings] .ms-cloud[data-solo="true"] {
-  padding-top: 0;
-  border-top: 0;
-}
-
-[data-studio-model-settings] .ms-cloud-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--ms-space-3);
-  flex-wrap: wrap;
+  padding: 0 var(--ms-space-3);
+  border: 1px solid var(--ms-line);
+  border-radius: var(--ms-radius-md);
+  background: var(--ms-surface);
 }
 
 [data-studio-model-settings] .ms-cloud-title {
   display: flex;
   align-items: center;
   gap: var(--ms-space-2);
-  flex-wrap: wrap;
-}
-
-[data-studio-model-settings] .ms-cloud-head h4 {
-  margin: 0;
+  min-height: 36px;
   color: var(--ms-ink);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   line-height: 20px;
 }
 
-[data-studio-model-settings] .ms-cloud-head p {
-  margin: var(--ms-space-1) 0 0;
-  color: var(--ms-ink-3);
-  font-size: 12px;
-  line-height: 18px;
+[data-studio-model-settings] details > .ms-cloud-title {
+  min-height: 38px;
+  color: var(--ms-ink);
+  font-size: 13px;
+}
+
+[data-studio-model-settings] .ms-cloud-body {
+  display: grid;
+  gap: var(--ms-space-2);
+  padding: var(--ms-space-2) 0 var(--ms-space-3);
+  border-top: 1px solid var(--ms-line);
 }
 
 /* Footer */
@@ -853,8 +889,25 @@ export default String.raw`
   justify-content: flex-end;
   gap: var(--ms-space-2);
   flex-wrap: wrap;
-  padding-top: var(--ms-space-4);
+  padding: var(--ms-space-2) 0 var(--ms-space-1);
   border-top: 1px solid var(--ms-line);
+}
+
+[data-studio-model-settings][data-onboarding-mode="all"] .ms-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--ms-surface);
+}
+
+[data-studio-model-settings][data-onboarding-mode="all"] :is(input, select, summary, .ms-advanced button) {
+  scroll-margin-block-end: 56px;
+}
+
+[data-studio-model-settings] .ms-footer-actions {
+  display: flex;
+  gap: var(--ms-space-2);
+  flex-wrap: wrap;
 }
 
 [data-studio-model-settings] .ms-footer-notes {
@@ -880,6 +933,10 @@ export default String.raw`
   color: var(--ms-warn);
 }
 
+[data-studio-model-settings] .ms-footer-note[data-tone="count"] {
+  color: var(--ms-ink-2);
+}
+
 [data-studio-model-settings] .ms-alert {
   margin: 0;
   color: var(--ms-danger);
@@ -887,37 +944,7 @@ export default String.raw`
   line-height: 18px;
 }
 
-/*
- * Narrow containers: the rail becomes a horizontal switcher above the editor,
- * the two-column form grids collapse, and the running-default strip wraps.
- */
-@container ms (max-width: 760px) {
-  [data-studio-model-settings] .ms-panel {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  [data-studio-model-settings] .ms-rail {
-    padding: var(--ms-space-2);
-    border-right: 0;
-    border-bottom: 1px solid var(--ms-line);
-  }
-
-  [data-studio-model-settings] .ms-rail-items {
-    display: flex;
-    gap: var(--ms-space-1);
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
-
-  [data-studio-model-settings] .ms-rail-item {
-    flex: 0 0 auto;
-    width: 232px;
-  }
-
-  [data-studio-model-settings] .ms-detail {
-    padding: var(--ms-space-4);
-  }
-
+@container ms (max-width: 395px) {
   [data-studio-model-settings] .ms-grid-2,
   [data-studio-model-settings] .ms-grid-3 {
     grid-template-columns: minmax(0, 1fr);
@@ -931,24 +958,7 @@ export default String.raw`
     grid-column: 1 / -1;
   }
 
-  [data-studio-model-settings] .ms-status-meta {
-    width: 100%;
-    margin-left: 0;
-  }
-}
-
-@container ms (max-width: 520px) {
-  [data-studio-model-settings] .ms-intro h3 {
-    font-size: 16px;
-  }
-
-  [data-studio-model-settings] .ms-detail-head {
-    flex-direction: column;
-  }
-
-  [data-studio-model-settings] .ms-meta {
-    margin-left: 0;
-  }
+  [data-studio-model-settings] .ms-detail { padding: var(--ms-space-3); }
 }
 
 /* Wire probe: a button plus its verdict, on one line that wraps on narrow

@@ -58,7 +58,7 @@ export const REASONING_PROFILES = Object.freeze({
   openai: Object.freeze({
     provider: 'openai',
     levels: Object.freeze(['low', 'medium', 'high']),
-    // OpenAI accepts minimal/low/medium/high; `max` is not part of the enum.
+    // Legacy profiles use these presets. Explicit model ranges can be wider.
     wire: Object.freeze({ low: 'low', medium: 'medium', high: 'high' }),
     default: 'medium',
   }),
@@ -109,6 +109,11 @@ export function reasoningProfileFor(provider) {
   return Object.hasOwn(REASONING_PROFILES, key) ? REASONING_PROFILES[key] : REASONING_FALLBACK_PROFILE;
 }
 
+export function reasoningLevelsFor(profile) {
+  const { levels } = reasoningProfileFor(profile?.provider);
+  return Array.isArray(profile?.reasoningLevels) ? STUDIO_REASONING_LEVELS.filter(level => profile.reasoningLevels.includes(level)) : levels;
+}
+
 /**
  * Resolve the reasoning declaration a profile publishes.
  * @param {object} profile - a Studio model profile.
@@ -123,8 +128,10 @@ export function studioReasoning(profile = {}) {
   // `true` is the persisted opt-in marker: the provider table supplies both
   // the selector levels and the wire map. An explicit object is a
   // caller-declared override and stays authoritative, in canonical order.
-  const levels = declared === true ? capability.levels : STUDIO_REASONING_LEVELS;
-  const source = declared === true ? capability.wire : declared;
+  const levels = declared === true ? reasoningLevelsFor(profile) : STUDIO_REASONING_LEVELS;
+  const source = declared === true
+    ? Object.fromEntries(levels.map(level => [level, capability.wire[level] ?? level]))
+    : declared;
   if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
   const efforts = Object.fromEntries(levels
     .filter(level => typeof source[level] === 'string' && source[level].trim())
@@ -135,6 +142,13 @@ export function studioReasoning(profile = {}) {
   const wanted = String(profile?.defaultReasoningEffort || '');
   const fallback = efforts[capability.default] ? capability.default : Object.keys(efforts)[0];
   return { efforts, defaultEffort: efforts[wanted] ? wanted : fallback };
+}
+
+/** Persist the declared subset and default while keeping wire names in the provider table. */
+export function modelReasoningConfig(profile) {
+  const fields = Array.isArray(profile.reasoningLevels) ? { reasoningLevels: reasoningLevelsFor(profile) } : {};
+  const reasoning = profile.reasoningEfforts && studioReasoning({ ...profile, reasoningEfforts: true });
+  return reasoning ? { ...fields, reasoningEfforts: true, defaultReasoningEffort: reasoning.defaultEffort } : fields;
 }
 
 /**
@@ -167,8 +181,8 @@ export function studioCodexReasoningWire(level) {
  */
 export function studioReasoningFallbackWire(profile) {
   const capability = reasoningProfileFor(profile?.provider);
-  const level = capability.levels[capability.levels.length - 1];
-  return capability.wire[level];
+  const level = reasoningLevelsFor(profile).at(-1);
+  return capability.wire[level] ?? level;
 }
 
 /**

@@ -73,6 +73,94 @@ test('model endpoint probe reads an unsaved catalog with the candidate key and d
   assert.deepEqual(values.modelProfiles, [{ id: 'existing', provider: 'ksyun', modelName: 'old', baseUrl: 'https://old.test/v1', credentialName: 'OLD_KEY', default: true }]);
 });
 
+test('the saved provider catalog keeps endpoint and headers bound to the stored credential', async () => {
+  const connection = { id: 'research', provider: 'custom', baseUrl: 'https://gateway.test/v1', credentialName: 'RESEARCH_KEY',
+    apiKey: 'fixture-key', headers: { 'X-Project': 'research' } };
+  const calls = [];
+  const service = createModelService({
+    configuration: configuration({ modelConnections: [connection] }),
+    credentials: { resolve: async () => ({ value: 'old-fixture-key', source: 'file' }), set: async () => {} },
+    fetchImpl: async (url, init) => {
+      calls.push({ url, headers: init.headers });
+      return { ok: true, json: async () => ({ data: [{ id: 'available-model' }] }) };
+    },
+  });
+  const result = await service.probe({ connectionId: connection.id, baseUrl: 'https://different.test/v1', headers: { 'X-Project': 'other' } });
+  assert.deepEqual(calls, [{ url: 'https://gateway.test/v1/models', headers: { Authorization: 'Bearer fixture-key', 'X-Project': 'research' } }]);
+  assert.equal(result.items[0].id, 'available-model');
+  assert.equal(JSON.stringify(result).includes('fixture-key'), false);
+  await assert.rejects(service.probe({ connectionId: 'missing' }), { code: 'MODEL_CONNECTION_NOT_FOUND' });
+  assert.equal(calls.length, 1);
+});
+
+test('a connection probe projects advertised thinking levels and keeps unknown models unspecified', async () => {
+  const service = createModelService({
+    configuration: configuration({}),
+    credentials: { resolve: async () => ({}), set: async () => {} },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ data: [
+      { id: 'limited', reasoning_efforts: ['low', 'medium', 'unrecognized'], default_reasoning_effort: 'medium' },
+      { id: 'nested', effort: { supported_levels: ['low', 'high', 'max'], default_level: 'high' } },
+      { id: 'flag', supports_reasoning_effort: true, default_reasoning_effort: 'high' },
+      { id: 'plain', supports_reasoning_effort: false },
+      { id: 'unknown' },
+    ] }) }),
+  });
+  const { items } = await service.probe({ provider: 'openai', baseUrl: 'https://gateway.test/v1', apiKey: 'fixture-key' });
+  assert.deepEqual(items.map(item => [item.id, item.reasoningLevels, item.defaultReasoningEffort]), [
+    ['limited', ['low', 'medium'], 'medium'], ['nested', ['low', 'high', 'max'], 'high'],
+    ['flag', undefined, 'high'], ['plain', [], undefined], ['unknown', undefined, undefined],
+  ]);
+});
+
+test('effort probing uses the saved profile endpoint, authentication headers and Messages wire', async () => {
+  const requests = [];
+  const profile = { id: 'model', modelName: 'saved-model', provider: 'custom', baseUrl: 'https://gateway.test/v1',
+    credentialName: 'MODEL_KEY', protocol: 'anthropic-messages', headers: { 'X-Project': 'research' } };
+  const service = createModelService({
+    configuration: configuration({ modelProfiles: [profile] }),
+    credentials: { resolve: async () => ({ value: 'fixture-key' }) },
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push({ url: url.href, headers: options.headers, body });
+      const supported = ['medium', 'max'].includes(body.output_config.effort);
+      return new Response(JSON.stringify(supported ? { type: 'message', content: [] }
+        : { error: { message: 'Invalid output_config.effort' } }), { status: supported ? 200 : 400 });
+    },
+  });
+  const result = await service.probeEfforts({ profileId: 'model', modelName: 'saved-model', baseUrl: 'https://different.test/v1' });
+  assert.equal(result.modelName, 'saved-model');
+  assert.equal(result.wire, 'anthropic-messages');
+  assert.deepEqual(result.outcomes, [
+    { level: 'low', outcome: 'rejected' }, { level: 'medium', outcome: 'accepted' }, { level: 'high', outcome: 'rejected' },
+    { level: 'xhigh', outcome: 'rejected' }, { level: 'max', outcome: 'accepted' },
+  ]);
+  assert.ok(requests.every(({ url, body, headers }) => url === 'https://gateway.test/v1/messages' && body.model === 'saved-model'
+    && headers.get('x-api-key') === 'fixture-key' && headers.get('x-project') === 'research'));
+});
+
+test('wire checks bind saved credentials to their connection and leave uncertain Responses unchecked', async () => {
+  const connection = { id: 'gateway', provider: 'ksyun', baseUrl: 'https://gateway.test/v1', credentialName: 'MODEL_KEY', headers: { 'X-Project': 'research' } };
+  const requests = [];
+  const service = createModelService({
+    configuration: configuration({ modelConnections: [connection] }),
+    credentials: { resolve: async () => ({ value: 'fixture-key' }) },
+    fetchImpl: async (url, options) => {
+      const { model } = JSON.parse(options.body);
+      requests.push({ url: url.href, auth: options.headers.get('authorization'), project: options.headers.get('x-project') });
+      if (model === 'responses') return Response.json({ output: [] });
+      return Response.json({ error: {} }, { status: model === 'chat' ? 404 : 429 });
+    },
+  });
+  const identity = { connectionId: 'gateway', baseUrl: 'https://different.test/v1' };
+  const { items } = await service.probeWire({ ...identity, models: ['responses', 'chat', 'limited'] });
+  assert.deepEqual(items.map(item => item.wire), ['openai-responses', 'openai-completions', 'unknown']);
+  const report = await service.probeEfforts({ ...identity, modelName: 'limited', detectWire: true });
+  assert.equal(report.wire, 'unknown');
+  assert.ok(report.outcomes.every(item => item.outcome === 'untested'));
+  assert.equal(requests.length, 4);
+  assert.ok(requests.every(({ url, auth, project }) => url === 'https://gateway.test/v1/responses' && auth === 'Bearer fixture-key' && project === 'research'));
+});
+
 test('model service returns typed errors for missing credentials and unknown profiles', async () => {
   const service = createModelService({
     configuration: configuration({ modelProfiles: [{ id: 'missing', provider: 'custom', modelName: 'm', baseUrl: 'https://example.test/v1', credentialName: 'KEY_MISSING', enabled: true }] }),

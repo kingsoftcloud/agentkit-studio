@@ -16,7 +16,9 @@ export function createModelRoutes({ models, syncModelCredential, describeGlobalM
         if (endpoint === 'models/probe')
             return { ok: true, value: await models.probe(payload || {}) };
         if (endpoint === 'models/wire')
-            return { ok: true, value: await models.probeWire(payload || {}) };
+            return { ok: true, value: await models.probeWire(payload || {}, signal) };
+        if (endpoint === 'models/efforts')
+            return { ok: true, value: await models.probeEfforts(payload || {}, signal) };
         if (endpoint === 'models/codex')
             return { ok: true, value: await listCodexAgentModels({ models, catalog: codexModels }) };
     };

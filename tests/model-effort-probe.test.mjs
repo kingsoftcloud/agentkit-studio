@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { probeModelEfforts } from '../src/model-effort-probe.mjs';
+import { diagnoseModelEfforts, probeModelEfforts } from '../src/model-effort-probe.mjs';
 
 /** Serve one canned reply per request and record what was sent. */
 async function gateway(replyFor) {
@@ -99,4 +99,62 @@ test('a batch probes serially, deduplicates, and preserves input order', async (
     // Serial, so the gateway sees exactly the planned probes in order.
     assert.deepEqual(server.requests.map(request => request.body.reasoning.effort), ['max', 'low']);
   } finally { await server.close(); }
+});
+
+test('a rejected control distinguishes accepted, failed, and rejected effort requests', async () => {
+  const server = await gateway(({ reasoning_effort: level }) => {
+    if (level === 'low' || level === 'max') return { status: 200, payload: { choices: [{ message: { content: 'OK' } }] } };
+    if (level === 'medium') return { status: 200, payload: { error: { message: 'Inference failed' } } };
+    return { status: 400, payload: { error: { message: 'Unsupported reasoning_effort' } } };
+  });
+  try {
+    const diagnosis = await diagnoseModelEfforts({ baseUrl: server.baseUrl, apiKey: 'fixture', modelName: 'm', levels: ['low', 'medium', 'high', 'max'] });
+    assert.deepEqual(diagnosis, { control: 'rejected', outcomes: [
+      { level: 'low', outcome: 'accepted' }, { level: 'medium', outcome: 'unknown' },
+      { level: 'high', outcome: 'rejected' }, { level: 'max', outcome: 'accepted' },
+    ] });
+    assert.deepEqual(server.requests.slice(1).map(request => request.body.reasoning_effort), ['low', 'medium', 'high', 'max']);
+  } finally { await server.close(); }
+});
+
+test('diagnostics stay inconclusive when the gateway silently ignores the requested effort', async () => {
+  const server = await gateway(() => ({ status: 200, payload: { choices: [{ message: { content: 'OK' } }], reasoning_effort: 'high' } }));
+  try {
+    assert.deepEqual((await diagnoseModelEfforts({ baseUrl: server.baseUrl, modelName: 'm', levels: ['low', 'high'] })).outcomes,
+      [{ level: 'low', outcome: 'unknown' }, { level: 'high', outcome: 'unknown' }]);
+  } finally { await server.close(); }
+});
+
+test('an independently returned effective effort confirms only the matching request', async () => {
+  const server = await gateway(({ reasoning }) => ({
+    status: 200, payload: { reasoning: { effort: reasoning.effort === 'high' ? 'high' : 'medium' }, output: [] },
+  }));
+  try {
+    assert.deepEqual((await diagnoseModelEfforts({ baseUrl: server.baseUrl, modelName: 'm', wire: 'openai-responses', levels: ['low', 'high'] })).outcomes,
+      [{ level: 'low', outcome: 'unknown' }, { level: 'high', outcome: 'confirmed' }]);
+  } finally { await server.close(); }
+});
+
+test('credential failures stop the control and mark planned efforts as untested', async () => {
+  const server = await gateway(() => ({ status: 401, payload: { error: { message: 'Invalid API key' } } }));
+  try {
+    assert.deepEqual(await diagnoseModelEfforts({ baseUrl: server.baseUrl, modelName: 'm', levels: ['low', 'high'] }),
+      { control: 'inconclusive', outcomes: [{ level: 'low', outcome: 'untested' }, { level: 'high', outcome: 'untested' }] });
+    assert.equal(server.requests.length, 1);
+  } finally { await server.close(); }
+});
+
+test('a total deadline marks the in-flight effort as timed out and later efforts as untested', async () => {
+  const diagnosis = await diagnoseModelEfforts({
+    baseUrl: 'https://gateway.test/v1', modelName: 'm', levels: ['low', 'high', 'max'], budgetMs: 100, timeoutMs: 500,
+    fetchImpl: async (_url, { body, signal }) => {
+      const { reasoning_effort: level } = JSON.parse(body);
+      if (level === 'low') return Response.json({ choices: [{ message: { content: 'OK' } }] });
+      if (level !== 'high') return Response.json({ error: { message: 'Invalid reasoning_effort' } }, { status: 400 });
+      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  });
+  assert.deepEqual(diagnosis, { control: 'rejected', outcomes: [
+    { level: 'low', outcome: 'accepted' }, { level: 'high', outcome: 'timeout' }, { level: 'max', outcome: 'untested' },
+  ] });
 });

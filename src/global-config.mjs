@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { parse, stringify } from 'yaml';
 import { normalizeModelEndpoint } from './model-endpoint.mjs';
 import { HEADER_LIMITS, headerEntryProblem, modelRuntimeOptions } from './model-profile-contract.mjs';
-import { reasoningProfileFor } from './model-reasoning.mjs';
+import { modelReasoningConfig } from './model-reasoning.mjs';
 
 const FIELDS = {
   modelProvider: ['MODEL_PROVIDER'], modelName: ['OPENAI_MODEL_NAME', 'DEEPSEEK_MODEL_NAME'],
@@ -17,7 +17,7 @@ const FIELDS = {
   cloudServerUrl: ['AGENTENGINE_SERVER_URL'], cloudBucket: ['KS3_BUCKET'],
   cloudSessionToken: ['KSYUN_SESSION_TOKEN'], cloudServiceToken: ['AGENTENGINE_SERVICE_TOKEN'],
   cloudCustomSource: ['AGENTENGINE_PRE_CUSTOM_SOURCE'],
-  modelProfiles: [], modelProfileKeys: [],
+  modelProfiles: [], modelConnections: [], modelProfileKeys: [],
 };
 const SECRET_FIELDS = new Set(['modelApiKey', 'cloudAccessKey', 'cloudSecretKey', 'cloudSessionToken', 'cloudServiceToken', 'modelProfileKeys']);
 const MODEL_ALIASES = {
@@ -50,20 +50,15 @@ async function readDocument(path, json = false) {
   } catch { throw new ConfigurationError('全局配置格式无效，请检查配置文件'); }
 }
 
-/** The opt-in marker plus a default level the provider actually offers. */
-function reasoningDefaults(profile) {
-  if (!profile.reasoningEfforts) return {};
-  const capability = reasoningProfileFor(profile.provider);
-  const level = scalar(profile.defaultReasoningEffort);
-  return { reasoningEfforts: true, defaultReasoningEffort: capability.levels.includes(level) ? level : capability.default };
-}
-
 function normalizeProfiles(value) {
   if (!Array.isArray(value)) return [];
   const profiles = value.filter(record).map(profile => ({
     ...nativeModelOptions(profile),
     id: scalar(profile.id) || `${scalar(profile.provider) || 'provider'}:${scalar(profile.modelName) || scalar(profile.model)}`,
     ...(scalar(profile.displayName) ? {displayName:scalar(profile.displayName)} : {}),
+    ...(scalar(profile.connectionName) ? { connectionName: scalar(profile.connectionName) } : {}),
+    ...(scalar(profile.connectionId) ? { connectionId: scalar(profile.connectionId) } : {}),
+    ...(profile.modelOnly === true ? { modelOnly: true } : {}),
     provider: scalar(profile.provider) || 'ksyun',
     modelName: scalar(profile.modelName) || scalar(profile.model),
     baseUrl: scalar(profile.baseUrl) || scalar(profile.baseURL) || '',
@@ -72,12 +67,9 @@ function normalizeProfiles(value) {
     default: profile.default === true,
     ...(profile.codexApi ? { codexApi: profile.codexApi === 'chat-completions' ? 'chat-completions' : 'responses' } : {}),
     ...(Array.isArray(profile.input) ? { input: [...new Set(profile.input.filter(item => ['text', 'image'].includes(item)))] } : {}),
-    // Read back the opt-in marker and its default level only: the wire map is
-    // the gateway's business and is materialized at bridge time, so it must
-    // not be frozen into the user's configuration file. The level is validated
-    // against this provider's table, so OpenAI's `medium` survives a reread
-    // instead of being rewritten to `high`.
-    ...reasoningDefaults({ ...profile, provider: scalar(profile.provider) || 'ksyun' }),
+    // Store the selected default and supported subset. The provider table
+    // still supplies wire values when a runtime reads the profile.
+    ...modelReasoningConfig({ ...profile, provider: scalar(profile.provider) || 'ksyun' }),
   })).filter(profile => profile.modelName);
   if (!profiles.length) return profiles;
   // Older config files did not have a default marker. Preserve their first
@@ -125,6 +117,20 @@ function nativeModelOptions(profile) {
   return modelRuntimeOptions(result);
 }
 
+function normalizeModelConnections(value) {
+  const connections = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    if (!record(item)) continue;
+    const id = scalar(item.id), provider = scalar(item.provider), credentialName = scalar(item.credentialName);
+    if (!id || !provider || !credentialName || !scalar(item.baseUrl)) continue;
+    const { headers } = nativeModelOptions({ headers: item.headers });
+    const connectionName = scalar(item.connectionName);
+    connections.push({ id, provider, baseUrl: normalizeModelEndpoint(item.baseUrl, provider), credentialName,
+      ...(connectionName ? { connectionName } : {}), ...(headers ? { headers } : {}) });
+  }
+  return connections;
+}
+
 function project(document) {
   const values = {};
   const sections = ['env', 'environment', 'model', 'cloud', 'settings', 'secrets'].map(key => document[key]).filter(record);
@@ -133,6 +139,12 @@ function project(document) {
       for (const section of [document, ...sections].reverse()) {
         const profiles = normalizeProfiles(section.modelProfiles);
         if (profiles.length) { values.modelProfiles = profiles; break; }
+      }
+      continue;
+    }
+    if (field === 'modelConnections') {
+      for (const section of [document, ...sections].reverse()) {
+        if (Array.isArray(section.modelConnections)) { values.modelConnections = normalizeModelConnections(section.modelConnections); break; }
       }
       continue;
     }
@@ -175,9 +187,11 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
     }
     // Resolve keys after merging layers so workspace profiles can reuse global
     // credentials, and environment overrides retain their documented precedence.
-    if (values.modelProfiles) values.modelProfiles = values.modelProfiles.map(profile => ({ ...profile,
-      apiKey: scalar(env[profile.credentialName]) || scalar(values.modelProfileKeys?.[profile.credentialName]) || (profile.credentialName === 'AGENTKIT_MODEL_API_KEY' ? values.modelApiKey : '') || '',
-    }));
+    for (const field of ['modelProfiles', 'modelConnections']) {
+      if (values[field]) values[field] = values[field].map(item => ({ ...item,
+        apiKey: scalar(env[item.credentialName]) || scalar(values.modelProfileKeys?.[item.credentialName]) || (item.credentialName === 'AGENTKIT_MODEL_API_KEY' ? values.modelApiKey : '') || '',
+      }));
+    }
     return { values, sources };
   }
   async function describe() {
@@ -185,6 +199,7 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
     return {
       modelProvider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash',
       modelProfiles: (values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash', baseUrl: values.modelBaseUrl || 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true, apiKey: values.modelApiKey }]).map(({ apiKey, ...profile }) => ({ ...profile, credentialConfigured: Boolean(apiKey) })),
+      modelConnections: (values.modelConnections || []).map(({ apiKey, ...connection }) => ({ ...connection, credentialConfigured: Boolean(apiKey) })),
       modelBaseUrl: values.modelBaseUrl || 'http://kspmas.ksyun.com/v1',
       cloudRegion: values.cloudRegion || 'cn-beijing-6',
       cloudServerUrl: values.cloudServerUrl || 'https://aicp.api.ksyun.com',
@@ -205,6 +220,12 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
         ...(Array.isArray(patch.modelProfiles) ? { modelProfiles: patch.modelProfiles.map(profile => record(profile)
           ? withoutEmptyHeaders({ ...profile, baseUrl: profile.baseUrl ? normalizeModelEndpoint(profile.baseUrl, profile.provider) : '' }) : profile) } : {}),
       };
+      if (Object.hasOwn(patch, 'modelConnections')) {
+        const connections = normalizeModelConnections(patch.modelConnections);
+        if (!Array.isArray(patch.modelConnections) || connections.length !== patch.modelConnections.length
+          || new Set(connections.map(item => item.id)).size !== connections.length) throw new ConfigurationError('模型提供商配置格式无效');
+        patch.modelConnections = connections;
+      }
     } catch (error) { return Promise.reject(error); }
     for (const [key, value] of Object.entries(patch)) {
       if (key === 'modelProfiles') {
@@ -213,7 +234,7 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
         try { value.forEach(nativeModelOptions); } catch (error) { return Promise.reject(error); }
       } else if (key === 'modelProfileKeys') {
         if (!record(value) || Object.values(value).some(item => typeof item !== 'string')) return Promise.reject(new ConfigurationError('模型凭证格式无效'));
-      } else if (typeof value !== 'string') return Promise.reject(new ConfigurationError('配置值必须为文本'));
+      } else if (key !== 'modelConnections' && typeof value !== 'string') return Promise.reject(new ConfigurationError('配置值必须为文本'));
     }
     const write = async () => {
       const document = await readDocument(path);
@@ -230,6 +251,7 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
           const { apiKey, ...metadata } = profile;
           return metadata;
         });
+        else if (field === 'modelConnections') document.settings.modelConnections = value;
         else document.settings[field] = value.trim();
       }
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
