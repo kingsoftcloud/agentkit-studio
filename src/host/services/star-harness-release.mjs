@@ -240,10 +240,18 @@ export async function startStarHarness({ packageDirectory, version, workspaceRoo
   const token = randomBytes(32).toString('base64url');
   const search = Object.fromEntries(Object.entries(env).filter(([name]) =>
     /^(?:(?:AGENTKIT_ENGINE|KSADK|OPENCLAW)_WEB_SEARCH_(?:PROVIDER|BASE_URL|API_KEY|SCOPE)|KSADK_MCP_KEY|KSC_AIPRO_API_KEY|KSC_AIPRO_APIKEY|AIPRO_API_KEY)$/.test(name)));
+  const desktopNode = process.versions.electron && process.resourcesPath && join(process.resourcesPath,
+    'runtime', 'primary-runtime', 'dependencies', 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node');
+  const useDesktopNode = desktopNode && existsSync(desktopNode);
+  // Local command supervisors spawn the engine's executable with a restricted
+  // environment. Use Desktop's bundled Node so they can start without Electron
+  // flags. Run the signed worker source via argv because Node cannot read ASAR.
+  const execPath = useDesktopNode ? desktopNode : process.execPath;
+  const execArgv = useDesktopNode ? ['--input-type=module', '--eval', readFileSync(workerEntry, 'utf8'), '--'] : [];
   const child = fork(workerEntry, [packageDirectory, '--workspace', workspaceRoot, '--state-dir', stateDir,
     '--agent', agentId], {
-    execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-    env: { ...childEnvironment(env), ...search, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    execPath, execArgv, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    env: { ...childEnvironment(env), ...search, ...(process.versions.electron && !useDesktopNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_MODEL_BASE_URL: profile.baseUrl,
       AGENTKIT_ENGINE_MODEL_API_KEY: profile.apiKey, AGENTKIT_ENGINE_MODEL_NAME: profile.modelName,
       AGENTKIT_ENGINE_MODEL_PROTOCOL: profile.protocol || 'openai-chat',

@@ -1,9 +1,10 @@
 /** Verify a published Harness release with the packaged Studio and Electron. */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -11,10 +12,68 @@ const version = '0.0.27';
 const [target] = process.argv.slice(2);
 assert.ok(target, 'Pass a packaged macOS app or Windows executable');
 
+async function verifyApprovedCommand(load, root, runtime) {
+  const { createNativeEngineRuntime } = await load('providers/native-engine-runtime.mjs');
+  const { startStarHarness } = await load('host/services/star-harness-release.mjs');
+  const workspace = join(root, 'workspace');
+  const markerFile = join(workspace, 'approval.txt');
+  await mkdir(workspace);
+  const modelName = 'desktop-approval-fixture';
+  const apiKey = 'desktop-approval-fixture';
+  let requests = 0;
+  const model = createServer(async (req, res) => {
+    for await (const _chunk of req) { /* drain the fixture request */ }
+    const command = requests++ === 0;
+    const delta = command ? { role: 'assistant', tool_calls: [{ index: 0, id: 'approve-once', type: 'function',
+      function: { name: 'run_command', arguments: JSON.stringify({ command: "printf approved >> approval.txt", timeout: 8 }) } }] }
+      : { role: 'assistant', content: 'Approved command completed.' };
+    const frame = (delta, finish_reason) => `data: ${JSON.stringify({ id: 'desktop-approval-' + requests,
+      object: 'chat.completion.chunk', model: modelName, choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end(frame(delta, null) + frame({}, command ? 'tool_calls' : 'stop') + 'data: [DONE]\n\n');
+  });
+  await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${model.address().port}/v1`;
+  let service;
+  try {
+    service = await startStarHarness({ packageDirectory: runtime, version, workspaceRoot: workspace,
+      stateDir: join(root, 'engine'), profile: { modelName, baseUrl, apiKey } });
+    assert.equal(service.version, version);
+    // Harness local commands are supported on macOS. Windows still verifies
+    // that the signed, separately installed worker launches and handshakes.
+    if (process.platform !== 'darwin') return;
+    const studio = createNativeEngineRuntime({ stateRoot: join(root, 'studio-state'), env: {
+      AGENTKIT_ENGINE_SERVICE_URL: service.endpoint, AGENTKIT_ENGINE_SERVICE_TOKEN: service.token,
+      AGENTKIT_ENGINE_SERVICE_WORKSPACE: workspace, AGENTKIT_ENGINE_SERVICE_MODEL: modelName,
+    } });
+    let approvals = 0;
+    const results = [];
+    for await (const result of studio.stream({ cwd: workspace, sessionId: 'desktop-approval', turnId: 'first',
+      input: 'Use the terminal to append a marker to approval.txt.', model: modelName, modelProvider: { baseUrl, apiKey },
+      sandbox: 'workspace-write', signal: AbortSignal.timeout(25000), requestApproval: async request => {
+        assert.equal(request.toolName, 'native/run_command');
+        await assert.rejects(readFile(markerFile), { code: 'ENOENT' });
+        approvals++;
+        return 'allowed-once';
+      },
+    })) results.push(result);
+    assert.equal(approvals, 1);
+    assert.equal(requests, 2);
+    assert.equal(await readFile(markerFile, 'utf8'), 'approved');
+    assert.equal(results.findLast(chunk => chunk.event?.kind === 'tool.completed')?.event.status, 'ok');
+    assert.equal(results.findLast(chunk => chunk.type === 'text')?.text, 'Approved command completed.');
+  } finally {
+    await service?.stop();
+    await new Promise(resolve => { model.closeAllConnections(); model.close(resolve); });
+  }
+}
+
 if (process.versions.electron) {
-  const entry = join(target, 'dsh/node_modules/@kingsoftcloud/agentkit-studio/src/host/services/star-harness-catalog.mjs');
-  const { fetchStarHarnessProof, verifyStarHarnessProof } = await import(pathToFileURL(entry));
-  const cachePath = await mkdtemp(join(tmpdir(), 'studio-harness-release-'));
+  const studioSource = join(target, 'dsh/node_modules/@kingsoftcloud/agentkit-studio/src');
+  const load = path => import(pathToFileURL(join(studioSource, path)));
+  const { fetchStarHarnessProof, verifyStarHarnessProof } = await load('host/services/star-harness-catalog.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'studio-harness-release-'));
+  const cachePath = join(root, 'trust');
   try {
     const proof = await fetchStarHarnessProof(version, { fetchImpl: fetch });
     const release = await verifyStarHarnessProof(version, proof, { cachePath });
@@ -29,9 +88,19 @@ if (process.versions.electron) {
       { code: 'TLOG_INCLUSION_PROMISE_ERROR' });
     await assert.rejects(verifyStarHarnessProof(version, { ...proof, manifest: Buffer.from('{}').toString('base64') },
       { cachePath, offline: true }), /differs from the attested artifact/);
+    const support = join(process.resourcesPath, 'runtime');
+    const pnpm = join(support, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs');
+    const packageManager = { command: process.execPath, args: ['--expose-internals', pnpm], env: {
+      DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
+      PATH: join(support, 'bin') + delimiter + (process.env.PATH ?? ''),
+      pnpm_config_pm_on_fail: 'ignore',
+    } };
+    const { createStarHarnessReleases } = await load('host/services/star-harness-release.mjs');
+    const store = createStarHarnessReleases({ directory: join(root, 'releases'), packageManager });
+    await verifyApprovedCommand(load, root, await store.install(version));
     console.log(`Electron ${process.versions.electron} validated the signed Star Harness ${version} release`);
   } finally {
-    await rm(cachePath, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 } else {
   const app = resolve(target);
@@ -39,7 +108,7 @@ if (process.versions.electron) {
   const archive = process.platform === 'darwin' ? join(app, 'Contents/Resources/app.asar')
     : join(dirname(app), 'resources/app.asar');
   const { stdout, stderr } = await promisify(execFile)(executable, [fileURLToPath(import.meta.url), archive], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 90000,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 240000,
   });
   assert.match(stdout, /validated the signed Star Harness/);
   process.stdout.write(stdout);
