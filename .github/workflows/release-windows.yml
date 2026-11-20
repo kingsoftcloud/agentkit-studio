@@ -330,6 +330,8 @@ jobs:
         run: |
           node .qualification-tools/scripts/verify-desktop-module-graph.mjs (Join-Path (Split-Path $env:STUDIO_INSTALLED_APP) 'resources/app.asar') --studio | Out-File .artifacts/windows-proof/studio-module-graph.json -Encoding utf8
           if ($LASTEXITCODE) { throw 'Installed Studio archive verification failed' }
+          node .qualification-tools/scripts/verify-desktop-harness-release.mjs $env:STUDIO_INSTALLED_APP
+          if ($LASTEXITCODE) { throw 'Installed Studio Harness signature verification failed' }
           node .qualification-tools/scripts/verify-windows-app-ui.mjs
           if ($LASTEXITCODE) { throw 'Installed Windows App UI acceptance failed' }
       - name: Verify telemetry in the signed Windows installation
