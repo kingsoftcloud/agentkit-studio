@@ -28,7 +28,8 @@ try {
   const workerSource = readFileSync(worker, 'utf8');
   await writeFile(materialized, workerSource);
   console.log(JSON.stringify({ electron: process.versions.electron, bundledNode: existsSync(bundledNode) }));
-  const packageDirectory = await releases.install('0.0.27');
+  const version = '0.0.28';
+  const packageDirectory = await releases.install(version);
   const common = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
     /^(?:PATH|HOME|LANG|LC_ALL|TMPDIR|USER|LOGNAME|SHELL|SystemRoot|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|NODE_EXTRA_CA_CERTS)$/i.test(name)));
   for (const [mode, entry, execPath, execArgv] of [
@@ -52,7 +53,7 @@ try {
       child.once('close', (code, signal) => resolve({ code, signal }));
     });
     clearTimeout(timer);
-    console.log(JSON.stringify({ mode, ready, ...outcome, stderr }));
+    console.log(JSON.stringify({ version, mode, ready, ...outcome, stderr }));
   }
 } finally {
   await rm(root, { recursive: true, force: true });
