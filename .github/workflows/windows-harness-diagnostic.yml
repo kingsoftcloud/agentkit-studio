@@ -11,6 +11,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: kingsoftcloud/ksadk-harness
+          ref: 0a58bd9088395eb42680b03c5c3f0bc6deaccb46
+          path: harness-candidate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
+      - name: Build the exact Harness review candidate
+        working-directory: harness-candidate
+        run: |
+          npm ci --ignore-scripts
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build
       - uses: actions/download-artifact@v4
         with:
           name: agentkit-studio-0.2.2-rc.1.20261120.10-win-x64
@@ -35,7 +49,9 @@ jobs:
           $archive = Join-Path $dest 'resources/app.asar'
           $stdout = Join-Path $dest 'probe.stdout'
           $stderr = Join-Path $dest 'probe.stderr'
-          $run = Start-Process -FilePath $app -ArgumentList @('"' + $script + '"', '"' + $archive + '"') -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $harness = Join-Path $env:GITHUB_WORKSPACE 'harness-candidate/packages/agentkit-harness-node'
+          $arguments = @($script, $archive, $harness) | ForEach-Object { '"' + $_ + '"' }
+          $run = Start-Process -FilePath $app -ArgumentList $arguments -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           Get-Content $stdout
           Get-Content $stderr
           if ($run.ExitCode) { throw 'Diagnostic process failed' }
