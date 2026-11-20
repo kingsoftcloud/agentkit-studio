@@ -151,6 +151,41 @@ export default String.raw`
 [data-studio-settings] [data-studio-settings-group] > h3 { margin: 0 0 8px; font-size: 14px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
 .studio-settings-panel { padding: 0 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-xl,16px); }
 .studio-settings-panel > [data-studio-settings-row]:last-child { border-bottom: 0; }
+.studio-privacy { margin-bottom: 24px; }
+.studio-privacy-summary {
+  display: flex; align-items: center; gap: 8px; min-height: 44px;
+  list-style: none; cursor: pointer;
+}
+.studio-privacy-summary::-webkit-details-marker { display: none; }
+.studio-privacy-summary::after {
+  content: ""; flex: none; width: 6px; height: 6px; margin-inline: 2px 3px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg);
+}
+details[open] > .studio-privacy-summary::after { transform: rotate(45deg); }
+.studio-privacy-state { margin-inline-start: auto; }
+.studio-privacy-state, .studio-privacy-details > summary { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.studio-privacy-body { padding: 4px 0 10px; border-top: .5px solid var(--dsw-alias-border-l2); }
+.studio-privacy-body > .agentkit-form-note { margin: 8px 0 0; }
+.studio-privacy-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.studio-privacy-row > div { min-width: 0; }
+.studio-privacy-row .agentkit-form-note { margin-top: 1px; }
+.studio-privacy-details > summary { justify-content: space-between; min-height: 34px; }
+.studio-privacy-details > p { overflow-wrap: anywhere; }
+.studio-privacy-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 6px -6px 0; }
+.studio-privacy-management { padding-top: 6px; }
+.studio-privacy .studio-privacy-action {
+  flex: none; min-height: 28px; padding: 0 6px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-secondary); font-size: 12px; cursor: pointer;
+}
+.studio-privacy .studio-privacy-action:disabled { opacity: .5; cursor: default; }
+.studio-privacy-preview pre {
+  max-height: 156px; overflow: auto; margin: 4px 0 0; padding: 8px;
+  border-radius: 8px; background: var(--dsw-alias-bg-layer-2); white-space: pre-wrap; overflow-wrap: anywhere;
+  font-size: 11px; line-height: 16px;
+}
+.studio-privacy-summary:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; border-radius: 4px;
+}
 .studio-automation-surface > [data-studio-heading] { justify-content: flex-end !important; gap: 8px !important; }
 .studio-automation-surface > [data-studio-heading] h2 { display: none; }
 [data-studio-settings-row] { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 0; border-bottom: .5px solid var(--dsw-alias-border-l2); }
@@ -159,7 +194,7 @@ export default String.raw`
 [data-studio-settings-row] > span { max-width: 55%; text-align: right; overflow-wrap: anywhere; color: var(--dsw-alias-label-secondary); font-size: 13px; }
 [data-studio-settings] .agentkit-guide-entry { margin-top: 8px; padding-top: 16px; border-top: .5px solid var(--dsw-alias-border-l2); }
 :where([data-studio-settings], [data-studio-model-settings], [data-studio-agent-form], .agentkit-start-checks) button { font: inherit; }
-:where([data-studio-settings], .agentkit-start-checks) button:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover); }
+:where([data-studio-settings], .agentkit-start-checks) button:not(:disabled):not([role="switch"]):hover { background: var(--dsw-alias-interactive-bg-hover); }
 :where([data-studio-settings], [data-studio-agent-form], .agentkit-start-checks) :is(button,input,select,textarea):focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
 /* The model settings surface owns its layout, control and chip styles in
    styles/model-settings.css.mjs; keep this sheet free of overrides for it. */
