@@ -63,6 +63,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Reverify signed candidate and exercise native configuration
         env:
+          AGENTKIT_TELEMETRY_DISABLED: '1'
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_REPOSITORY: ${{ inputs.candidate_repository }}
           CANDIDATE_RUN: ${{ inputs.candidate_run }}

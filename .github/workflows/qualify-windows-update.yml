@@ -92,6 +92,7 @@ jobs:
       - name: Exercise public feed, native download, installation and automatic restart
         shell: pwsh
         env:
+          AGENTKIT_TELEMETRY_DISABLED: '1'
           TARGET_VERSION: ${{ inputs.target_version }}
           REQUIRE_DIFFERENTIAL: ${{ inputs.require_differential }}
         run: |
