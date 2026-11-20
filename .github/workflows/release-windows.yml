@@ -259,7 +259,7 @@ jobs:
           DSH_DESKTOP_PLUGIN_BUNDLES: ${{ steps.product.outputs.plugin_bundles }}
           STUDIO_PRODUCT_ICON: ${{ steps.product.outputs.windows_icon }}
           STUDIO_PRODUCT_TRAY_ICON: ${{ steps.product.outputs.windows_tray_icon }}
-          AGENTKIT_TELEMETRY_RELEASE_POLICY: ${{ inputs.qualify_telemetry && '{"endpoint":"https://127.0.0.1:49331/v1/logs","defaultBasic":true,"policyRevision":"qualification-v1"}' || vars.STUDIO_TELEMETRY_RELEASE_POLICY }}
+          AGENTKIT_TELEMETRY_RELEASE_POLICY: ${{ inputs.qualify_telemetry && '{"endpoint":"https://127.0.0.1:49331/v1/logs","defaultBasic":false,"policyRevision":"qualification-v1"}' || vars.STUDIO_TELEMETRY_RELEASE_POLICY }}
         run: |
           [string[]]$packageArguments = @('--source', "$PWD/dsh-source", '--output', "$env:RUNNER_TEMP/studio-build", '--patches', "$PWD/patches/dsh-v0.2.2-rc.1", '--commit', '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db', '--target', 'win-x64', '--dsh-version', '0.2.2-rc.1', '--studio-version', $env:STUDIO_PACKAGE_VERSION, '--build-version', $env:BUILD_VERSION)
           if ('${{ inputs.diagnostic_only }}' -eq 'true') { $packageArguments += '--unsigned' }

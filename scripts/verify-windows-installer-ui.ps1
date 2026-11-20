@@ -57,7 +57,6 @@ $env:AGENTKIT_HOME = Join-Path $env:RUNNER_TEMP 'studio-finish-agentkit'
 $env:DSH_TELEMETRY_DISABLED = '1'
 $install = Start-Process -FilePath $Installer -ArgumentList "/D=$destination" -PassThru
 $started = $null
-$privacyDismissed = $false
 try {
   $deadline = (Get-Date).AddMinutes(3)
   do {
@@ -97,29 +96,13 @@ try {
     $started = Get-Process -Name 'AgentKit Studio' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $appPath -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if ($started) {
       $element = [System.Windows.Automation.AutomationElement]::FromHandle($started.MainWindowHandle)
-      $handledPrivacy = $false
       $process = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $started.Id)
       $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $process)
       foreach ($installedWindow in $windows) {
         $privacy = $installedWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $privacyLabels)
-        if (-not $privacy -or $privacy.Current.IsOffscreen) { continue }
-        $invoke = $null
-        if ($privacy.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) {
-          $invoke.Invoke()
-        } else {
-          $bounds = $privacy.Current.BoundingRectangle
-          $dialog = [IntPtr]$installedWindow.Current.NativeWindowHandle
-          if ($dialog -eq [IntPtr]::Zero -or $bounds.IsEmpty) { continue }
-          [StudioInstallerWindow]::Click($dialog, $bounds.X+$bounds.Width/2, $bounds.Y+$bounds.Height/2)
+        if ($privacy -and -not $privacy.Current.IsOffscreen) {
+          throw 'The installed app displayed a first-use privacy dialog'
         }
-        if (-not $privacyDismissed) { Write-Host 'First-use privacy action selected in the installer-launched app.' }
-        $privacyDismissed = $true
-        $handledPrivacy = $true
-        break
-      }
-      if ($handledPrivacy) {
-        Start-Sleep -Milliseconds 300
-        continue
       }
       $later = $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $laterCondition)
       if ($later -and -not $later.Current.IsOffscreen) {
@@ -139,7 +122,7 @@ try {
     throw 'Finish Launch now did not render Studio navigation in the installed process'
   }
   [StudioInstallerWindow]::Capture($started.MainWindowHandle, (Join-Path $Evidence 'windows-installer-launched-app.png'), $false)
-  [ordered]@{installerBrandVerified=$true;visibleInstallation=$true;finishLaunchVerified=$true;studioNavigationVerified=$true;privacyDeclineOnFinish=$privacyDismissed;installedPath=$appPath;pid=$started.Id} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-installer-ui.json')
+  [ordered]@{installerBrandVerified=$true;visibleInstallation=$true;finishLaunchVerified=$true;studioNavigationVerified=$true;nativePrivacyDialogShown=$false;installedPath=$appPath;pid=$started.Id} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-installer-ui.json')
 } finally {
   if ($started -and -not $started.HasExited) { & taskkill.exe /PID $started.Id /T /F | Out-Null }
   if (-not $install.HasExited) { Stop-Process -Id $install.Id -Force }

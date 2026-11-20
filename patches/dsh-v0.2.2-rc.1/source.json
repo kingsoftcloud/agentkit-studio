@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "80671918111f3c0e5a42f71c48d91688ca4961e5",
+  "headCommit": "30eac29ac17e13c95a58f7fb7b9992e7e1c57f3b",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "7c92612d38250ab990d0d6ff6efce25bb04c5d20",
-  "sourceSha256": "4cddbed6bc820096a09df8520d09940ea4b1135105371a16a01708b73f114b15",
+  "tree": "c4bcfd7fa07d3429a053441c1bfa551a43e1dca4",
+  "sourceSha256": "44128b8498c10d2b0e5048c520f5386a3f1f83dcbd839de086c60419591dcdee",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "d78bae2aa429635f11525c34584cbcab8829145cf0c27ea3f53e447008d433bb"
+    "sha256": "ce786c9980f09ad9d181410400787781bce711457d76137e407b81b8a769d268"
   },
   "commits": [
     {
@@ -338,25 +338,25 @@
     {
       "id": "086",
       "file": "086-studio-desktop-telemetry.patch",
-      "commit": "96d0cc7320eb54027c83cef7052e17f789cfcdd7",
-      "sha256": "e8189763edffe809455b036a3201c597a140d7deb7545de2c64e4455b47a09e6"
+      "commit": "fe14e929b92331c7ebbb7923f50969851476b180",
+      "sha256": "5af46178d8f306c8f29cff579ab6c06d56acd0789cfcdabfdd77e0294a341af0"
     },
     {
       "id": "087",
       "file": "087-plugin-market-tarball-sources.patch",
-      "commit": "5eaadfb3fb804ab40a5ee9d3b05db7c87bd43886",
+      "commit": "611f203b2caad4cfbd94902b1c1004f655593b3e",
       "sha256": "b4257332cd79421b20f34b3c2909555ccaa6b1422dee87842ef11a3c49656bd9"
     },
     {
       "id": "088",
       "file": "088-desktop-default-plugin-index.patch",
-      "commit": "b7f4923195f37eb0f7f3edf3f2d550e3b28d393d",
+      "commit": "807f7a05c99be2bb025721ad24ed8391a960a55f",
       "sha256": "28f591d4d304d940696f55a37b5de8e41cbb191056fdef9bfcbc087f60ded17a"
     },
     {
       "id": "089",
       "file": "089-model-reasoning-defaults.patch",
-      "commit": "80671918111f3c0e5a42f71c48d91688ca4961e5",
+      "commit": "30eac29ac17e13c95a58f7fb7b9992e7e1c57f3b",
       "sha256": "ca54412de425d3c41bd739ed0a0ea391523b229bc28219b891ac15ccedf55721"
     }
   ]

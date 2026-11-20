@@ -18,15 +18,17 @@ const newState = () => ({
   installId: null, firstOpen: false, lastDay: null, launch: null, update: null, finishedRuns: {}, retryAt: 0,
 });
 
-/** Only a packaged, reviewed first-party policy can enable the basic default. */
+/** Apply release defaults only to packaged builds with a first-party policy. */
 export function resolveDesktopTelemetryConfig({ release, selfHosted, disabled, packaged }) {
   const endpoint = telemetryEndpoint(selfHosted || release?.endpoint);
   const overridden = Boolean(selfHosted);
+  const defaultEnabled = Boolean(endpoint && packaged && !overridden
+    && typeof release?.policyRevision === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(release.policyRevision));
   return {
     endpoint,
     disabled: Boolean(disabled) || release?.buildOff === true,
-    defaultBasic: Boolean(endpoint && packaged && !overridden && release?.defaultBasic === true
-      && typeof release.policyRevision === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(release.policyRevision)),
+    defaultEnabled,
+    defaultBasic: defaultEnabled && release.defaultBasic === true,
     selfHosted: overridden,
     noticeVersion: typeof release?.policyRevision === 'string' ? release.policyRevision.slice(0, 64) : '1',
   };
@@ -34,11 +36,11 @@ export function resolveDesktopTelemetryConfig({ release, selfHosted, disabled, p
 
 async function loadJournal(path, now) {
   try {
-    if ((await stat(path)).size > maxQueueBytes + 512 * 1024) return null;
+    if ((await stat(path)).size > maxQueueBytes + 512 * 1024) return undefined;
     const input = await readFile(path, 'utf8');
     const lines = input.slice(0, input.lastIndexOf('\n')).split('\n');
     const state = JSON.parse(lines.shift());
-    if (state?.version !== 1 || !state.choices || typeof state.policy !== 'string') return null;
+    if (state?.version !== 1 || !state.choices || typeof state.policy !== 'string') return undefined;
     const queued = [];
     for (const line of lines) {
       try {
@@ -47,7 +49,10 @@ async function loadJournal(path, now) {
       } catch { /* A malformed record is never forwarded. */ }
     }
     return { state, queued };
-  } catch { return null; }
+  } catch (error) {
+    // An unreadable journal may contain opt-outs. Only a missing file is a fresh install.
+    return error.code === 'ENOENT' ? null : undefined;
+  }
 }
 
 async function replaceJournal(directory, path, data) {
@@ -160,7 +165,19 @@ class DesktopTelemetry {
     this.state.receiver = receiver;
     this.state.policy = policy;
     this.firstQueuedAt = this.queue[0]?.occurred_at ?? 0;
-    if (saved) await this.save().catch(() => {});
+    if (saved === null && this.available && this.config.defaultEnabled) {
+      this.state.notice = true;
+      this.state.choices = { basic: true, crash: true, run: true };
+      this.ensureId();
+      try { await this.save(); }
+      catch {
+        this.state.notice = false;
+        this.state.choices = blankChoices();
+        this.state.installId = null;
+      }
+    } else if (saved) {
+      await this.save().catch(() => {});
+    }
     this.schedule();
   }
 
@@ -181,17 +198,14 @@ class DesktopTelemetry {
     if (!this.state.installId && telemetryCategories.some(key => this.enabled(key))) this.state.installId = randomUUID();
   }
 
-  async applyNotice(choice) {
-    if (!this.available || this.state.notice || !['continue', 'off'].includes(choice)) return this.status();
-    this.state.notice = true;
-    if (choice === 'off') this.state.choices.basic = false;
-    this.ensureId();
-    await this.save();
-    return this.status();
-  }
-
   async setPreference(category, enabled) {
-    if (!this.available || !this.state.notice || !telemetryCategories.includes(category) || typeof enabled !== 'boolean') return this.status();
+    if (!this.available || !telemetryCategories.includes(category) || typeof enabled !== 'boolean') return this.status();
+    if (!this.state.notice) {
+      if (!enabled) return this.status();
+      // A first opt-in applies only to the category the user enabled.
+      this.state.choices.basic = false;
+      this.state.notice = true;
+    }
     this.state.choices[category] = enabled;
     if (!enabled) this.discard([category]);
     this.ensureId();

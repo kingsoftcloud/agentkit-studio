@@ -1,18 +1,19 @@
 /** Run an installed Studio package against a loopback HTTPS collector with synthetic data. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { _electron as electron } from '@playwright/test';
-import { maxBodyBytes } from '../src/telemetry/contract.mjs';
+import { eventCategory, maxBodyBytes } from '../src/telemetry/contract.mjs';
 
 const fixturePort = 49331;
 const endpoint = `https://127.0.0.1:${fixturePort}/v1/logs`;
 const basicOnly = { basic: true, crash: false, run: false };
+const allOn = { basic: true, crash: true, run: true };
 const allOff = { basic: false, crash: false, run: false };
 
 async function eventually(probe, label, timeout = 90_000) {
@@ -119,7 +120,7 @@ async function open(executable, profile, cert, version, baseline = false) {
     DSH_HOME: join(profile, 'dsh'), AGENTKIT_HOME: join(profile, 'studio'),
     NODE_EXTRA_CA_CERTS: cert, DSH_DESKTOP_OPEN_DEVTOOLS: '0',
   });
-  if (baseline) env.DSH_TELEMETRY_DISABLED = '1';
+  if (baseline) Object.assign(env, { DSH_TELEMETRY_DISABLED: '1', AGENTKIT_TELEMETRY_DISABLED: '1' });
   const app = await electron.launch({ executablePath: executable, args: [`--user-data-dir=${userData}`],
     cwd: profile, env, timeout: 120_000 });
   try {
@@ -129,7 +130,7 @@ async function open(executable, profile, cert, version, baseline = false) {
       dialog.showMessageBox = (...args) => {
         if (!['Data and privacy', '数据与隐私'].includes(args.at(-1)?.message)) return original(...args);
         globalThis.telemetryNoticeShown = true;
-        return new Promise(resolveNotice => { globalThis.resolveTelemetryNotice = resolveNotice; });
+        return Promise.resolve({ response: 2, checkboxChecked: false });
       };
       return { packaged: app.isPackaged, version: app.getVersion(), userData: app.getPath('userData') };
     });
@@ -154,14 +155,6 @@ async function triggerForeground(app) {
   });
 }
 
-async function waitForNotice(app) {
-  await eventually(async () => {
-    if (await app.evaluate(() => globalThis.telemetryNoticeShown === true)) return true;
-    await triggerForeground(app);
-    return false;
-  }, 'The packaged desktop notice did not open');
-}
-
 async function workspace(app, baseline = false) {
   return await eventually(async () => {
     for (const page of app.windows()) {
@@ -171,6 +164,24 @@ async function workspace(app, baseline = false) {
       await page.evaluate(() => window.dshWelcome?.skip()).catch(() => {});
     }
   }, 'The installed workspace telemetry IPC is unavailable');
+}
+
+async function privacySettings(page) {
+  const later = page.getByRole('button', { name: /^(稍后设置|Set up later)$/ });
+  const launcher = page.locator('.agentkit-settings-launcher');
+  await later.or(launcher).first().waitFor({ state: 'visible', timeout: 90_000 });
+  if (await later.isVisible()) await later.click();
+  await launcher.click();
+  await page.getByRole('button', { name: 'AgentKit Studio', exact: true }).click();
+  const panel = page.locator('[data-studio-privacy]');
+  await panel.locator(':scope > summary').click();
+  await panel.getByText('数据与隐私说明', { exact: true }).waitFor({ state: 'visible' });
+  return panel;
+}
+
+async function assertNoPrivacyDialog(app) {
+  assert.equal(await app.evaluate(() => globalThis.telemetryNoticeShown === true), false,
+    'Opening the workspace or Privacy settings triggered a native dialog');
 }
 
 async function main() {
@@ -186,21 +197,23 @@ async function main() {
   const appPath = windows ? await installWindows(resolve(values.installer), join(root, 'current')) : resolve(values.app);
   const { executable, resources } = packagePaths(appPath);
   const release = JSON.parse(await readFile(join(resources, 'studio-telemetry', 'policy.json'), 'utf8'));
-  assert.deepEqual(release, { endpoint, defaultBasic: true, policyRevision: 'qualification-v1' });
+  assert.deepEqual(release, { endpoint, defaultBasic: false, policyRevision: 'qualification-v1' });
   const profile = join(root, 'primary');
   const outbox = join(profile, 'electron', 'studio-telemetry', 'outbox.jsonl');
   const receiver = await listen(root);
   try {
     const app = await open(executable, profile, receiver.cert, values.version);
     try {
-      await waitForNotice(app);
-      console.log('Reached the first-use privacy notice in the installed app');
-      await wait(31_000);
-      assert.equal(receiver.requests.length, 0);
-      await assert.rejects(access(outbox), { code: 'ENOENT' });
-      await app.evaluate(() => globalThis.resolveTelemetryNotice({ response: 0, checkboxChecked: false }));
       const page = await workspace(app);
-      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, basicOnly);
+      await triggerForeground(app);
+      const privacy = await privacySettings(page);
+      await triggerForeground(app);
+      const basic = privacy.getByRole('switch', { name: '基础运营统计' });
+      const crash = privacy.getByRole('switch', { name: '崩溃统计' });
+      const run = privacy.getByRole('switch', { name: '本地 Run 统计' });
+      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOn);
+      for (const toggle of [basic, crash, run]) assert.equal(await toggle.getAttribute('aria-checked'), 'true');
+      await assertNoPrivacyDialog(app);
       const initial = await page.evaluate(() => window.dshDesktop.telemetry.preview('example'));
       const sample = JSON.parse(initial).resourceLogs[0].scopeLogs[0].logRecords;
       assert.equal(sample.length, 1);
@@ -209,18 +222,26 @@ async function main() {
       await eventually(() => receiver.requests.length >= 2, 'The installed app did not retry the failed HTTPS request', 70_000);
       assert.ok(JSON.stringify(receiver.requests[1].slice(0, receiver.requests[0].length)) === JSON.stringify(receiver.requests[0]),
         'The first batch changed during retry');
-      const acceptedNames = receiver.requests[1].map(record => record.body.stringValue);
-      for (const event of ['app_install', 'desktop_active_day']) {
-        assert.equal(acceptedNames.filter(name => name === event).length, 1);
-      }
-      assert.ok(acceptedNames.every(name => ['app_install', 'desktop_active_day', 'update_check_result'].includes(name)),
-        'Only basic telemetry is enabled in this profile');
+      const acceptedNames = () => receiver.requests.slice(1).flatMap(batch => batch.map(record => record.body.stringValue));
+      const activityEvents = ['app_install', 'desktop_active_day'];
+      await eventually(() => activityEvents.every(event => acceptedNames().includes(event)),
+        'The installed app did not report both foreground activity events', 45_000);
+      for (const event of activityEvents) assert.equal(acceptedNames().filter(name => name === event).length, 1);
+      assert.ok(acceptedNames().every(name => eventCategory(name) === 'basic'), 'Idle startup reports only basic events');
       await eventually(async () => {
         const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
         return status.queued === 0 && status.diagnostics.send_failed === 1;
       }, 'Queue confirmation or the package diagnostic counter is missing', 15_000);
-      const stopped = await page.evaluate(() => window.dshDesktop.telemetry.stop(false));
-      assert.deepEqual(stopped.enabled, allOff);
+      for (const toggle of [crash, run]) {
+        await eventually(() => toggle.isEnabled(), 'Statistics switch stayed disabled');
+        await toggle.press('Space');
+        await eventually(async () => await toggle.getAttribute('aria-checked') === 'false', 'Statistics switch stayed on');
+      }
+      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, basicOnly);
+      await eventually(() => basic.isEnabled(), 'Basic statistics switch stayed disabled');
+      await basic.press('Space');
+      await eventually(async () => await basic.getAttribute('aria-checked') === 'false', 'Basic statistics switch stayed on');
+      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
       const journal = JSON.parse((await readFile(outbox, 'utf8')).split('\n')[0]);
       assert.deepEqual(journal.choices, allOff);
     } finally {
@@ -238,24 +259,12 @@ async function main() {
       assert.equal(status.noticePending, false);
       await wait(31_000);
       assert.equal(receiver.requests.length, requestsAfterOptOut);
+      await assertNoPrivacyDialog(restarted);
     } finally {
       await restarted.close();
     }
 
-    const declining = await open(executable, join(root, 'declined'), receiver.cert, values.version);
-    try {
-      await waitForNotice(declining);
-      await declining.evaluate(() => globalThis.resolveTelemetryNotice({ response: 1, checkboxChecked: false }));
-      const page = await workspace(declining);
-      const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
-      assert.deepEqual(status.enabled, allOff);
-      assert.equal(status.installId, null);
-      await wait(31_000);
-      assert.equal(receiver.requests.length, requestsAfterOptOut);
-    } finally {
-      await declining.close();
-    }
-    console.log('Verified opt-out after restart and decline in a fresh profile');
+    console.log('Verified defaults on a fresh profile, silent startup, and per-category opt-out after restart');
 
     let upgradedFrom = null;
     if (values.baseline) {
@@ -282,13 +291,12 @@ async function main() {
       }
       const upgraded = await open(packagePaths(installed).executable, upgradeProfile, receiver.cert, values.version);
       try {
-        await waitForNotice(upgraded);
-        await wait(31_000);
-        assert.equal(receiver.requests.length, requestsAfterOptOut);
-        assert.equal(await readFile(marker, 'utf8'), 'keep this installed profile');
-        await upgraded.evaluate(() => globalThis.resolveTelemetryNotice({ response: 1, checkboxChecked: false }));
         const page = await workspace(upgraded);
-        assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
+        await triggerForeground(upgraded);
+        await assertNoPrivacyDialog(upgraded);
+        assert.equal(await readFile(marker, 'utf8'), 'keep this installed profile');
+        const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
+        assert.deepEqual(status.enabled, allOn);
         upgradedFrom = values['baseline-version'];
       } finally {
         await upgraded.close();
@@ -300,12 +308,12 @@ async function main() {
       appVersion: values.version,
       platform: process.platform,
       installedApp: true,
-      testInputs: 'Injected foreground and notice actions, loopback HTTPS, isolated profiles',
+      testInputs: 'Injected foreground, Privacy settings UI, loopback HTTPS, isolated profiles',
       credentialFree: true,
-      beforeNoticeRequests: 0,
-      declinedRequests: 0,
+      nativePrivacyDialogShown: false,
+      freshProfileDefaults: allOn,
       retryKeptEventIds: true,
-      acceptedRecords: receiver.requests[1].length,
+      acceptedRecords: receiver.requests.slice(1, requestsAfterOptOut).reduce((count, batch) => count + batch.length, 0),
       fixedSampleVerified: true,
       sendFailureCountVerified: true,
       offPersistedAcrossLaunch: true,

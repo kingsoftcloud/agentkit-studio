@@ -2690,7 +2690,7 @@
       "contracts": [
         "Studio Desktop disables inherited DSH product and session exporters after all profile overlays.",
         "Studio telemetry is loaded only from the packaged product resource or a development fixture.",
-        "Only the Desktop main process allows collection after notice, persists the outbox and sends to its configured receiver.",
+        "The Desktop main process gates collection on the saved privacy preferences, persists the outbox and sends to its configured receiver.",
         "Host Run messages and sender-bound settings operations do not expose a telemetry uploader to Web or renderer code."
       ],
       "affectedPackages": [
@@ -2735,7 +2735,7 @@
         ]
       },
       "sequence": 55,
-      "sha256": "e8189763edffe809455b036a3201c597a140d7deb7545de2c64e4455b47a09e6"
+      "sha256": "5af46178d8f306c8f29cff579ab6c06d56acd0789cfcdabfdd77e0294a341af0"
     },
     {
       "id": "087",
@@ -2894,10 +2894,10 @@
       "sha256": "ca54412de425d3c41bd739ed0a0ea391523b229bc28219b891ac15ccedf55721"
     }
   ],
-  "patchedTree": "7c92612d38250ab990d0d6ff6efce25bb04c5d20",
-  "patchedSourceSha256": "4cddbed6bc820096a09df8520d09940ea4b1135105371a16a01708b73f114b15",
+  "patchedTree": "c4bcfd7fa07d3429a053441c1bfa551a43e1dca4",
+  "patchedSourceSha256": "44128b8498c10d2b0e5048c520f5386a3f1f83dcbd839de086c60419591dcdee",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "7922986af0c7f8dfe8d101ef5c82242c9a070864a73222dc2e94a3413283e106"
+    "sha256": "57dab6ec2a2665fcee7613a843139d0991197c596844891926148c919962b202"
   }
 }

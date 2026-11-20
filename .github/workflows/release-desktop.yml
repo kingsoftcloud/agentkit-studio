@@ -413,7 +413,7 @@ jobs:
           EXPECTED_UPDATE_ORIGIN: ${{ needs.source-gate.outputs.update_origin }}
           EXPECTED_UPDATE_CHANNEL: ${{ needs.source-gate.outputs.channel }}
           EXPECTED_RELEASE_VERSION: ${{ needs.source-gate.outputs.build_version }}
-          AGENTKIT_TELEMETRY_RELEASE_POLICY: ${{ inputs.qualify_telemetry && '{"endpoint":"https://127.0.0.1:49331/v1/logs","defaultBasic":true,"policyRevision":"qualification-v1"}' || vars.STUDIO_TELEMETRY_RELEASE_POLICY }}
+          AGENTKIT_TELEMETRY_RELEASE_POLICY: ${{ inputs.qualify_telemetry && '{"endpoint":"https://127.0.0.1:49331/v1/logs","defaultBasic":false,"policyRevision":"qualification-v1"}' || vars.STUDIO_TELEMETRY_RELEASE_POLICY }}
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
