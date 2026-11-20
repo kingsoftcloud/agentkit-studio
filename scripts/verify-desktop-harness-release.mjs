@@ -8,11 +8,10 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
-const version = '0.0.27';
-const [target] = process.argv.slice(2);
+const [target, requestedVersion] = process.argv.slice(2);
 assert.ok(target, 'Pass a packaged macOS app or Windows executable');
 
-async function verifyApprovedCommand(load, root, runtime) {
+async function verifyApprovedCommand(load, root, runtime, version) {
   const { createNativeEngineRuntime } = await load('providers/native-engine-runtime.mjs');
   const { startStarHarness } = await load('host/services/star-harness-release.mjs');
   const workspace = join(root, 'workspace');
@@ -71,10 +70,21 @@ async function verifyApprovedCommand(load, root, runtime) {
 if (process.versions.electron) {
   const studioSource = join(target, 'dsh/node_modules/@kingsoftcloud/agentkit-studio/src');
   const load = path => import(pathToFileURL(join(studioSource, path)));
-  const { fetchStarHarnessProof, verifyStarHarnessProof } = await load('host/services/star-harness-catalog.mjs');
+  const { fetchStarHarnessProof, starHarnessVersion, verifyStarHarnessProof } = await load('host/services/star-harness-catalog.mjs');
   const root = await mkdtemp(join(tmpdir(), 'studio-harness-release-'));
   const cachePath = join(root, 'trust');
   try {
+    const support = join(process.resourcesPath, 'runtime');
+    const pnpm = join(support, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs');
+    const packageManager = { command: process.execPath, args: ['--expose-internals', pnpm], env: {
+      DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
+      PATH: join(support, 'bin') + delimiter + (process.env.PATH ?? ''),
+      pnpm_config_pm_on_fail: 'ignore',
+    } };
+    const { createStarHarnessReleases } = await load('host/services/star-harness-release.mjs');
+    const store = createStarHarnessReleases({ directory: join(root, 'releases'), packageManager });
+    const version = requestedVersion ?? await store.latest();
+    assert.ok(starHarnessVersion(version), 'A published and signed Star Harness version is required');
     const proof = await fetchStarHarnessProof(version, { fetchImpl: fetch });
     const release = await verifyStarHarnessProof(version, proof, { cachePath });
     assert.equal(release.packages['@kingsoftcloud/agentkit-harness-node'].version, version);
@@ -88,16 +98,7 @@ if (process.versions.electron) {
       { code: 'TLOG_INCLUSION_PROMISE_ERROR' });
     await assert.rejects(verifyStarHarnessProof(version, { ...proof, manifest: Buffer.from('{}').toString('base64') },
       { cachePath, offline: true }), /differs from the attested artifact/);
-    const support = join(process.resourcesPath, 'runtime');
-    const pnpm = join(support, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs');
-    const packageManager = { command: process.execPath, args: ['--expose-internals', pnpm], env: {
-      DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
-      PATH: join(support, 'bin') + delimiter + (process.env.PATH ?? ''),
-      pnpm_config_pm_on_fail: 'ignore',
-    } };
-    const { createStarHarnessReleases } = await load('host/services/star-harness-release.mjs');
-    const store = createStarHarnessReleases({ directory: join(root, 'releases'), packageManager });
-    await verifyApprovedCommand(load, root, await store.install(version));
+    await verifyApprovedCommand(load, root, await store.install(version), version);
     console.log(`Electron ${process.versions.electron} validated the signed Star Harness ${version} release`);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -107,7 +108,7 @@ if (process.versions.electron) {
   const executable = process.platform === 'darwin' ? join(app, 'Contents/MacOS/AgentKit Studio') : app;
   const archive = process.platform === 'darwin' ? join(app, 'Contents/Resources/app.asar')
     : join(dirname(app), 'resources/app.asar');
-  const { stdout, stderr } = await promisify(execFile)(executable, [fileURLToPath(import.meta.url), archive], {
+  const { stdout, stderr } = await promisify(execFile)(executable, [fileURLToPath(import.meta.url), archive, ...(requestedVersion === undefined ? [] : [requestedVersion])], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 240000,
   });
   assert.match(stdout, /validated the signed Star Harness/);
