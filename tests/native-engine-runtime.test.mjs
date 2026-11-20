@@ -406,6 +406,39 @@ async function serviceRuntime(t, f, { images = false } = {}) {
   } });
 }
 
+for (const settles of [true, false]) test(`Studio resumes an output-limited Run once (${settles ? 'completed' : 'still paused'})`,
+  { timeout: 15000 }, async t => {
+    const f = await setup(t, []);
+    const cutoff = [
+      { id: 'cutoff', choices: [{ index: 0, delta: { reasoning_content: 'Planning the next step.' } }] },
+      { id: 'cutoff', choices: [{ index: 0, delta: {}, finish_reason: 'length' }],
+        usage: { prompt_tokens: 10, completion_tokens: 32000, total_tokens: 32010,
+          completion_tokens_details: { reasoning_tokens: 32000 } } },
+    ];
+    f.model.respond = () => {
+      const count = f.model.requests.length;
+      if (count === 1) return toolCall('written-before-limit', 'write_workspace_file', { path: 'out.txt', content: 'Written once.\n' });
+      return settles && count === 5 ? final('Continued the original task.') : cutoff;
+    };
+    const runtime = await serviceRuntime(t, f), chunks = [];
+    const consume = async () => {
+      for await (const chunk of runtime.stream({ ...f.options, sandbox: 'danger-full-access', signal: AbortSignal.timeout(12000) })) chunks.push(chunk);
+    };
+    if (settles) {
+      await consume();
+      assert.equal(chunks.findLast(chunk => chunk.type === 'text')?.text, 'Continued the original task.');
+    } else {
+      await assert.rejects(consume(), { code: 'NATIVE_ENGINE_RUN_INCOMPLETE', message: /任务已暂停.*已完成的结果已保存/ });
+    }
+    const events = chunks.filter(chunk => chunk.type === 'engine-event');
+    assert.equal(new Set(events.map(chunk => chunk.runId)).size, 1);
+    assert.equal(events.filter(chunk => chunk.event.kind === 'run.started').length, 1);
+    assert.equal(events.filter(chunk => chunk.event.kind === 'tool.completed').length, 1);
+    assert.equal(readFileSync(join(f.cwd, 'out.txt'), 'utf8'), 'Written once.\n');
+    assert.equal(f.model.requests.length, settles ? 5 : 7);
+    assert.ok(f.model.requests.at(-1).messages.some(message => message.role === 'tool'));
+  });
+
 test('reconnecting an active Run refuses a replacement service that lacks its tool policy', async () => {
   const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
   const contract = 'agentkit.native-agent-policy/v1';
