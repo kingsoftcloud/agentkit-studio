@@ -1,5 +1,18 @@
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { verify } from 'sigstore';
+
+if (process.versions.electron) {
+  const require = createRequire(import.meta.url);
+  const fromSigstore = createRequire(require.resolve('sigstore'));
+  const fromVerifier = createRequire(fromSigstore.resolve('@sigstore/verify'));
+  const { crypto } = fromVerifier('@sigstore/core');
+  const originalVerify = crypto.verify;
+  // Sigstore's Rekor and DSSE checks rely on Node's implicit SHA-256 for EC
+  // keys. Electron requires the digest to be passed explicitly.
+  crypto.verify = (data, key, signature, algorithm) => originalVerify(data, key, signature,
+    algorithm === undefined && key?.asymmetricKeyType === 'ec' ? 'sha256' : algorithm);
+}
 
 const repository = 'kingsoftcloud/ksadk-harness';
 const releasePrefix = 'https://github.com/' + repository + '/releases/download/';
