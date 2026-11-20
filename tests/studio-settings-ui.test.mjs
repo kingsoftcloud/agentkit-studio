@@ -157,12 +157,12 @@ test('a fresh profile sees an inline disclosure and can enable a category direct
   assert.match(ui.text(), /数据与隐私说明/);
   assert.match(ui.text(), /接收方 https:\/\/example\.test\/v1\/logs/);
   assert.deepEqual(updates, []);
-  const basic = () => ui.find(node => node.type === 'switch' && node.props['aria-label'] === '基础运营统计');
+  const basic = () => ui.find(node => node.type === 'switch' && node.props.label === '基础运营统计');
   assert.equal(basic().props.checked, false);
-  basic().props.onChange({ currentTarget: { checked: true } });
+  basic().props.onChange(true);
   await ui.settle();
   assert.deepEqual(updates, [['basic', true]]);
   assert.equal(basic().props.checked, true);
-  assert.equal(ui.find(node => node.type === 'switch' && node.props['aria-label'] === '崩溃统计').props.checked, false);
+  assert.equal(ui.find(node => node.type === 'switch' && node.props.label === '崩溃统计').props.checked, false);
   ui.dispose();
 });

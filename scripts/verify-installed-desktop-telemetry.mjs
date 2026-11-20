@@ -211,7 +211,7 @@ async function main() {
       const crash = privacy.getByRole('switch', { name: '崩溃统计' });
       const run = privacy.getByRole('switch', { name: '本地 Run 统计' });
       assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOn);
-      for (const toggle of [basic, crash, run]) assert.equal(await toggle.isChecked(), true);
+      for (const toggle of [basic, crash, run]) assert.equal(await toggle.getAttribute('aria-checked'), 'true');
       await assertNoPrivacyDialog(app);
       const initial = await page.evaluate(() => window.dshDesktop.telemetry.preview('example'));
       const sample = JSON.parse(initial).resourceLogs[0].scopeLogs[0].logRecords;
@@ -233,12 +233,12 @@ async function main() {
       for (const toggle of [crash, run]) {
         await eventually(() => toggle.isEnabled(), 'Statistics switch stayed disabled');
         await toggle.press('Space');
-        await eventually(async () => !await toggle.isChecked(), 'Statistics switch stayed on');
+        await eventually(async () => await toggle.getAttribute('aria-checked') === 'false', 'Statistics switch stayed on');
       }
       assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, basicOnly);
       await eventually(() => basic.isEnabled(), 'Basic statistics switch stayed disabled');
       await basic.press('Space');
-      await eventually(async () => !await basic.isChecked(), 'Basic statistics switch stayed on');
+      await eventually(async () => await basic.getAttribute('aria-checked') === 'false', 'Basic statistics switch stayed on');
       assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
       const journal = JSON.parse((await readFile(outbox, 'utf8')).split('\n')[0]);
       assert.deepEqual(journal.choices, allOff);

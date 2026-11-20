@@ -37,11 +37,8 @@ export function createStudioSettingsSection({
     const switchRow = (key, label, detail) => h('div', { key, className: 'studio-privacy-row' },
       h('div', null, h('div', { className: 'agentkit-check-label' }, label),
         h('div', { className: 'agentkit-form-note' }, detail)),
-      h(Switch, { checked: state.enabled[key], role: 'switch', 'aria-label': label, disabled: busy,
-        onChange: event => {
-          const { checked } = event.currentTarget;
-          void update(() => bridge.set(key, checked));
-        } }));
+      h(Switch, { checked: state.enabled[key], label, disabled: busy,
+        onChange: enabled => void update(() => bridge.set(key, enabled)) }));
     const statusText = () => {
       if (error && state === undefined) return '读取失败';
       if (state === undefined) return '读取中…';
