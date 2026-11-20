@@ -20,6 +20,14 @@ test('Studio disables the independent DSH account welcome and recharge flow', as
   assert.equal(entries.find(entry => entry.id === 'ui-settings-account')?.disabled, true);
 });
 
+test('Studio configures the existing DSH Agent preset registry', async () => {
+  const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
+  const inserted = entries.flatMap(entry => entry.insert ?? []);
+  assert.ok(!inserted.some(entry => entry.id === 'agent-preset-registry'),
+    'dsh-web-app already inserts the registry; a second row blocks settings writes');
+  assert.equal(entries.find(entry => entry.id === 'agent-preset-registry')?.config?.default, 'standard');
+});
+
 const clientSource = await readClientSource();
 
 test('Studio mounts the official plugin navigation provider required by optional DSH UI bundles', async () => {
