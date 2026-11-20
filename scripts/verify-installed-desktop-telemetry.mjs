@@ -207,6 +207,7 @@ async function main() {
       const page = await workspace(app);
       await triggerForeground(app);
       const privacy = await privacySettings(page);
+      await triggerForeground(app);
       const basic = privacy.getByRole('switch', { name: '基础运营统计' });
       const crash = privacy.getByRole('switch', { name: '崩溃统计' });
       const run = privacy.getByRole('switch', { name: '本地 Run 统计' });
@@ -221,11 +222,12 @@ async function main() {
       await eventually(() => receiver.requests.length >= 2, 'The installed app did not retry the failed HTTPS request', 70_000);
       assert.ok(JSON.stringify(receiver.requests[1].slice(0, receiver.requests[0].length)) === JSON.stringify(receiver.requests[0]),
         'The first batch changed during retry');
-      const acceptedNames = receiver.requests[1].map(record => record.body.stringValue);
-      for (const event of ['app_install', 'desktop_active_day']) {
-        assert.equal(acceptedNames.filter(name => name === event).length, 1);
-      }
-      assert.ok(acceptedNames.every(name => eventCategory(name) === 'basic'), 'Idle startup reports only basic events');
+      const acceptedNames = () => receiver.requests.slice(1).flatMap(batch => batch.map(record => record.body.stringValue));
+      const activityEvents = ['app_install', 'desktop_active_day'];
+      await eventually(() => activityEvents.every(event => acceptedNames().includes(event)),
+        'The installed app did not report both foreground activity events', 45_000);
+      for (const event of activityEvents) assert.equal(acceptedNames().filter(name => name === event).length, 1);
+      assert.ok(acceptedNames().every(name => eventCategory(name) === 'basic'), 'Idle startup reports only basic events');
       await eventually(async () => {
         const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
         return status.queued === 0 && status.diagnostics.send_failed === 1;
@@ -311,7 +313,7 @@ async function main() {
       nativePrivacyDialogShown: false,
       freshProfileDefaults: allOn,
       retryKeptEventIds: true,
-      acceptedRecords: receiver.requests[1].length,
+      acceptedRecords: receiver.requests.slice(1, requestsAfterOptOut).reduce((count, batch) => count + batch.length, 0),
       fixedSampleVerified: true,
       sendFailureCountVerified: true,
       offPersistedAcrossLaunch: true,
