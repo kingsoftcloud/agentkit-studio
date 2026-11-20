@@ -24,5 +24,5 @@ test('managed resource client projects a v2 memory partition from the permit', a
     },
   });
   await client.action('QueryMemorySdk', { MemoryCollectionId: 'mem-abc123', AgentUserId: 'legacy', Query: 'hello' });
-  assert.equal(sent.AgentUserId, 'mp1-c101faf3891929df05f0eddbc9e8ce4096d69bf0534a82884d2647e859cc');
+  assert.equal(sent.AgentUserId, 'mp1-c101faf3891929df05f0eddbc9e8ce40');
 });

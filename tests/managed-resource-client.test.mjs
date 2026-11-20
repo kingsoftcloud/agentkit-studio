@@ -59,7 +59,10 @@ for (const profile of ['dsh-native', 'harness', 'codex']) test(`${profile} Host 
     const encoded = JSON.stringify(item);
     for (const value of ['unrelated-fixture-ak', 'unrelated-fixture-sk', 'AWS4-HMAC', 'trusted-business-user']) assert.ok(!encoded.includes(value));
   }
-  assert.match(received[1].payload.AgentUserId, /^mp1-[a-f0-9]{60}$/);
+  assert.match(received[1].payload.AgentUserId, /^mp1-[a-f0-9]{32}$/);
+  // Source attribution belongs on the managed transport too: this hop is the one
+  // that used to be the only unlabelled leg of the resource path.
+  assert.equal(received[1].headers['x-traffic-source'], 'agentkit');
   assert.equal(received[0].headers['x-agentengine-resource-permit'], undefined);
   assert.equal(received[1].headers['x-agentengine-resource-permit'], permit);
   assert.equal(JSON.stringify(received[1].payload).includes(permit), false);

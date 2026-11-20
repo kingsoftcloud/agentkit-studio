@@ -1,3 +1,4 @@
+import { buildCloudHeaders, resolveTrafficSource } from './cloud-headers.mjs';
 import { hostFetch } from './http-fetch.mjs';
 /** Node client for the existing AgentEngine public Action API. */
 import { randomUUID, createHash } from 'node:crypto';
@@ -170,9 +171,10 @@ export function createAicpResourceClient({ origin, trafficSource = 'agentkit', .
     || endpoint.pathname !== '/' || endpoint.search || endpoint.hash)) {
     throw new AgentEngineError('AICP_RESOURCE_ENDPOINT_INVALID', 'SDK 地址须为不含凭据、路径或查询的 HTTP(S) origin');
   }
-  if (typeof trafficSource !== 'string' || /[^\x20-\x7e]/u.test(trafficSource) || Buffer.byteLength(trafficSource) > 16384)
-    throw new AgentEngineError('AICP_RESOURCE_TRAFFIC_SOURCE_INVALID', '请求来源须为可打印 ASCII 字符');
-  const { action, bindMemoryWriter } = createClient(options, new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListSessions']), endpoint ?? null, trafficSource.trim() || 'agentkit');
+  let source;
+  try { source = resolveTrafficSource(trafficSource); }
+  catch { throw new AgentEngineError('AICP_RESOURCE_TRAFFIC_SOURCE_INVALID', '请求来源须为可打印 ASCII 字符'); }
+  const { action, bindMemoryWriter } = createClient(options, new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListSessions']), endpoint ?? null, source);
   return { action, bindMemoryWriter };
 }
 
@@ -351,10 +353,9 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
         SdkVersion: 'agentkit-studio', Region: controlRegion, Accesskey: values.cloudAccessKey,
       } : payload;
       const body = JSON.stringify(requestPayload);
-      const headers = { 'Content-Type': 'application/json', Accept: 'application/json',
+      const headers = buildCloudHeaders({ 'Content-Type': 'application/json', Accept: 'application/json',
         'X-Ksc-Request-Id': requestId, 'X-Ksc-Region': controlRegion,
-        'X-Ksc-Source': 'agentkit-studio' };
-      if (resourceTrafficSource) headers['X-Traffic-Source'] = resourceTrafficSource;
+        'X-Ksc-Source': 'agentkit-studio' }, resourceTrafficSource);
       if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
       const url = new URL(kop ? `/?Action=${name}&Version=${apiVersion}` : `/agentengine/api/v1/${name}`, requestBase);
       if (kop) {

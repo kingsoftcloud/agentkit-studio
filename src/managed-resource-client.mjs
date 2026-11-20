@@ -1,4 +1,5 @@
 /** Resource-only transport for a platform-owned Agent version. No AK/SK. */
+import { buildCloudHeaders, resolveTrafficSource } from './cloud-headers.mjs';
 import { hostFetch } from './http-fetch.mjs';
 import { memoryPartitionV2 } from './memory-identity.mjs';
 
@@ -144,6 +145,10 @@ export function createManagedResourceClient({
 }) {
   const resources = runtime.declaration?.resources || {};
   const spaces = new Set((resources.skill_spaces || (resources.skill_space ? [resources.skill_space] : [])).map(item => item.id));
+  // Snapshot once per client, not per request: the value belongs to the process,
+  // and re-reading it inside the retry loop would let a mid-flight env change
+  // tag retries differently from the attempt they retry.
+  const trafficSource = resolveTrafficSource(env?.KSADK_TRAFFIC_SOURCE);
   const policy = retryPolicy(maxAttempts, retryDelaysMs);
   async function call(allowed, action, payload = {}, { signal, requestId } = {}) {
     if (!allowed.has(action)) fail('MANAGED_RESOURCE_ACTION_NOT_ALLOWED');
@@ -164,11 +169,11 @@ export function createManagedResourceClient({
       let response;
       try {
         response = await fetchImpl(url, { method: 'POST', redirect: 'error',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+          headers: buildCloudHeaders({ 'Content-Type': 'application/json', Accept: 'application/json',
             Authorization: `Bearer ${token}`, 'X-AgentEngine-Target-Version-Id': versionId,
             'X-AgentEngine-Manifest-Sha256': manifestSha256,
             ...(requestId ? { 'X-Ksc-Request-Id': requestId } : {}),
-            ...(resourcePermit ? { 'X-AgentEngine-Resource-Permit': resourcePermit } : {}) },
+            ...(resourcePermit ? { 'X-AgentEngine-Resource-Permit': resourcePermit } : {}) }, trafficSource),
           body: JSON.stringify(requestPayload),
           signal: cancelSignal ? AbortSignal.any([cancelSignal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
         });
