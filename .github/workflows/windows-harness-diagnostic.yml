@@ -31,5 +31,11 @@ jobs:
           $appSig = Get-AuthenticodeSignature $app
           if ($appSig.Status -ne 'Valid' -or $appSig.SignerCertificate.Thumbprint -ne $sig.SignerCertificate.Thumbprint) { throw 'Invalid installed app signature' }
           $env:ELECTRON_RUN_AS_NODE = '1'
-          & $app (Join-Path $env:GITHUB_WORKSPACE 'ci/windows-harness-diagnostic/probe.mjs') (Join-Path $dest 'resources/app.asar')
-          if ($LASTEXITCODE) { throw 'Diagnostic process failed' }
+          $script = Join-Path $env:GITHUB_WORKSPACE 'ci/windows-harness-diagnostic/probe.mjs'
+          $archive = Join-Path $dest 'resources/app.asar'
+          $stdout = Join-Path $dest 'probe.stdout'
+          $stderr = Join-Path $dest 'probe.stderr'
+          $run = Start-Process -FilePath $app -ArgumentList @('"' + $script + '"', '"' + $archive + '"') -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          Get-Content $stdout
+          Get-Content $stderr
+          if ($run.ExitCode) { throw 'Diagnostic process failed' }
