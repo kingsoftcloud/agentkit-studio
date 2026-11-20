@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "b7f4923195f37eb0f7f3edf3f2d550e3b28d393d",
+  "headCommit": "80671918111f3c0e5a42f71c48d91688ca4961e5",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "253c48d8d77a1a674316fd965a8d86fcb19f6c9d",
-  "sourceSha256": "b79c697384ef7ab30dcb7c6d18987b076711321c7696a2d9fe42789237ec3b73",
+  "tree": "7c92612d38250ab990d0d6ff6efce25bb04c5d20",
+  "sourceSha256": "4cddbed6bc820096a09df8520d09940ea4b1135105371a16a01708b73f114b15",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "e4a1fc4f85fc831bec7cd7282294aefc9596d730106349c0bd6d6771d5c0cf86"
+    "sha256": "d78bae2aa429635f11525c34584cbcab8829145cf0c27ea3f53e447008d433bb"
   },
   "commits": [
     {
@@ -352,6 +352,12 @@
       "file": "088-desktop-default-plugin-index.patch",
       "commit": "b7f4923195f37eb0f7f3edf3f2d550e3b28d393d",
       "sha256": "28f591d4d304d940696f55a37b5de8e41cbb191056fdef9bfcbc087f60ded17a"
+    },
+    {
+      "id": "089",
+      "file": "089-model-reasoning-defaults.patch",
+      "commit": "80671918111f3c0e5a42f71c48d91688ca4961e5",
+      "sha256": "ca54412de425d3c41bd739ed0a0ea391523b229bc28219b891ac15ccedf55721"
     }
   ]
 }

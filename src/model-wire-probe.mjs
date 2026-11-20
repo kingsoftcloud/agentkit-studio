@@ -17,9 +17,8 @@
  * it against a local server.
  */
 
-/** The whole probe: one short prompt, eight output tokens. */
 const PROBE_PROMPT = 'OK';
-const PROBE_MAX_OUTPUT_TOKENS = 8;
+const PROBE_MAX_OUTPUT_TOKENS = 32;
 const PROBE_TIMEOUT_MS = 10_000;
 
 /**
@@ -36,42 +35,41 @@ const PROBE_TIMEOUT_MS = 10_000;
  * @param {Record<string, string>} [options.headers] - configured request headers.
  * @param {typeof fetch} [options.fetchImpl] - transport; defaults to the global fetch.
  * @param {number} [options.timeoutMs] - per-probe deadline.
+ * @param {AbortSignal} [options.signal] - lifetime of the enclosing request.
  * @returns {Promise<ModelWire>} the wire, or `unknown` when the probe proved nothing.
  */
-export async function probeModelWire({ baseUrl, modelName, apiKey, headers = {}, fetchImpl = fetch, timeoutMs = PROBE_TIMEOUT_MS }) {
+export async function probeModelWire({ baseUrl, modelName, apiKey, headers = {}, fetchImpl = fetch, timeoutMs = PROBE_TIMEOUT_MS, signal }) {
   const model = String(modelName ?? '').trim();
   const root = String(baseUrl ?? '').trim().replace(/\/+$/, '');
-  if (!model || !root) return 'unknown';
+  if (!model || !root || signal?.aborted) return 'unknown';
   let url;
   try { url = new URL(`${root}/responses`); } catch { return 'unknown'; }
   if (!['http:', 'https:'].includes(url.protocol)) return 'unknown';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const requestHeaders = new Headers({
+    'content-type': 'application/json',
+    ...(String(apiKey ?? '').trim() ? { authorization: `Bearer ${String(apiKey).trim()}` } : {}),
+  });
+  for (const [name, value] of Object.entries(headers)) requestHeaders.set(name, value);
   try {
     const response = await fetchImpl(url, {
       method: 'POST',
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json',
-        ...(String(apiKey ?? '').trim() ? { Authorization: `Bearer ${String(apiKey).trim()}` } : {}),
-      },
+      headers: requestHeaders,
       body: JSON.stringify({
         model,
         max_output_tokens: PROBE_MAX_OUTPUT_TOKENS,
         input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: PROBE_PROMPT }] }],
       }),
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
       redirect: 'error',
     });
-    // The body is never inspected, but draining it releases the socket: a probe
-    // that leaves a stream open keeps the caller's pool busy for the whole batch.
-    await response.text().catch(() => '');
-    // 404 is the only signal that the route itself is missing. A gateway that
-    // rejects the request for any other reason still implements the route, but
-    // "still implements it" is not the same as "this model works on it", so
-    // everything else stays unknown rather than being promoted to a fact.
+    const text = await response.text();
     if (response.status === 404) return 'openai-completions';
-    return response.ok ? 'openai-responses' : 'unknown';
+    if (!response.ok) return 'unknown';
+    const body = JSON.parse(text);
+    return Array.isArray(body?.output) && !body.error && !['failed', 'cancelled'].includes(body.status)
+      ? 'openai-responses' : 'unknown';
   } catch {
     // Abort, DNS, TLS, connection reset: the probe proved nothing.
     return 'unknown';
@@ -101,9 +99,10 @@ export const PROBE_CONCURRENCY = 5;
  * @param {readonly string[]} options.models - model ids to probe.
  * @param {typeof fetch} [options.fetchImpl] - transport.
  * @param {number} [options.concurrency] - parallel probes.
+ * @param {AbortSignal} [options.signal] - lifetime of the enclosing batch.
  * @returns {Promise<Array<{ modelName: string, wire: ModelWire }>>}
  */
-export async function probeModelWires({ baseUrl, apiKey, headers = {}, models, fetchImpl = fetch, concurrency = PROBE_CONCURRENCY }) {
+export async function probeModelWires({ baseUrl, apiKey, headers = {}, models, fetchImpl = fetch, concurrency = PROBE_CONCURRENCY, signal }) {
   const queue = [...new Set((models || []).map(model => String(model ?? '').trim()).filter(Boolean))];
   const results = new Array(queue.length);
   let next = 0;
@@ -111,7 +110,7 @@ export async function probeModelWires({ baseUrl, apiKey, headers = {}, models, f
     while (true) {
       const index = next++;
       if (index >= queue.length) return;
-      results[index] = { modelName: queue[index], wire: await probeModelWire({ baseUrl, apiKey, headers, modelName: queue[index], fetchImpl }) };
+      results[index] = { modelName: queue[index], wire: await probeModelWire({ baseUrl, apiKey, headers, modelName: queue[index], fetchImpl, signal }) };
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, queue.length)) }, worker));

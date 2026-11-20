@@ -70,6 +70,7 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   // `models/wire` is the newer one.
   "models/probe",
   "models/wire",
+  "models/efforts",
   "models/codex",
   "resources/list",
   "resources/delete",

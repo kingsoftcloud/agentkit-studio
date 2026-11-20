@@ -7,6 +7,7 @@ import {
 } from '../src/model-reasoning.mjs';
 import { createModelBridge } from '../src/client/dsh/model-bridge.mjs';
 import { syncPortableModelProfiles } from '../src/portable-model-bridge.mjs';
+import { importedModelReasoning } from '../src/model-catalog-reasoning.mjs';
 
 test('the capability table is the single source of provider levels and wire values', () => {
   assert.deepEqual(REASONING_PROFILES.ksyun.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
@@ -121,12 +122,13 @@ test('a 400 naming reasoning_effort can be downgraded exactly once', () => {
 });
 
 /** A fake DSH Settings/credential remote that records every write. */
-function bridgeContext(catalog) {
+function bridgeContext(catalog, { modelDefaults = false } = {}) {
   const providers = {}, writes = [];
+  const schema = { refs: modelDefaults ? { 1: { dict: { reasoningEfforts: '2', defaultReasoningEffort: '3' } } } : {} };
   const ctx = { remote: {
     settings: {
       describe: async () => ({ ok: true, value: { namespaces: [
-        { ns: 'llm-pi-ai', value: { providers }, revision: 3 },
+        { ns: 'llm-pi-ai', schema, value: { providers }, revision: 3 },
         { ns: 'agent-default-model', revision: 3 },
       ] } }),
       mutate: async (ns, operations) => {
@@ -168,6 +170,7 @@ test('a gateway catalog route never declares a route default its siblings cannot
   assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
   const routed = provider.models.find(model => model.id === 'deepseek-v4.1-flash-1017');
   assert.deepEqual(routed.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
+  assert.equal(routed.defaultReasoningEffort, undefined);
   // The sibling catalog entry must not inherit a capability its profile never
   // declared, or picking it would promise reasoning the gateway cannot do.
   assert.equal(provider.models.find(model => model.id === 'seedream-5.0').reasoningEfforts, undefined);
@@ -176,6 +179,25 @@ test('a gateway catalog route never declares a route default its siblings cannot
   const [, defaultOps] = writes.find(([ns]) => ns === 'agent-default-model');
   assert.deepEqual(defaultOps.find(op => op.path[0] === 'reasoningEffort'), { op: 'set', path: ['reasoningEffort'], value: 'high' });
   assert.equal(writes.filter(([ns]) => ns === 'llm-pi-ai').length, 1);
+});
+
+test('existing models keep their own defaults while legacy catalog siblings stay routable', async () => {
+  const other = { ...reasoner, id: 'other', modelName: 'other-model', defaultReasoningEffort: 'low' };
+  const plain = { ...reasoner, id: 'plain', modelName: 'plain-model', reasoningEfforts: false };
+  // The provider omits one configured model from discovery.
+  const { bridge, providers } = bridgeContext([{ id: reasoner.modelName }, { id: plain.modelName }], { modelDefaults: true });
+  await bridge.applyProfiles({ profiles: [reasoner, other, plain] });
+
+  for (const profile of [reasoner, other, plain]) {
+    const route = providers[`agentkit-studio-${profile.id}`];
+    assert.equal(route.reasoning, undefined);
+    for (const model of route.models) {
+      assert.equal(model.defaultReasoningEffort,
+        model.id === profile.modelName && profile.reasoningEfforts ? profile.defaultReasoningEffort : undefined);
+    }
+    assert.ok(route.models.some(model => model.id === profile.modelName));
+    assert.ok(route.models.some(model => model.id === plain.modelName));
+  }
 });
 
 test('a Responses route never sets the chat-only store compat', async () => {
@@ -209,6 +231,25 @@ test('a route serving this profile model alone keeps the concrete route default'
   assert.equal(provider.reasoning, 'high');
   assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
   assert.deepEqual(provider.models[0].reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
+});
+
+test('an explicitly added model carries its selected default without changing catalog siblings', async () => {
+  const { bridge, providers } = bridgeContext([
+    { id: reasoner.modelName, name: 'DeepSeek', input: ['text'] },
+    { id: 'legacy-catalog-entry', name: 'Other model', input: ['text'] },
+  ]);
+  await bridge.applyProfiles({ profiles: [{ ...reasoner, modelOnly: true, reasoningLevels: ['low'], defaultReasoningEffort: 'high' }] });
+
+  const provider = providers['agentkit-studio-reasoner'];
+  assert.equal(provider.reasoning, 'low');
+  assert.deepEqual(provider.models.map(model => [model.id, model.reasoningEfforts]), [[reasoner.modelName, { low: 'low' }]]);
+});
+
+test('automatic reasoning uses service defaults when even an official directory omits levels', () => {
+  const item = { id: 'kimi-k3.1-pro' };
+  assert.deepEqual(importedModelReasoning(item, reasoner), { reasoningLevels: [] });
+  assert.deepEqual(importedModelReasoning({ ...item, defaultReasoningEffort: 'high' }, reasoner), { reasoningLevels: [] });
+  assert.deepEqual(importedModelReasoning({ ...item, reasoningLevels: [], defaultReasoningEffort: 'high' }, reasoner), { reasoningLevels: [] });
 });
 
 test('a default profile without a reasoning declaration clears a stale default effort', async () => {

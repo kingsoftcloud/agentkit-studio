@@ -26,7 +26,7 @@ function ui(metadata, input, runtimeOptions = {}, hostOverrides = {}) {
     ui: { React: { createElement: h, useState, useEffect }, BRAND: {}, Pill: 'pill', inputStyle: () => ({}), buttonStyle: () => ({}), SecretInput: 'SecretInput' },
     hostRemote: host, window: { dispatchEvent() {} }, CustomEvent: class {},
   });
-  const render = () => { cursor = 0; dirty = false; tree = Component({ dshModel }); for (const callback of effects.splice(0)) callback(); };
+  const render = () => { cursor = 0; dirty = false; tree = Component({ dshModel, mode: 'model' }); for (const callback of effects.splice(0)) callback(); };
   const settle = async () => { render(); for (let i = 0; i < 120; i++) { await Promise.resolve(); if (dirty) render(); } };
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
   return { settle, nodes: () => walk(tree), text: () => JSON.stringify(tree), values, applied: () => applied,
@@ -182,7 +182,7 @@ test('switching provider falls back to its default level instead of keeping an i
   assert.equal(view.values.modelProfiles[0].defaultReasoningEffort, 'medium');
 });
 
-test('a model without reasoning keeps「不启用」and writes no effort into the profile', async () => {
+test('a model configured to follow the service default writes no effort into the profile', async () => {
   const view = ui({ id: 'vision', input: ['text'] }, ['text']);
   await view.settle();
   assert.equal(reasoningSelect(view).props.value, '');
@@ -282,7 +282,7 @@ test('a request budget that is not a positive integer fails the save with a read
   await view.settle();
   field(view, '上下文窗口').props.onChange({ target: { value: '0' } });
   await view.settle();
-  assert.match(view.text(), /有未保存的改动/);
+  assert.match(view.text(), /未保存 · 刷新后丢失/);
   await view.save();
   await view.settle();
   assert.match(view.text(), /必须为大于 0 的整数/);

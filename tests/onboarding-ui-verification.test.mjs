@@ -44,7 +44,7 @@ function modelSettingsHarness() {
     ui: { React, Pill: 'Pill', SecretInput, buttonStyle: () => ({}), inputStyle: () => ({}), BRAND: {} },
     hostRemote, window: {}, CustomEvent: class {},
   });
-  const render = () => { cursor = 0; dirty = false; tree = Component({ dshModel }); for (const effect of effects.splice(0)) effect(); };
+  const render = () => { cursor = 0; dirty = false; tree = Component({ dshModel, mode: 'model' }); for (const effect of effects.splice(0)) effect(); };
   const settle = async () => { render(); for (let i = 0; i < 120; i += 1) { await Promise.resolve(); if (dirty) render(); } return tree; };
   return { settle, nodes: () => walk(tree), probe: () => probed, SecretInput };
 }
@@ -82,9 +82,8 @@ test('the onboarding acceptance script locates controls by their shipped accessi
   assert.equal(manualAfterCatalog?.type, 'input', 'the manual input keeps the 模型名称 name after the catalog is read');
   assert.equal(view.nodes().some(node => node.props?.['aria-label'] === '自定义模型名称'), false, 'the accessible name never switches to 自定义模型名称');
   assert.match(manualAfterCatalog.props.placeholder, /自定义/, 'the custom wording lives in the placeholder');
-  // The redesigned surface labels this step with a section heading instead of
-  // the old bold step numeral; the control names above are the contract.
-  assert.ok(view.nodes().some(node => node.type === 'h5' && node.children.includes('模型')), 'the model step keeps a visible section title');
+  assert.ok(view.nodes().some(node => node.props?.className === 'ms-label' && node.children.includes('模型名称')),
+    'the compact form keeps the model field visibly labeled');
   assert.equal(view.probe().apiKey, 'onboarding-local-fixture', 'reading the catalog probes the entered endpoint with the unsaved key');
   assert.ok(view.probe().modelName, 'the probe carries the current model name');
 

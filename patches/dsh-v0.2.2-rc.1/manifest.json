@@ -2849,12 +2849,55 @@
         ]
       },
       "sha256": "28f591d4d304d940696f55a37b5de8e41cbb191056fdef9bfcbc087f60ded17a"
+    },
+    {
+      "id": "089",
+      "file": "089-model-reasoning-defaults.patch",
+      "category": "general-fix",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "medium",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "removeWhen": "The pinned DSH baseline supports a validated reasoning default per model.",
+      "contracts": [
+        "A model-specific default reaches selectors and request dispatch for its exact route and model.",
+        "An explicit session effort takes precedence. Models without overrides retain their route behavior."
+      ],
+      "affectedPackages": [
+        "packages/llm/llm-pi-ai"
+      ],
+      "affectedFiles": [
+        "packages/llm/llm-pi-ai/README.md",
+        "packages/llm/llm-pi-ai/README.zh.md",
+        "packages/llm/llm-pi-ai/src/adapter.ts",
+        "packages/llm/llm-pi-ai/src/catalog.ts",
+        "packages/llm/llm-pi-ai/src/config.ts",
+        "packages/llm/llm-pi-ai/src/models.ts",
+        "packages/llm/llm-pi-ai/tests/adapter.spec.ts",
+        "packages/llm/llm-pi-ai/tests/catalog.spec.ts"
+      ],
+      "dependsOn": [],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio model settings integration."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/llm/llm-pi-ai/tests/adapter.spec.ts",
+          "packages/llm/llm-pi-ai/tests/catalog.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "dsh-web"
+        ]
+      },
+      "sequence": 58,
+      "sha256": "ca54412de425d3c41bd739ed0a0ea391523b229bc28219b891ac15ccedf55721"
     }
   ],
-  "patchedTree": "253c48d8d77a1a674316fd965a8d86fcb19f6c9d",
-  "patchedSourceSha256": "b79c697384ef7ab30dcb7c6d18987b076711321c7696a2d9fe42789237ec3b73",
+  "patchedTree": "7c92612d38250ab990d0d6ff6efce25bb04c5d20",
+  "patchedSourceSha256": "4cddbed6bc820096a09df8520d09940ea4b1135105371a16a01708b73f114b15",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "b6c5cb986c843a9599dd6203eef4a6a08ce3e56d1572871993700fb6ac07082e"
+    "sha256": "7922986af0c7f8dfe8d101ef5c82242c9a070864a73222dc2e94a3413283e106"
   }
 }

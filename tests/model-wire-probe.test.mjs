@@ -26,14 +26,13 @@ test('a gateway that answers the route speaks Responses', async () => {
   try {
     const wire = await probeModelWire({ baseUrl: server.baseUrl, apiKey: 'sk-probe', modelName: 'kimi-k3.1-pro' });
     assert.equal(wire, 'openai-responses');
-    // The probe must be the smallest legal request, and the credential must
-    // travel as a bearer header rather than in the body.
+    // The probe uses a small legal budget and authenticates via the bearer header.
     assert.equal(server.requests.length, 1);
     assert.equal(server.requests[0].url, '/v1/responses');
     assert.equal(server.requests[0].headers.authorization, 'Bearer sk-probe');
     assert.deepEqual(server.requests[0].body, {
       model: 'kimi-k3.1-pro',
-      max_output_tokens: 8,
+      max_output_tokens: 32,
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'OK' }] }],
     });
   } finally { await server.close(); }
