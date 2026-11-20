@@ -1,0 +1,35 @@
+name: Diagnose installed Star Harness on Windows
+on:
+  push:
+    branches: [codex/studio-win-harness-diagnostic]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentkit-studio-0.2.2-rc.1.20261120.10-win-x64
+          run-id: '44714203818'
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Install verified candidate in runner scratch
+        shell: pwsh
+        run: |
+          $installer = @(Get-ChildItem candidate -Recurse -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw 'Expected a single signed installer' }
+          $sig = Get-AuthenticodeSignature $installer[0].FullName
+          if ($sig.Status -ne 'Valid' -or -not $sig.TimeStamperCertificate) { throw 'Invalid installed candidate signature' }
+          $dest = Join-Path $env:RUNNER_TEMP 'studio-harness-diagnostic'
+          $install = Start-Process $installer[0].FullName -ArgumentList @('/S', "/D=$dest") -Wait -PassThru
+          if ($install.ExitCode) { throw 'Installer failed' }
+          $app = Join-Path $dest 'AgentKit Studio.exe'
+          $appSig = Get-AuthenticodeSignature $app
+          if ($appSig.Status -ne 'Valid' -or $appSig.SignerCertificate.Thumbprint -ne $sig.SignerCertificate.Thumbprint) { throw 'Invalid installed app signature' }
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & $app (Join-Path $env:GITHUB_WORKSPACE 'ci/windows-harness-diagnostic/probe.mjs') (Join-Path $dest 'resources/app.asar')
+          if ($LASTEXITCODE) { throw 'Diagnostic process failed' }
