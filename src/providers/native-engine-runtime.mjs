@@ -285,6 +285,8 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         }
         yield { type: 'engine', engine: { version: hello.engine?.version ?? null, preset: hello.engine?.preset ?? null, protocol: hello.protocolVersion }, view };
         let finalText = null, rest;
+        let resumedOutput = false;
+        const canResumeOutput = hello.capabilities?.methods?.includes('run/resume') && typeof engine.resume === 'function';
         let thinkingCursor = hello.capabilities?.liveThinking === true ? '' : undefined;
         let toolDraftCursor = hello.capabilities?.liveToolDrafts === true ? '' : undefined;
         let textCursor = hello.capabilities?.liveText === true ? '' : undefined;
@@ -341,6 +343,12 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           if (!page.running && page.events.length === 0) {
             rest = await engine.status(runId);
             if (rest.running) continue;
+            if (canResumeOutput && !resumedOutput && rest.phase === 'paused' && rest.reason === 'output_budget_exhausted') {
+              signal?.throwIfAborted();
+              resumedOutput = true;
+              await engine.resume(runId);
+              continue;
+            }
             const approval = rest.pendingApproval;
             if (!approval || !engine.approve) break;
             signal?.throwIfAborted();
@@ -456,6 +464,7 @@ function runFailureMessage(rest) {
   if (text(rest.modelError)) return rest.modelError;
   const reason = rest.reason ?? rest.phase ?? 'unknown';
   if (reason === 'effect_outcome_unknown') return '工具执行结果未确认。请先核对实际结果，再发消息继续。';
+  if (reason === 'output_budget_exhausted') return '模型多次达到输出上限，任务已暂停，已完成的结果已保存。请缩小接下来要做的步骤，再在当前会话继续。';
   if (rest.phase === 'paused') return `任务已暂停（${reason}），可稍后继续。`;
   return `任务未完成（${reason}）。`;
 }
