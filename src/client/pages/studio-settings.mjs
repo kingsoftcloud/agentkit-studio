@@ -1,12 +1,12 @@
 export function createStudioSettingsSection({
   ui: { React: { createElement: h, useEffect, useState, useRef }, BRAND, SettingsRow, buttonStyle },
-  hostRemote, versions, window = globalThis.window
+  hostRemote, versions, Switch, window = globalThis.window
 }) {
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = versions;
   const SettingsGroup = (title, ...rows) => h('section', { 'data-studio-settings-group': true },
     h('h3', null, title), h('div', { className: 'studio-settings-panel studio-panel' }, ...rows));
   function PrivacySettings({ bridge }) {
-    const [state, setState] = useState(null);
+    const [state, setState] = useState(undefined);
     const [busy, setBusy] = useState(false);
     const [preview, setPreview] = useState(null);
     const [error, setError] = useState(false);
@@ -16,53 +16,75 @@ export function createStudioSettingsSection({
         .catch(() => { if (active) setError(true); });
       return () => { active = false; };
     }, [bridge]);
-    const update = async action => {
+    const run = async action => {
       setBusy(true);
       setError(false);
-      setPreview(null);
-      try { setState(await action()); }
+      try { await action(); }
       catch { setError(true); }
       finally { setBusy(false); }
     };
-    const showPreview = async mode => {
-      setError(false);
-      try { setPreview({ mode, body: await bridge.preview(mode) }); }
-      catch { setError(true); }
+    const update = action => run(async () => {
+      setPreview(null);
+      setState(await action());
+    });
+    const showPreview = mode => run(async () => {
+      setPreview({ mode, body: await bridge.preview(mode) });
+    });
+    const refresh = () => run(async () => setState(await bridge.status()));
+    const action = (label, onClick) => h('button', {
+      type: 'button', className: 'studio-privacy-action', disabled: busy, onClick,
+    }, label);
+    const switchRow = (key, label, detail) => h('div', { key, className: 'studio-privacy-row' },
+      h('div', null, h('div', { className: 'agentkit-check-label' }, label),
+        h('div', { className: 'agentkit-form-note' }, detail)),
+      h(Switch, { checked: state.enabled[key], label, disabled: busy,
+        onChange: enabled => void update(() => bridge.set(key, enabled)) }));
+    const statusText = () => {
+      if (error && state === undefined) return '读取失败';
+      if (state === undefined) return '读取中…';
+      if (!state) return '不可用';
+      if (!state.endpoint) return '接收地址未配置';
+      if (!state.available) return '已停用';
+      if (state.noticePending) return '待确认';
+      const count = Object.values(state.enabled).filter(Boolean).length;
+      return count ? `已开启 ${count} 项` : '未开启';
     };
-    const refresh = async () => {
-      setError(false);
-      try { setState(await bridge.status()); }
-      catch { setError(true); }
-    };
-    const switchRow = (key, label, detail) => h('div', { className: 'agentkit-settings-row' },
-      h('div', { className: 'agentkit-check-label' }, label),
-      h('div', { className: 'agentkit-form-note' }, detail),
-      h('button', { 'aria-label': label, 'aria-pressed': Boolean(state?.enabled[key]), style: buttonStyle(),
-        disabled: busy || !state?.available || state.noticePending,
-        onClick: () => void update(() => bridge.set(key, !state.enabled[key])) },
-      state?.enabled[key] ? '已开启' : '已关闭'));
-    return SettingsGroup('隐私与数据',
-      switchRow('basic', '基础运营统计', '打开次数、版本、启动和更新结果。'),
-      switchRow('crash', '崩溃统计', '故障来源、阶段和固定错误类别。'),
-      switchRow('run', '本地 Run 统计', '运行结果、时长和可用的用量计数。'),
-      state?.noticePending && h('button', { style: buttonStyle(), disabled: busy,
-        onClick: () => void update(() => bridge.notice()) }, '查看数据与隐私说明'),
-      state?.endpoint && h('div', { className: 'agentkit-form-note' }, `接收方 ${state.endpoint}`),
-      state?.installId && h('div', { className: 'agentkit-form-note' }, `安装标识 ${state.installId}`),
-      h('div', { className: 'agentkit-form-actions' },
-        h('button', { style: buttonStyle(), disabled: busy || !state?.available, onClick: () => void showPreview('queued') }, '查看待发送数据'),
-        h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void showPreview('example') }, '查看固定样例'),
-        h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void update(() => bridge.stop(false)) }, '停止所有遥测'),
-        h('button', { style: buttonStyle(), disabled: busy || !state, onClick: () => void update(() => bridge.stop(true)) }, '清除本地遥测数据')),
-      preview && h('div', null,
-        h('div', { className: 'agentkit-form-note' }, preview.mode === 'example' ? '本地固定样例' : '当前待发送数据'),
-        h('pre', { tabIndex: 0, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } },
-          preview.body || '当前没有待发送数据。')),
-      state?.diagnostics && h('details', null,
-        h('summary', null, '本次启动的本地诊断'),
-        h('div', { className: 'agentkit-form-note' }, `待发送 ${state.queued}，发送失败 ${state.diagnostics.send_failed}，队列丢弃 ${state.diagnostics.queue_drop}，服务端拒收 ${state.diagnostics.rejected}，存储错误 ${state.diagnostics.storage}，发送器错误 ${state.diagnostics.export}`),
-        h('button', { style: buttonStyle(), disabled: busy, onClick: () => void refresh() }, '刷新诊断')),
-      error && h('div', { role: 'status', className: 'agentkit-form-note' }, '无法读取或保存遥测设置。'));
+    const diagnostics = state?.diagnostics;
+    return h('details', { 'data-studio-privacy': true, className: 'studio-settings-panel studio-privacy' },
+      h('summary', { className: 'studio-privacy-summary' }, h('span', null, '隐私与数据'),
+        h('span', { className: 'studio-privacy-state' }, statusText())),
+      h('div', { className: 'studio-privacy-body' },
+        state === null ? h('p', { className: 'agentkit-form-note' }, '此版本无法使用遥测服务。') : null,
+        state && !state.endpoint ? h('p', { className: 'agentkit-form-note' }, '当前安装包未配置接收地址。') : null,
+        state?.endpoint && !state.available ? h('p', { className: 'agentkit-form-note' }, '当前桌面配置已停用上报。') : null,
+        state?.noticePending ? h('div', { className: 'studio-privacy-row' },
+          h('div', null, h('div', { className: 'agentkit-check-label' }, '使用统计'),
+            h('p', { className: 'agentkit-form-note' }, '查看数据用途、接收方和统计选项。')),
+          action('查看说明', () => void update(() => bridge.notice()))) : null,
+        state?.available && !state.noticePending ? [
+          switchRow('basic', '基础运营统计', '打开次数、版本、启动和更新结果。'),
+          switchRow('crash', '崩溃统计', '故障来源、阶段和错误类别。'),
+          switchRow('run', '本地 Run 统计', '运行结果、时长和用量计数。'),
+        ] : null,
+        state ? h('details', { className: 'studio-privacy-details' },
+          h('summary', { className: 'studio-privacy-summary' }, '上报详情'),
+          state.endpoint ? h('p', { className: 'agentkit-form-note' }, `接收方 ${state.endpoint}`) : null,
+          state.installId ? h('p', { className: 'agentkit-form-note' }, `安装标识 ${state.installId}`) : null,
+          diagnostics ? h('p', { className: 'agentkit-form-note' },
+            `待发送 ${state.queued} · 发送失败 ${diagnostics.send_failed} · 队列丢弃 ${diagnostics.queue_drop} · 服务端拒收 ${diagnostics.rejected} · 存储错误 ${diagnostics.storage} · 发送器错误 ${diagnostics.export}`) : null,
+          h('div', { className: 'studio-privacy-actions' },
+            state.available ? action('查看待发送数据', () => void showPreview('queued')) : null,
+            action('查看固定样例', () => void showPreview('example')),
+            diagnostics ? action('刷新诊断', refresh) : null),
+          preview ? h('div', { className: 'studio-privacy-preview', role: 'region',
+            'aria-label': preview.mode === 'example' ? '本地固定样例' : '当前待发送数据' },
+            h('pre', { tabIndex: 0 }, preview.body || '当前没有待发送数据。')) : null,
+          state.available || state.installId ? h('div', { className: 'studio-privacy-actions studio-privacy-management' },
+            action('停止所有遥测', () => void update(() => bridge.stop(false))),
+            action('清除本地遥测数据', () => void update(() => bridge.stop(true)))) : null) : null,
+        error ? h('div', { className: 'studio-privacy-row' },
+          h('p', { role: 'status', className: 'agentkit-form-note' }, '无法读取或保存遥测设置。'),
+          action('重试读取', refresh)) : null));
   }
   function StudioSettingsSection() {
     const [host, setHost] = useState({ status: 'loading', error: '' });

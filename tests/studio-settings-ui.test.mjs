@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStudioSettingsSection } from '../src/client/pages/studio-settings.mjs';
 import { readProductVersions } from '../src/client/state/product-versions.mjs';
-function settingsHarness(remote, updates, versions = {}) {
+function settingsHarness(remote, updates, versions = {}, telemetry) {
   const states = [], effects = [], cleanups = [];
   let cursor = 0, dirty = true, tree;
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat() });
@@ -16,12 +16,22 @@ function settingsHarness(remote, updates, versions = {}) {
     const index = cursor++;
     if (!(index in states)) { states[index] = true; effects.push(callback); }
   };
-  const window = { dshDesktop: updates ? { protocolVersion: 1, updates } : undefined };
-  const Component = createStudioSettingsSection({ ui: { React: { createElement: h, useState, useEffect, useRef }, BRAND: {}, SettingsRow: 'row', buttonStyle: () => ({}) }, window, hostRemote: remote, versions: readProductVersions(versions) });
-  const render = () => { cursor = 0; dirty = false; tree = Component(); for (const callback of effects.splice(0)) cleanups.push(callback()); };
+  const window = { dshDesktop: updates || telemetry ? { protocolVersion: 1, updates, telemetry } : undefined };
+  const Component = createStudioSettingsSection({ ui: { React: { createElement: h, useState, useEffect, useRef }, BRAND: {}, SettingsRow: 'row', buttonStyle: () => ({}) },
+    window, hostRemote: remote, versions: readProductVersions(versions), Switch: 'switch' });
+  const render = () => {
+    cursor = 0;
+    dirty = false;
+    tree = Component();
+    if (telemetry) {
+      tree.children = tree.children.map(node => node?.props?.bridge === telemetry ? node.type(node.props) : node);
+    }
+    for (const callback of effects.splice(0)) cleanups.push(callback());
+  };
   const settle = async () => { render(); for (let i = 0; i < 12; i++) { await Promise.resolve(); if (dirty) render(); } return tree; };
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
-  return { settle, text: () => JSON.stringify(tree), updateButton: () => walk(tree).find(node => node.type === 'button' && node.props.onClick?.name === 'checkDesktopUpdate'), dispose: () => cleanups.forEach(cleanup => cleanup?.()) };
+  return { settle, text: () => JSON.stringify(tree), find: predicate => walk(tree).find(predicate),
+    updateButton: () => walk(tree).find(node => node.type === 'button' && node.props.onClick?.name === 'checkDesktopUpdate'), dispose: () => cleanups.forEach(cleanup => cleanup?.()) };
 }
 test('settings show installed desktop identity separately from the plugin and available update', async () => {
   const ui = settingsHarness({ settings: async () => ({}) }, {
@@ -110,5 +120,50 @@ test('unavailable desktop and failed update remain actionable without exposing n
   await ui.settle();
   assert.equal(ui.updateButton().children[0], '重试检查更新');
   assert.doesNotMatch(ui.text(), /private native diagnostic/);
+  ui.dispose();
+});
+
+test('an unconfigured receiver is shown in a collapsed privacy panel with a local sample', async () => {
+  const requests = [];
+  const ui = settingsHarness({ settings: async () => ({}) }, undefined, {}, {
+    status: async () => ({ available: false, endpoint: '', enabled: { basic: false, crash: false, run: false }, queued: 0 }),
+    preview: async mode => { requests.push(mode); return 'synthetic sample'; },
+  });
+  await ui.settle();
+  const panel = ui.find(node => node.props['data-studio-privacy']);
+  assert.equal(panel?.type, 'details');
+  assert.equal(panel.props.open, undefined);
+  assert.match(JSON.stringify(panel.children[0]), /接收地址未配置/);
+  assert.equal(ui.find(node => node.props['aria-label'] === '基础运营统计' || node.props.label === '基础运营统计'), undefined);
+  await ui.find(node => node.type === 'button' && node.children.includes('查看固定样例')).props.onClick();
+  await ui.settle();
+  assert.deepEqual(requests, ['example']);
+  assert.match(ui.text(), /synthetic sample/);
+  ui.dispose();
+});
+
+test('privacy switches use the desktop consent result and persist the chosen category', async () => {
+  const updates = [];
+  const state = { available: true, endpoint: 'https://example.test/v1/logs', noticePending: true,
+    enabled: { basic: false, crash: false, run: false } };
+  const ui = settingsHarness({ settings: async () => ({}) }, undefined, {}, {
+    status: async () => state,
+    notice: async () => ({ ...state, noticePending: false }),
+    set: async (category, enabled) => {
+      updates.push([category, enabled]);
+      return { ...state, noticePending: false, enabled: { ...state.enabled, [category]: enabled } };
+    },
+  });
+  await ui.settle();
+  assert.equal(ui.find(node => node.type === 'switch'), undefined);
+  await ui.find(node => node.type === 'button' && node.children.includes('查看说明')).props.onClick();
+  await ui.settle();
+  const basic = () => ui.find(node => node.type === 'switch' && node.props.label === '基础运营统计');
+  assert.equal(basic().props.checked, false);
+  await basic().props.onChange(true);
+  await ui.settle();
+  assert.deepEqual(updates, [['basic', true]]);
+  assert.equal(basic().props.checked, true);
+  assert.equal(ui.find(node => node.type === 'switch' && node.props.label === '崩溃统计').props.checked, false);
   ui.dispose();
 });

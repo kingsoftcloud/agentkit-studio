@@ -112,7 +112,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createTemplateResourcePages({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createStudioShell({ ui, hostRemote, documentEffects }));
   ui.StudioSettingsLauncher = createSettingsLauncher({ ui, window });
-  ui.StudioSettingsSection = createStudioSettingsSection({ ui, hostRemote, window, versions: { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } });
+  ui.StudioSettingsSection = createStudioSettingsSection({ ui, hostRemote, window, Switch: primitives.Switch, versions: { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } });
 
 
   return {
