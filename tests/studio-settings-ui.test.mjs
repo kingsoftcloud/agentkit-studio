@@ -142,28 +142,27 @@ test('an unconfigured receiver is shown in a collapsed privacy panel with a loca
   ui.dispose();
 });
 
-test('privacy switches use the desktop consent result and persist the chosen category', async () => {
+test('a fresh profile sees an inline disclosure and can enable a category directly', async () => {
   const updates = [];
   const state = { available: true, endpoint: 'https://example.test/v1/logs', noticePending: true,
     enabled: { basic: false, crash: false, run: false } };
   const ui = settingsHarness({ settings: async () => ({}) }, undefined, {}, {
     status: async () => state,
-    notice: async () => ({ ...state, noticePending: false }),
     set: async (category, enabled) => {
       updates.push([category, enabled]);
       return { ...state, noticePending: false, enabled: { ...state.enabled, [category]: enabled } };
     },
   });
   await ui.settle();
-  assert.equal(ui.find(node => node.type === 'switch'), undefined);
-  await ui.find(node => node.type === 'button' && node.children.includes('查看说明')).props.onClick();
-  await ui.settle();
-  const basic = () => ui.find(node => node.type === 'switch' && node.props.label === '基础运营统计');
+  assert.match(ui.text(), /数据与隐私说明/);
+  assert.match(ui.text(), /接收方 https:\/\/example\.test\/v1\/logs/);
+  assert.deepEqual(updates, []);
+  const basic = () => ui.find(node => node.type === 'switch' && node.props['aria-label'] === '基础运营统计');
   assert.equal(basic().props.checked, false);
-  await basic().props.onChange(true);
+  basic().props.onChange({ currentTarget: { checked: true } });
   await ui.settle();
   assert.deepEqual(updates, [['basic', true]]);
   assert.equal(basic().props.checked, true);
-  assert.equal(ui.find(node => node.type === 'switch' && node.props.label === '崩溃统计').props.checked, false);
+  assert.equal(ui.find(node => node.type === 'switch' && node.props['aria-label'] === '崩溃统计').props.checked, false);
   ui.dispose();
 });

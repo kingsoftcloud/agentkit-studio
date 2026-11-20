@@ -57,10 +57,10 @@ index 2dfd007809bc35a850b264be4685fd20534d7901..330eef3330527f73c5c6bce1238beaf1
          const record = 'record' in message ? parsePluginOperationRecord(message.record) : undefined
          if (record !== undefined && record.runId === this.runId) {
 diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
-index aa9471f6f71ba78d44546d2466141fdde16c06c3..da6f8f417168a4c9a26699ed162ecce9c4675bcd 100644
+index aa9471f6f71ba78d44546d2466141fdde16c06c3..5d8d2acf0028a690e54d7ba259b068310f73a156 100644
 --- a/apps/desktop/src/ipc.ts
 +++ b/apps/desktop/src/ipc.ts
-@@ -35,6 +35,11 @@ export const DESKTOP_IPC = {
+@@ -35,6 +35,10 @@ export const DESKTOP_IPC = {
    updatesStatus: 'dsh-desktop:updates-status',
    updatesOpen: 'dsh-desktop:updates-open',
    updatesPresentation: 'dsh-desktop:updates-presentation',
@@ -68,11 +68,10 @@ index aa9471f6f71ba78d44546d2466141fdde16c06c3..da6f8f417168a4c9a26699ed162ecce9
 +  studioTelemetrySet: 'dsh-desktop:studio-telemetry-set',
 +  studioTelemetryStop: 'dsh-desktop:studio-telemetry-stop',
 +  studioTelemetryPreview: 'dsh-desktop:studio-telemetry-preview',
-+  studioTelemetryNotice: 'dsh-desktop:studio-telemetry-notice',
    nativeThemeSet: 'dsh-desktop:native-theme-set',
    windowFullscreen: 'dsh-desktop:window-fullscreen',
    windowsAppearance: 'dsh-desktop:windows-appearance',
-@@ -80,6 +85,25 @@ export interface DesktopUpdatePresentation {
+@@ -80,6 +84,25 @@ export interface DesktopUpdatePresentation {
    readonly failure?: DesktopUpdateFailureKind
  }
  
@@ -98,7 +97,7 @@ index aa9471f6f71ba78d44546d2466141fdde16c06c3..da6f8f417168a4c9a26699ed162ecce9
  /** Product documents cannot supply update versions, package URLs, or installation authorization. */
  export interface DshDesktopProductApi {
    readonly fileActions: DesktopFileActions
-@@ -98,6 +122,13 @@ export interface DshDesktopProductApi {
+@@ -98,6 +121,12 @@ export interface DshDesktopProductApi {
      open(): Promise<void>
      subscribe(listener: (state: DesktopUpdatePresentation) => void): () => void
    }
@@ -107,20 +106,19 @@ index aa9471f6f71ba78d44546d2466141fdde16c06c3..da6f8f417168a4c9a26699ed162ecce9
 +    set(category: StudioTelemetryCategory, enabled: boolean): Promise<StudioTelemetryStatus | null>
 +    stop(clear: boolean): Promise<StudioTelemetryStatus | null>
 +    preview(mode?: 'queued' | 'example'): Promise<string>
-+    notice(): Promise<StudioTelemetryStatus | null>
 +  }
  }
  
  /** Scheme of Desktop-owned application documents. */
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece9686cdb729 100644
+index 22b8498defa791433fc98c56c7520d1cd5874e94..7f7c44edeb8479d226e40843940be4de65e579c1 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
 @@ -67,6 +67,7 @@ import { DesktopUpdateOverlays } from './update-overlay.ts'
  import { DesktopQuitConfirmation } from './quit-confirmation.ts'
  import { DesktopTray } from './tray.ts'
  import { DesktopBackgroundNotice } from './background-notice.ts'
-+import { openStudioTelemetry, showStudioTelemetryNotice, type StudioTelemetry } from './studio-telemetry.ts'
++import { openStudioTelemetry, type StudioTelemetry } from './studio-telemetry.ts'
  
  let focusPrimaryWindow = (): void => {}
  let stopForRecovery = async (): Promise<void> => { await stopOperationReports() }
@@ -201,7 +199,7 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
        try {
          const stillActive = await host.updateTasks('lock')
          if (stillActive && !active) throw new DesktopUpdatePreparationError('tasks-changed', locale.messages.updateTasksChanged)
-@@ -884,6 +909,29 @@ async function main(): Promise<void> {
+@@ -884,6 +909,24 @@ async function main(): Promise<void> {
      assertProductSender(event)
      return presentDesktopUpdate(updates.state)
    })
@@ -223,31 +221,13 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
 +    assertProductSender(event)
 +    return studioTelemetry?.preview(mode === 'example' ? 'example' : 'queued') ?? ''
 +  })
-+  ipcMain.handle(DESKTOP_IPC.studioTelemetryNotice, async (event) => {
-+    const window = assertProductSender(event)
-+    await privacyNoticeFor(window, true)
-+    return studioTelemetry?.status() ?? null
-+  })
    ipcMain.handle(DESKTOP_IPC.deviceInfo, (event) => {
      assertProductSender(event)
      return readDeviceInfo()
-@@ -1181,12 +1229,35 @@ async function main(): Promise<void> {
+@@ -1181,12 +1224,21 @@ async function main(): Promise<void> {
        window.hide()
      }
    }
-+  let privacyNotice: Promise<void> | undefined
-+  let privacyNoticeShown = false
-+  const privacyNoticeFor = async (window: BrowserWindow, reopen = false): Promise<void> => {
-+    const telemetry = studioTelemetry
-+    if (!telemetry || window.isDestroyed() || !window.isVisible() || !telemetry.status().noticePending) return
-+    if (!privacyNotice && (reopen || !privacyNoticeShown)) {
-+      privacyNoticeShown = true
-+      privacyNotice = showStudioTelemetryNotice(window, telemetry, locale.id)
-+        .catch(() => {}).finally(() => { privacyNotice = undefined })
-+    }
-+    await privacyNotice
-+    if (!window.isDestroyed() && window.isVisible() && !window.isMinimized()) telemetry.activity()
-+  }
 +  const openedWindow = (window: BrowserWindow): void => {
 +    const telemetry = studioTelemetry
 +    if (!telemetry || window.isDestroyed() || !window.isVisible() || window.isMinimized() || recovery.active || quitting) return
@@ -255,7 +235,6 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
 +    if (window === mainWindow && enteredWorkspace && backendReady) telemetry.finishUpdate('applied')
 +    if (!window.isFocused()) return
 +    telemetry.activity()
-+    void privacyNoticeFor(window)
 +  }
    const createMainWindow = (): BrowserWindow => {
      const window = createWindow(appPreload, false, true)
@@ -267,7 +246,7 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
      // Closing hides: the page and the Host keep running, and the next show resumes the same document.
      window.on('close', (event) => {
        if (quitting || shellInstallerOwnsQuit || sessionEnding) return
-@@ -1224,7 +1295,7 @@ async function main(): Promise<void> {
+@@ -1224,7 +1276,7 @@ async function main(): Promise<void> {
      window.webContents.on('render-process-gone', (_event, details) => {
        navigation = undefined
        if (!quitting && !window.isDestroyed() && details.reason !== 'clean-exit') {
@@ -276,7 +255,7 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
        }
      })
      return window
-@@ -1237,6 +1308,7 @@ async function main(): Promise<void> {
+@@ -1237,6 +1289,7 @@ async function main(): Promise<void> {
      if (activate) window.show()
      else window.showInactive()
      enteredWorkspace = true
@@ -284,7 +263,7 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
      if (welcomeWindow !== undefined) {
        welcomeWindow.close()
        window.webContents.send(DESKTOP_IPC.enterWorkspace)
-@@ -1294,6 +1366,10 @@ async function main(): Promise<void> {
+@@ -1294,6 +1347,10 @@ async function main(): Promise<void> {
          skip: enterWorkspace,
        })
        const window = welcomeWindow
@@ -295,7 +274,7 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
        window.once('closed', () => {
          void welcomeBackend?.account.state().then((state) => {
            if (state.attempt !== null && !enteredWorkspace) return welcomeBackend?.account.cancel(state.attempt.id)
-@@ -1371,7 +1447,10 @@ async function main(): Promise<void> {
+@@ -1371,7 +1428,10 @@ async function main(): Promise<void> {
      updateSchedule.dispose()
      updateDialog.dispose()
      mandatoryUI?.dispose()
@@ -308,10 +287,10 @@ index 22b8498defa791433fc98c56c7520d1cd5874e94..5911d0cf8d1bf09e96dfec04410ece96
          await operationJournal?.drain(500)
          throw error
 diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
-index 26266b4f1c8a497c3cc5c94d19a06a4b5ee3bf49..8068b33068b8fb2207b76d7651e191cbdf6da59a 100644
+index 26266b4f1c8a497c3cc5c94d19a06a4b5ee3bf49..989bf5e1e02d81bc2e5edc3218e4e2c8e230d27a 100644
 --- a/apps/desktop/src/preload-app.ts
 +++ b/apps/desktop/src/preload-app.ts
-@@ -33,6 +33,13 @@ function createProductApi(): DshDesktopProductApi {
+@@ -33,6 +33,12 @@ function createProductApi(): DshDesktopProductApi {
        }) },
      },
      deviceInfo: () => ipcRenderer.invoke(DESKTOP_IPC.deviceInfo) as Promise<string>,
@@ -320,22 +299,21 @@ index 26266b4f1c8a497c3cc5c94d19a06a4b5ee3bf49..8068b33068b8fb2207b76d7651e191cb
 +      set: (category, enabled) => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetrySet, category, enabled) as ReturnType<DshDesktopProductApi['telemetry']['set']>,
 +      stop: clear => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetryStop, clear) as ReturnType<DshDesktopProductApi['telemetry']['stop']>,
 +      preview: mode => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetryPreview, mode) as Promise<string>,
-+      notice: () => ipcRenderer.invoke(DESKTOP_IPC.studioTelemetryNotice) as ReturnType<DshDesktopProductApi['telemetry']['notice']>,
 +    },
      keyboard: {
        closeWindow: revision => ipcRenderer.invoke(DESKTOP_IPC.shortcutsCloseWindow, revision) as Promise<void>,
        subscribe: (listener) => {
 diff --git a/apps/desktop/src/studio-telemetry.ts b/apps/desktop/src/studio-telemetry.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..5e54d3cea8412d3d3fd7cedac459ac936de1ebbe
+index 0000000000000000000000000000000000000000..50cf000b8140809a27c7e835f9e8553f3f831f68
 --- /dev/null
 +++ b/apps/desktop/src/studio-telemetry.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,81 @@
 +import { randomUUID } from 'node:crypto'
 +import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 +import { join } from 'node:path'
 +import { pathToFileURL } from 'node:url'
-+import { app, dialog, type BrowserWindow } from 'electron'
++import { app } from 'electron'
 +import { desktopUpdateChannel } from './update-channel.ts'
 +import type { StudioTelemetryStatus } from './ipc.ts'
 +
@@ -356,7 +334,6 @@ index 0000000000000000000000000000000000000000..5e54d3cea8412d3d3fd7cedac459ac93
 +
 +export interface StudioTelemetry {
 +  status(): StudioTelemetryStatus
-+  applyNotice(choice: 'continue' | 'off'): Promise<StudioTelemetryStatus>
 +  setPreference(category: unknown, enabled: unknown): Promise<StudioTelemetryStatus>
 +  stopAll(options?: { clear?: boolean }): Promise<StudioTelemetryStatus>
 +  preview(mode: 'queued' | 'example'): string
@@ -412,36 +389,6 @@ index 0000000000000000000000000000000000000000..5e54d3cea8412d3d3fd7cedac459ac93
 +    console.warn('Studio telemetry is unavailable')
 +    return undefined
 +  }
-+}
-+
-+/** Returns without a decision if the user closes or postpones the notice. */
-+export async function showStudioTelemetryNotice(
-+  window: BrowserWindow, telemetry: StudioTelemetry, locale: string,
-+): Promise<void> {
-+  const state = telemetry.status()
-+  if (!state.noticePending || !state.endpoint || window.isDestroyed()) return
-+  const zh = locale.toLowerCase().startsWith('zh')
-+  const options = zh ? {
-+    message: '数据与隐私',
-+    detail: '基础统计用于了解安装环境的活跃、版本、启动和更新情况。崩溃统计和本地 Run 统计由你分别开启。遥测使用随机安装标识，包含类型、时长和计数。凭证、会话和完整日志保留在本机。接收方为 '
-+      + state.endpoint + (state.selfHosted ? '，由自建服务管理留存和删除。' : '，事件保留 90 天。')
-+      + '你可以在设置的「隐私与数据」中查看上报内容、关闭或清除本地数据，并按隐私说明请求删除已发送事件。',
-+    buttons: ['继续', '关闭基础统计并继续', '稍后'],
-+  } : {
-+    message: 'Data and privacy',
-+    detail: 'Basic statistics cover opening Studio, versions, startup and updates. Crash counts and local run statistics each have their own switch. Reports use a random installation ID and contain categories, durations and counts. Credentials, conversations and full logs stay local. Data is sent to '
-+      + state.endpoint + (state.selfHosted ? '. The self-hosted service manages retention and deletion.' : ' and kept for 90 days.')
-+      + ' In Settings you can inspect reports, turn collection off or clear local data, and follow the privacy notice to request deletion of sent data.',
-+    buttons: ['Continue', 'Turn off basic statistics and continue', 'Later'],
-+  }
-+  const detail = options.detail + (state.defaultBasic
-+    ? (zh ? '\n\n此版本默认开启基础统计。' : '\n\nBasic statistics are on by default for this distribution.')
-+    : (zh ? '\n\n此版本默认关闭基础统计，可在设置中开启。' : '\n\nBasic statistics are off by default. You can enable them in Settings.'))
-+  const { response } = await dialog.showMessageBox(window, {
-+    type: 'info', message: options.message, detail, buttons: options.buttons,
-+    defaultId: 0, cancelId: 2, noLink: true,
-+  })
-+  if (response === 0 || response === 1) await telemetry.applyNotice(response === 0 ? 'continue' : 'off')
 +}
 diff --git a/packages/boot/app-boot/src/profile-context.ts b/packages/boot/app-boot/src/profile-context.ts
 index 3325c5563978b310ab3ac25548e44fe55a22f9f2..cdab128414e4ca50b2b7e01fe21a1f18c5616a7b 100644

@@ -129,7 +129,7 @@ async function open(executable, profile, cert, version, baseline = false) {
       dialog.showMessageBox = (...args) => {
         if (!['Data and privacy', '数据与隐私'].includes(args.at(-1)?.message)) return original(...args);
         globalThis.telemetryNoticeShown = true;
-        return new Promise(resolveNotice => { globalThis.resolveTelemetryNotice = resolveNotice; });
+        return Promise.resolve({ response: 2, checkboxChecked: false });
       };
       return { packaged: app.isPackaged, version: app.getVersion(), userData: app.getPath('userData') };
     });
@@ -154,14 +154,6 @@ async function triggerForeground(app) {
   });
 }
 
-async function waitForNotice(app) {
-  await eventually(async () => {
-    if (await app.evaluate(() => globalThis.telemetryNoticeShown === true)) return true;
-    await triggerForeground(app);
-    return false;
-  }, 'The packaged desktop notice did not open');
-}
-
 async function workspace(app, baseline = false) {
   return await eventually(async () => {
     for (const page of app.windows()) {
@@ -171,6 +163,24 @@ async function workspace(app, baseline = false) {
       await page.evaluate(() => window.dshWelcome?.skip()).catch(() => {});
     }
   }, 'The installed workspace telemetry IPC is unavailable');
+}
+
+async function privacySettings(page) {
+  const later = page.getByRole('button', { name: /^(稍后设置|Set up later)$/ });
+  const launcher = page.locator('.agentkit-settings-launcher');
+  await later.or(launcher).first().waitFor({ state: 'visible', timeout: 90_000 });
+  if (await later.isVisible()) await later.click();
+  await launcher.click();
+  await page.getByRole('button', { name: 'AgentKit Studio', exact: true }).click();
+  const panel = page.locator('[data-studio-privacy]');
+  await panel.locator(':scope > summary').click();
+  await panel.getByText('数据与隐私说明', { exact: true }).waitFor({ state: 'visible' });
+  return panel;
+}
+
+async function assertNoPrivacyDialog(app) {
+  assert.equal(await app.evaluate(() => globalThis.telemetryNoticeShown === true), false,
+    'Opening the workspace or Privacy settings triggered a native dialog');
 }
 
 async function main() {
@@ -193,13 +203,19 @@ async function main() {
   try {
     const app = await open(executable, profile, receiver.cert, values.version);
     try {
-      await waitForNotice(app);
-      console.log('Reached the first-use privacy notice in the installed app');
+      const page = await workspace(app);
+      await triggerForeground(app);
+      const privacy = await privacySettings(page);
+      const basic = privacy.getByRole('switch', { name: '基础运营统计' });
+      assert.equal(await basic.isChecked(), false);
+      assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
       await wait(31_000);
+      await assertNoPrivacyDialog(app);
       assert.equal(receiver.requests.length, 0);
       await assert.rejects(access(outbox), { code: 'ENOENT' });
-      await app.evaluate(() => globalThis.resolveTelemetryNotice({ response: 0, checkboxChecked: false }));
-      const page = await workspace(app);
+      await basic.press('Space');
+      await eventually(() => basic.isChecked(), 'Basic statistics did not enable in settings');
+      await assertNoPrivacyDialog(app);
       assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, basicOnly);
       const initial = await page.evaluate(() => window.dshDesktop.telemetry.preview('example'));
       const sample = JSON.parse(initial).resourceLogs[0].scopeLogs[0].logRecords;
@@ -238,24 +254,12 @@ async function main() {
       assert.equal(status.noticePending, false);
       await wait(31_000);
       assert.equal(receiver.requests.length, requestsAfterOptOut);
+      await assertNoPrivacyDialog(restarted);
     } finally {
       await restarted.close();
     }
 
-    const declining = await open(executable, join(root, 'declined'), receiver.cert, values.version);
-    try {
-      await waitForNotice(declining);
-      await declining.evaluate(() => globalThis.resolveTelemetryNotice({ response: 1, checkboxChecked: false }));
-      const page = await workspace(declining);
-      const status = await page.evaluate(() => window.dshDesktop.telemetry.status());
-      assert.deepEqual(status.enabled, allOff);
-      assert.equal(status.installId, null);
-      await wait(31_000);
-      assert.equal(receiver.requests.length, requestsAfterOptOut);
-    } finally {
-      await declining.close();
-    }
-    console.log('Verified opt-out after restart and decline in a fresh profile');
+    console.log('Verified opt-out after restart and silent startup on a fresh profile');
 
     let upgradedFrom = null;
     if (values.baseline) {
@@ -282,12 +286,12 @@ async function main() {
       }
       const upgraded = await open(packagePaths(installed).executable, upgradeProfile, receiver.cert, values.version);
       try {
-        await waitForNotice(upgraded);
+        const page = await workspace(upgraded);
+        await triggerForeground(upgraded);
         await wait(31_000);
+        await assertNoPrivacyDialog(upgraded);
         assert.equal(receiver.requests.length, requestsAfterOptOut);
         assert.equal(await readFile(marker, 'utf8'), 'keep this installed profile');
-        await upgraded.evaluate(() => globalThis.resolveTelemetryNotice({ response: 1, checkboxChecked: false }));
-        const page = await workspace(upgraded);
         assert.deepEqual((await page.evaluate(() => window.dshDesktop.telemetry.status())).enabled, allOff);
         upgradedFrom = values['baseline-version'];
       } finally {
@@ -300,10 +304,10 @@ async function main() {
       appVersion: values.version,
       platform: process.platform,
       installedApp: true,
-      testInputs: 'Injected foreground and notice actions, loopback HTTPS, isolated profiles',
+      testInputs: 'Injected foreground, Privacy settings UI, loopback HTTPS, isolated profiles',
       credentialFree: true,
-      beforeNoticeRequests: 0,
-      declinedRequests: 0,
+      nativePrivacyDialogShown: false,
+      beforeOptInRequests: 0,
       retryKeptEventIds: true,
       acceptedRecords: receiver.requests[1].length,
       fixedSampleVerified: true,

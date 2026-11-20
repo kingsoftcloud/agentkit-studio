@@ -181,17 +181,14 @@ class DesktopTelemetry {
     if (!this.state.installId && telemetryCategories.some(key => this.enabled(key))) this.state.installId = randomUUID();
   }
 
-  async applyNotice(choice) {
-    if (!this.available || this.state.notice || !['continue', 'off'].includes(choice)) return this.status();
-    this.state.notice = true;
-    if (choice === 'off') this.state.choices.basic = false;
-    this.ensureId();
-    await this.save();
-    return this.status();
-  }
-
   async setPreference(category, enabled) {
-    if (!this.available || !this.state.notice || !telemetryCategories.includes(category) || typeof enabled !== 'boolean') return this.status();
+    if (!this.available || !telemetryCategories.includes(category) || typeof enabled !== 'boolean') return this.status();
+    if (!this.state.notice) {
+      if (!enabled) return this.status();
+      // A first opt-in applies only to the category the user enabled.
+      this.state.choices.basic = false;
+      this.state.notice = true;
+    }
     this.state.choices[category] = enabled;
     if (!enabled) this.discard([category]);
     this.ensureId();

@@ -37,19 +37,22 @@ export function createStudioSettingsSection({
     const switchRow = (key, label, detail) => h('div', { key, className: 'studio-privacy-row' },
       h('div', null, h('div', { className: 'agentkit-check-label' }, label),
         h('div', { className: 'agentkit-form-note' }, detail)),
-      h(Switch, { checked: state.enabled[key], label, disabled: busy,
-        onChange: enabled => void update(() => bridge.set(key, enabled)) }));
+      h(Switch, { checked: state.enabled[key], role: 'switch', 'aria-label': label, disabled: busy,
+        onChange: event => {
+          const { checked } = event.currentTarget;
+          void update(() => bridge.set(key, checked));
+        } }));
     const statusText = () => {
       if (error && state === undefined) return '读取失败';
       if (state === undefined) return '读取中…';
       if (!state) return '不可用';
       if (!state.endpoint) return '接收地址未配置';
       if (!state.available) return '已停用';
-      if (state.noticePending) return '待确认';
       const count = Object.values(state.enabled).filter(Boolean).length;
       return count ? `已开启 ${count} 项` : '未开启';
     };
     const diagnostics = state?.diagnostics;
+    const needsDesktopUpdate = state?.noticePending && typeof bridge.notice === 'function';
     return h('details', { 'data-studio-privacy': true, className: 'studio-settings-panel studio-privacy' },
       h('summary', { className: 'studio-privacy-summary' }, h('span', null, '隐私与数据'),
         h('span', { className: 'studio-privacy-state' }, statusText())),
@@ -57,18 +60,20 @@ export function createStudioSettingsSection({
         state === null ? h('p', { className: 'agentkit-form-note' }, '此版本无法使用遥测服务。') : null,
         state && !state.endpoint ? h('p', { className: 'agentkit-form-note' }, '当前安装包未配置接收地址。') : null,
         state?.endpoint && !state.available ? h('p', { className: 'agentkit-form-note' }, '当前桌面配置已停用上报。') : null,
-        state?.noticePending ? h('div', { className: 'studio-privacy-row' },
-          h('div', null, h('div', { className: 'agentkit-check-label' }, '使用统计'),
-            h('p', { className: 'agentkit-form-note' }, '查看数据用途、接收方和统计选项。')),
-          action('查看说明', () => void update(() => bridge.notice()))) : null,
-        state?.available && !state.noticePending ? [
+        state ? h('details', { className: 'studio-privacy-details', open: state.noticePending || undefined },
+          h('summary', { className: 'studio-privacy-summary' }, '数据与隐私说明'),
+          h('p', { className: 'agentkit-form-note' }, '首次使用时，以下统计均为关闭，可按需开启。上报使用随机安装标识，凭证、会话内容和完整日志保留在本机。'),
+          state.endpoint ? h('p', { className: 'agentkit-form-note' }, `接收方 ${state.endpoint}`) : null,
+          state.endpoint && !state.selfHosted ? h('p', { className: 'agentkit-form-note' },
+            '官方接收方保留事件 90 天。如需删除已上报的数据，可通过私密支持渠道提供「上报详情」中的安装标识。') : null) : null,
+        needsDesktopUpdate ? h('p', { className: 'agentkit-form-note' }, '请更新桌面应用后在这里更改统计设置。') : null,
+        state?.available && !needsDesktopUpdate ? [
           switchRow('basic', '基础运营统计', '打开次数、版本、启动和更新结果。'),
           switchRow('crash', '崩溃统计', '故障来源、阶段和错误类别。'),
           switchRow('run', '本地 Run 统计', '运行结果、时长和用量计数。'),
         ] : null,
         state ? h('details', { className: 'studio-privacy-details' },
           h('summary', { className: 'studio-privacy-summary' }, '上报详情'),
-          state.endpoint ? h('p', { className: 'agentkit-form-note' }, `接收方 ${state.endpoint}`) : null,
           state.installId ? h('p', { className: 'agentkit-form-note' }, `安装标识 ${state.installId}`) : null,
           diagnostics ? h('p', { className: 'agentkit-form-note' },
             `待发送 ${state.queued} · 发送失败 ${diagnostics.send_failed} · 队列丢弃 ${diagnostics.queue_drop} · 服务端拒收 ${diagnostics.rejected} · 存储错误 ${diagnostics.storage} · 发送器错误 ${diagnostics.export}`) : null,
