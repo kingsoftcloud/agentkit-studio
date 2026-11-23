@@ -48,6 +48,8 @@ async function onboard(){
  await expect(page.getByRole('button',{name:/^(智能体|Agents)$/})).toBeVisible({timeout:wait});
 }
 async function plugin(){
+ const visible=page.getByRole('region',{name:'Star Harness 管理'});
+ if(await visible.isVisible())return visible;
  const open=page.getByRole('button',{name:/^(插件|Plugins)$/}).first();
  await open.click({timeout:30000});
  const item=page.getByText('Star Harness',{exact:true}).first();
@@ -59,7 +61,12 @@ async function plugin(){
 async function install(panel,ver,action){
  await panel.getByRole('textbox',{name:'版本',exact:true}).fill(ver);
  await panel.getByRole('button',{name:action,exact:true}).click();
- await expect(panel).toContainText('已安装 '+ver,{timeout:215000});
+ await expect.poll(async()=> (await rpc('star-harness/status'))?.result?.value?.version,{timeout:215000}).toBe(ver);
+ if(!await panel.isVisible()){
+  await checkpoint('routing returned to the session after the upgrade; reopened the plugin page');
+  panel=await plugin();
+ }
+ await expect(panel).toContainText('已安装 '+ver,{timeout:45000});
  await page.screenshot({path:join(root,'plugin-'+ver+'.png')});
  await checkpoint('插件页 '+action+' '+ver);
 }
