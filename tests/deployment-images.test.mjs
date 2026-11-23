@@ -59,7 +59,7 @@ test('missing image metadata identifies the selected environment without changin
 
 test('invalid scopes, mutable image references and ambiguous releases are refused', () => {
   const cases = [
-    { environment: 'production' }, { region: 'cn-guangzhou-1' }, { releases: [release, release] }, { defaultReleaseId: 'missing' },
+    { releases: [release, release] }, { defaultReleaseId: 'missing' },
     { releases: [{ ...release, image: 'hub.kce.ksyun.com/studio/runtime:latest' }] },
     { releases: [{ ...release, image: `attacker.invalid/studio/runtime@sha256:${'a'.repeat(64)}` }] },
     { releases: [{ ...release, bundleFormat: 'old-python/v1' }] }, { releases: [{ ...release, runtimes: ['langgraph'] }] },
@@ -69,6 +69,17 @@ test('invalid scopes, mutable image references and ambiguous releases are refuse
   for (const invalid of [{ Product: 'openclaw' }, { ClientType: 'cli' }]) {
     assert.throws(() => parseStudioImageCatalog({ ...response(), ...invalid }, { runtime: 'harness' }), { code: 'DEPLOYMENT_CATALOG_INVALID' });
   }
+});
+
+test('a catalogue copied from another environment names the mismatched scope', () => {
+  // Scope mismatch errors retain the actual and expected values so the
+  // operator knows which catalogue field needs repair.
+  assert.throws(() => parseStudioImageCatalog(response({ environment: 'production' }), { runtime: 'harness' }),
+    error => error.code === 'SCOPE_ENVIRONMENT_MISMATCH' && /production/.test(error.message) && /pre-online/.test(error.message));
+  assert.throws(() => parseStudioImageCatalog(response({ region: 'cn-guangzhou-1' }), { runtime: 'harness' }),
+    error => error.code === 'SCOPE_REGION_MISMATCH' && /cn-guangzhou-1/.test(error.message) && /cn-beijing-6/.test(error.message));
+  // A genuinely malformed catalogue keeps the format error.
+  assert.throws(() => parseStudioImageCatalog(response({ format: 'agentkit.runtime-images/v0' }), { runtime: 'harness' }), { code: 'DEPLOYMENT_CATALOG_INVALID' });
 });
 
 test('disabled, incompatible and removed defaults never silently choose another release', () => {

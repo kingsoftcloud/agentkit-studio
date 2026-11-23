@@ -90,3 +90,9 @@ packages/agentkit-harness-ui/markdown/dist/
 
 # Archify CLI install target at the repository root.
 skills/
+
+# Local design mocks, design-system artifact-server state and scratch notes.
+# These are review artifacts, not product source.
+/card-mock/
+/designs/
+/.scratch/

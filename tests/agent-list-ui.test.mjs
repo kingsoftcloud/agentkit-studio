@@ -76,6 +76,14 @@ test('API-created ManagedRuntime cards expose separate management and deletion a
   assert.equal(nodes.some(node => node.type === 'button' && node.children.includes('管理 / 删除')), false);
 });
 
+test('cloud deployment rows keep their management action without an empty more menu', () => {
+  const nodes = render([{ metadata: { id: 'dep-row', name: '云端 Agent', local: false }, source: 'studio-deployment',
+    deployment: { id: 'dep_0123456789abcdef0123456789abcdef', state: 'RUNNING', available: true } }], '', { tab: 'cloud' });
+  assert.ok(nodes.some(node => node.type === 'button' && node.children.includes('管理部署')));
+  assert.equal(nodes.some(node => node.props['aria-label'] === '更多操作 dep-row'), false);
+  assert.equal(nodes.some(node => node.type === 'menuitem' && node.children.includes('编辑 Agent')), false);
+});
+
 test('the split create group preserves unavailable manual and conversation rules', () => {
   for (const status of ['loading', 'error']) {
     const nodes = render([], '', {}, [], true, status);
