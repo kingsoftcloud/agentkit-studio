@@ -77,7 +77,11 @@ async function plugin(){
 async function install(panel,ver,action){
  await panel.getByRole('textbox',{name:'版本',exact:true}).fill(ver);
  await panel.getByRole('button',{name:action,exact:true}).click();
- await expect.poll(async()=> (await rpc('star-harness/status'))?.result?.value?.version,{timeout:215000}).toBe(ver);
+ await expect.poll(async()=>{
+  try {return (await rpc('star-harness/status'))?.result?.value?.version;}
+  catch(e){if(/Execution context was destroyed|Cannot find context|navigat/i.test(String(e.message)))return;
+   throw e;}
+ },{timeout:215000,intervals:[500,1000,1500]}).toBe(ver);
  if(!await panel.isVisible()){
   await checkpoint('routing returned to the session after the upgrade; reopened the plugin page');
   panel=await plugin();
