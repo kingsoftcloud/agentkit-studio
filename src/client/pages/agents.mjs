@@ -145,6 +145,13 @@ export function createAgentPages({
           else onEdit?.(agent);
         };
         const stop = event => event?.stopPropagation?.();
+        // A cloud deployment Agent owns no secondary row action, so the trigger
+        // only renders when it would open a non-empty menu.
+        const rowMenuItems = [
+          !studioDeployment && !agent.managedRuntime ? h(MenuItemButton, { onSelect: () => { setRowMenu(''); openCard(); } }, '编辑 Agent') : null,
+          agent.managedRuntime ? h(MenuItemButton, { onSelect: async () => { setRowMenu(''); if (!await actions.confirm({ title: '删除托管 Runtime', detail: `确定删除云端托管 Runtime「${metadata.name || id}」吗？删除后云端实例和访问凭据都会失效。`, confirmLabel: '删除 Runtime', danger: true })) return; await onDeleteManaged?.(id); } }, '删除') : null,
+          agent?.metadata?.local ? h(MenuItemButton, { onSelect: async () => { setRowMenu(''); if (!await actions.confirm({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true })) return; void onDeleteLocal?.(agent?.metadata?.id); } }, '删除') : null,
+        ].filter(Boolean);
         return h('article', { key: id, 'data-studio-agent-card': id, tabIndex: 0, role: 'article', onClick: openCard, onKeyDown: event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); openCard(); } }, className: 'ak-agent-card studio-row' },
           h('div', { className: 'studio-tile', 'aria-hidden': 'true' }, '✦'),
           h('div', { className: 'studio-row-main' },
@@ -154,11 +161,8 @@ export function createAgentPages({
           h('div', { className: 'studio-row-actions', onClick: stop, onKeyDown: stop },
             Button({ size: 'sm', variant: 'ghost', className: 'ak-agent-chat', disabled: Boolean(bindingAgent) || agent.deployment?.available === false, onClick: event => { stop(event); void bindAgent(agent); } }, bindingAgent === (agent?.metadata?.id || agent?.id) ? '正在绑定…' : '对话'),
             Button({ size: 'sm', variant: 'outline', onClick: event => { stop(event); if (studioDeployment || agent.managedRuntime) openCard(); else focusOperations({ window, agentId: id, section: built ? 'deploy' : 'build', onNavigate }); } }, studioDeployment ? '管理部署' : agent.managedRuntime ? '管理' : built ? '部署' : '构建'),
-            h(Menu, { open: rowMenu === id, align: 'end', portal: true, compact: true, onClose: () => setRowMenu(''),
-              anchor: Button({ size: 'sm', variant: 'ghost', 'aria-label': `更多操作 ${id}`, 'aria-haspopup': 'menu', 'aria-expanded': rowMenu === id, onClick: () => setRowMenu(rowMenu === id ? '' : id) }, '⋯') },
-              !studioDeployment && !agent.managedRuntime ? h(MenuItemButton, { onSelect: () => { setRowMenu(''); openCard(); } }, '编辑 Agent') : null,
-              agent.managedRuntime ? h(MenuItemButton, { onSelect: async () => { setRowMenu(''); if (!await actions.confirm({ title: '删除托管 Runtime', detail: `确定删除云端托管 Runtime「${metadata.name || id}」吗？删除后云端实例和访问凭据都会失效。`, confirmLabel: '删除 Runtime', danger: true })) return; await onDeleteManaged?.(id); } }, '删除') : null,
-              agent?.metadata?.local ? h(MenuItemButton, { onSelect: async () => { setRowMenu(''); if (!await actions.confirm({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true })) return; void onDeleteLocal?.(agent?.metadata?.id); } }, '删除') : null)));
+            rowMenuItems.length ? h(Menu, { open: rowMenu === id, align: 'end', portal: true, compact: true, onClose: () => setRowMenu(''),
+              anchor: Button({ size: 'sm', variant: 'ghost', 'aria-label': `更多操作 ${id}`, 'aria-haspopup': 'menu', 'aria-expanded': rowMenu === id, onClick: () => setRowMenu(rowMenu === id ? '' : id) }, '⋯') }, rowMenuItems) : null));
       })),
       h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '.5px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-tertiary)', fontSize: '12px' } },
         h('span', null, `${total || filteredPageAgents.length} 个 Agent`),

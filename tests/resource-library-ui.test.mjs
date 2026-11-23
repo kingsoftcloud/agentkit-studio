@@ -6,11 +6,11 @@ import { createFormStyles } from '../src/client/components/form-styles.mjs';
 const h = (type, props, ...children) => ({ type, props, children });
 const nodes = tree => tree && typeof tree === 'object' ? [tree, ...tree.children.flat(Infinity).flatMap(nodes)] : [];
 const text = tree => tree && typeof tree === 'object' ? tree.children.flat(Infinity).map(text).join('') : String(tree ?? '');
-function render({ resources = [], kind = 'model', status = 'ready', error = '' } = {}) {
+function render({ resources = [], platformCatalog = null, kind = 'model', status = 'ready', error = '' } = {}) {
   let cursor = 0;
   const changes = [];
   const effects = [];
-  const values = { 0: kind, 1: 'installed', 4: resources, 10: resources.length, 13: status, 15: error };
+  const values = { 0: kind, 1: 'installed', 4: resources, 5: platformCatalog, 10: resources.length, 13: status, 15: error };
   const React = { createElement: h, Fragment: 'fragment', useEffect: callback => effects.push(callback), useRef: () => ({ current: 0 }), useState: initial => {
     const index = cursor++;
     return [Object.hasOwn(values, index) ? values[index] : typeof initial === 'function' ? initial() : initial, value => changes.push([index, value])];
@@ -43,7 +43,8 @@ test('resource rows consolidate metadata, keep status detail and dispatch viewin
   assert.equal(text(row).includes(row.props.title), false);
   assert.equal(all.find(node => node.props?.['data-studio-resource-grid']).props.style.flexDirection, 'column');
   assert.equal(text(tree).includes('Host 已连接'), false);
-  all.find(node => node.type === 'button' && text(node) === '查看').props.onClick();
+  assert.deepEqual(nodes(row).filter(node => node.type === 'MenuItemButton').map(text), ['查看详情', '刷新目录']);
+  nodes(row).find(node => node.type === 'MenuItemButton' && text(node) === '查看详情').props.onSelect();
   assert.deepEqual(changes.at(-1), [23, resource]);
   const search = all.find(node => node.props?.['aria-label'] === '搜索资源');
   assert.equal(search.props.style.height, '32px');
@@ -74,6 +75,35 @@ test('MCP rows retain every local action and a visible error status', () => {
   assert.equal(fix.props.className, 'af-btn');
   assert.deepEqual(nodes(row).filter(node => node.type === 'MenuItemButton').map(text), ['重新探测', '查看工具', '移除配置']);
   assert.equal(nodes(row).find(node => node.type === 'Menu').props.align, 'end');
+});
+
+test('platform catalog rows keep viewing without an empty more menu', () => {
+  const items = [
+    { resourceId: 'kb-one', displayName: '知识库一', kind: 'knowledge-base', status: 'available' },
+    { resourceId: 'memory-one', displayName: '记忆库一', kind: 'memory-instance', status: 'available' },
+    { resourceId: 'space-one', displayName: 'Skill Space 一', kind: 'skill-space', status: 'available' },
+  ];
+  for (const kind of ['knowledge-base', 'memory-instance', 'skill-space']) {
+    const { all, changes } = render({ kind, platformCatalog: { connectionRef: 'cloud-one', items } });
+    const row = all.find(node => node.props?.['data-studio-resource-card']);
+    assert.ok(row, `${kind} renders a row`);
+    assert.deepEqual(nodes(row).filter(node => node.type === 'button').map(text), []);
+    assert.deepEqual(nodes(row).filter(node => node.type === 'MenuItemButton').map(text), ['查看详情', '刷新目录']);
+    const detail = nodes(row).find(node => node.type === 'MenuItemButton' && text(node) === '查看详情');
+    detail.props.onSelect();
+    assert.deepEqual(changes.at(-1), [23, items[0]]);
+  }
+});
+
+test('cloud Skill Space rows drop the empty more menu while local imports keep theirs', () => {
+  const cloud = render({ kind: 'skill', resources: [{ resourceId: 'space-one', displayName: '云端 Skill', source: 'agentengine-server', status: 'available' }] });
+  const cloudRow = cloud.all.find(node => node.props?.['data-studio-resource-card']);
+  assert.deepEqual(nodes(cloudRow).filter(node => node.type === 'button').map(text), []);
+  assert.deepEqual(nodes(cloudRow).filter(node => node.type === 'MenuItemButton').map(text), ['查看详情', '刷新目录']);
+
+  const local = render({ kind: 'skill', resources: [{ resourceId: 'local-one', displayName: '本地 Skill', source: 'local-import', status: 'ready' }] });
+  const localRow = local.all.find(node => node.props?.['data-studio-resource-card']);
+  assert.deepEqual(nodes(localRow).filter(node => node.type === 'MenuItemButton').map(text), ['查看文件', '移除本地 Skill']);
 });
 
 test('empty and unavailable catalogs preserve their existing recovery surfaces', () => {
