@@ -14,6 +14,7 @@ if (process.platform !== 'win32') throw new Error('Native Windows updater qualif
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_OS !== 'Windows') throw new Error('Native default-profile update qualification requires a disposable Windows Actions Runner');
 const { values } = parseArgs({ options: { ...Object.fromEntries(['baseline', 'version', 'output'].map(key=>[key,{type:'string'}])), 'allow-full-fallback':{type:'boolean',default:false} } });
 const executablePath = resolve(values.baseline), targetVersion=values.version;
+const harnessVersion = '0.0.29';
 const publicInstaller=await fetch(`https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/${encodeURIComponent(targetVersion)}/AgentKit-Studio-win-x64.exe`,{method:'HEAD',signal:AbortSignal.timeout(60000)});
 const fullBytes=Number(publicInstaller.headers.get('content-length'));
 if (!publicInstaller.ok || !Number.isSafeInteger(fullBytes) || fullBytes<=0) throw new Error('Public target installer size is unavailable');
@@ -76,7 +77,14 @@ try {
  await composer.press('Enter');
  await expect(page.locator('body')).toContainText('Windows upgrade marker saved.',{timeout:120000});
  await page.screenshot({path:join(evidence,'windows-before-update.png'),fullPage:true});
- await page.evaluate(()=>{window.__studioUpdatePromptSettled=false;void window.dshDesktop.updates.open().finally(()=>{window.__studioUpdatePromptSettled=true;});});
+ await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
+ await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
+ const settings=page.locator('[data-studio-settings]');
+ const checkUpdate=settings.getByRole('button',{name:'检查更新',exact:true});
+ await expect(checkUpdate).toBeEnabled({timeout:30000});
+ await page.screenshot({path:join(evidence,'windows-check-for-updates.png'),fullPage:true});
+ await checkUpdate.click();
+ console.log('Clicked 检查更新 in installed Studio '+before);
  let readyOpened=false;
  const deadline=Date.now()+900000;
  while(Date.now()<deadline) {
@@ -96,9 +104,11 @@ try {
   if(confirming) break;
   // Download completion updates the button to Ready; the native UI requires
   // another open action to display installation confirmation.
-  const native=await page.evaluate(async()=>({state:await window.dshDesktop.updates.status(),settled:window.__studioUpdatePromptSettled}));
-  if(native.state.phase==='ready' && native.settled && !readyOpened) {
-   readyOpened=true; await page.evaluate(()=>{void window.dshDesktop.updates.open();});
+  const native=await page.evaluate(()=>window.dshDesktop.updates.status());
+  const install=settings.getByRole('button',{name:'安装 '+targetVersion,exact:true});
+  if(native.phase==='ready' && !readyOpened && await install.isVisible()) {
+   await install.click({timeout:10000});
+   readyOpened=true;
   }
   await new Promise(done=>setTimeout(done,500));
  }
@@ -112,7 +122,15 @@ try {
  if(await readFile(join(home,'upgrade-retention-marker.txt'),'utf8')!=='retained across native Windows update\n') throw new Error('Shared DSH data was not retained');
  const states=(await Promise.all((await readdir(journals)).filter(name=>name.endsWith('.jsonl')).map(async name=>(await readFile(join(journals,name),'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line))))).flat().filter(state=>state.pid===baselinePid);
  const downloadEvidence=windowsDownloadEvidence({log:updaterLog,states,fullBytes});
- await writeFile(join(evidence,'windows-online-update.json'),JSON.stringify({downloadEvidence,baselineVersion:before,targetVersion,baselinePid,launcherPid,realPublicFeed:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name},null,2));
+ const updateReceipt={downloadEvidence,baselineVersion:before,targetVersion,baselinePid,launcherPid,realPublicFeed:true,clickedCheckForUpdates:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name};
+ const receiptPath=join(evidence,'windows-online-update.json');
+ await writeFile(receiptPath,JSON.stringify(updateReceipt,null,2));
+ console.log('Automatic restart confirmed at '+targetVersion);
+ const harnessVerifier=fileURLToPath(new URL('./verify-desktop-harness-release.mjs',import.meta.url));
+ const {stdout:harnessLog}=await promisify(execFile)(process.execPath,[harnessVerifier,executablePath,harnessVersion],{env:environment,timeout:270000});
+ if(!harnessLog.includes('validated the signed Star Harness '+harnessVersion+' release')) throw new Error('Upgraded Windows App did not verify and start the expected Harness');
+ console.log(harnessLog.trim());
+ await writeFile(receiptPath,JSON.stringify({...updateReceipt,harness:{version:harnessVersion,signedReleaseVerified:true,engineStarted:true}},null,2));
  if(!values['allow-full-fallback'] && downloadEvidence.kind!=='native-differential') throw new Error('Real differential qualification failed: '+downloadEvidence.kind);
 } catch(error) {
  await page?.screenshot({path:join(evidence,'windows-update-failure.png'),fullPage:true}).catch(()=>{});
