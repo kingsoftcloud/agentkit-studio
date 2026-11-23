@@ -77,11 +77,13 @@ try {
  await page.getByRole('button',{name:/^(设置|Settings)$/}).click();
  await page.getByRole('button',{name:'AgentKit Studio',exact:true}).click();
  const settings=page.locator('[data-studio-settings]');
- const checkUpdate=settings.getByRole('button',{name:'检查更新',exact:true});
+ const checkUpdate=settings.getByRole('button',{name:'检查更新',exact:true})
+  .or(settings.getByRole('button',{name:'发现 '+targetVersion,exact:true}));
  await expect(checkUpdate).toBeEnabled({timeout:30000});
+ const updateActionLabel=(await checkUpdate.innerText()).trim();
  await page.screenshot({path:join(evidence,'windows-check-for-updates.png'),fullPage:true});
  await checkUpdate.click();
- console.log('Clicked 检查更新 in installed Studio '+before);
+ console.log('Clicked the update control ('+updateActionLabel+') in installed Studio '+before);
  let readyOpened=false;
  const deadline=Date.now()+900000;
  while(Date.now()<deadline) {
@@ -119,7 +121,7 @@ try {
  if(await readFile(join(home,'upgrade-retention-marker.txt'),'utf8')!=='retained across native Windows update\n') throw new Error('Shared DSH data was not retained');
  const states=(await Promise.all((await readdir(journals)).filter(name=>name.endsWith('.jsonl')).map(async name=>(await readFile(join(journals,name),'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line))))).flat().filter(state=>state.pid===baselinePid);
  const downloadEvidence=windowsDownloadEvidence({log:updaterLog,states,fullBytes});
- const updateReceipt={downloadEvidence,baselineVersion:before,targetVersion,baselinePid,launcherPid,realPublicFeed:true,clickedCheckForUpdates:true,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name};
+ const updateReceipt={downloadEvidence,baselineVersion:before,targetVersion,baselinePid,launcherPid,realPublicFeed:true,clickedCheckForUpdates:true,updateActionLabel,nativeDownload:true,nativeInstallConfirmed:true,automaticRestart:true,sharedDataRetained:true,conversationVisibleAfterRestart:true,updatedIdentity:installed.name};
  const receiptPath=join(evidence,'windows-online-update.json');
  await writeFile(receiptPath,JSON.stringify(updateReceipt,null,2));
  console.log('Automatic restart confirmed at '+targetVersion);
