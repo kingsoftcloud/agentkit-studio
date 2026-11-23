@@ -767,6 +767,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
                     { runId: chunk.runId, requestId: chunk.requestId, tools: chunk.tools }, { ignorable: true });
                 } else {
                   toolAgent?.session?.append?.(NATIVE_ENGINE_EVENT, { runId: chunk.runId, view: chunk.view ?? null, event: chunk.event,
+                    ...(chunk.contextWindow !== undefined ? { contextWindow: chunk.contextWindow } : {}),
                     ...(Number.isSafeInteger(chunk.settledThinkingBlock) && chunk.settledThinkingBlock >= 0
                       ? { settledThinkingBlock: chunk.settledThinkingBlock } : {}) }, { ignorable: true });
                 }
