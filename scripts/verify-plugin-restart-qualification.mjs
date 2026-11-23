@@ -106,8 +106,13 @@ async function checked(method,payload){
 async function createHarnessSession(){
  const address=await realpath(workspace);
  await checked('star-harness/bind',{workspace:address,profileId:'default'});
+ const choices=(await checked('star-harness/status',{})).workspaceChoices;
+ const standard=choices?.find(row=>/default workspace|默认工作区/i.test(row.title??''));
+ if(standard&&standard.path!==address)await checked('star-harness/bind',{workspace:standard.path,profileId:'default'});
  const status=await checked('star-harness/enable',{enabled:true});
  assert.equal(status.enabled,true);assert.equal(status.canCreate,true);
+ proof.workspaceModelBindings=status.workspaces.map(w=>({model:w.model,profileId:w.profileId,missing:w.missing}));
+ console.log('workspace models',JSON.stringify(proof.workspaceModelBindings));
  const workItem=page.getByRole('treeitem').filter({has:page.getByText('work',{exact:true})}).first();
  if(await workItem.isVisible()){
    await workItem.hover();
@@ -168,10 +173,20 @@ try{
  await checkpoint('cold-started Studio with the configured model before creating the baseline session');
  const panel=await plugin();
  await install(panel,'0.0.29','安装');
- await createHarnessSession();
- await send('RESTART_STEP_ONE','RESTART_ACK_ONE');
- await page.screenshot({path:join(root,'first-run.png')});
- await checkpoint('0.0.29 served the first turn through Star Harness');
+ let baselineOk=false;
+ try{
+  await createHarnessSession();
+  await send('RESTART_STEP_ONE','RESTART_ACK_ONE');
+  await page.screenshot({path:join(root,'first-run.png')});
+  await checkpoint('0.0.29 served the first turn through Star Harness');
+  baselineOk=true;
+ }catch(e){
+  await page.screenshot({path:join(root,'baseline-binding-failure.png')}).catch(()=>{});
+  const visible=(await page.locator('body').innerText().catch(()=>'' )).split('Agent 绑定失败').at(-1).slice(0,250);
+  await checkpoint('baseline Harness turn was blocked: '+visible);
+  const dismiss=page.getByRole('button',{name:/^(知道了|OK)$/}).last();
+  if(await dismiss.isVisible())await dismiss.click();
+ }
  const upgrade=await plugin();
  await install(upgrade,'0.0.30','升级');
  const pid=proof.app.pid;
@@ -181,6 +196,7 @@ try{
  await expect(restored).toContainText('已安装 0.0.30',{timeout:wait});
  await page.screenshot({path:join(root,'plugin-after-restart.png')});
  await checkpoint('fresh packaged process shows installed 0.0.30');
+ if(!baselineOk)throw Error('Upgrade persisted after restart; prior Harness turn was blocked before an original session could be continued.');
  await page.getByRole('treeitem').filter({hasText:/RESTART_STEP_ONE/i}).last().click({timeout:30000});
  await expect(page.getByText('RESTART_ACK_ONE',{exact:true}).last()).toBeVisible({timeout:30000});
  await send('RESTART_STEP_TWO','RESTART_ACK_TWO');
