@@ -104,6 +104,12 @@ async function createHarnessSession(){
  await checked('star-harness/bind',{workspace:address,profileId:'default'});
  const status=await checked('star-harness/enable',{enabled:true});
  assert.equal(status.enabled,true);assert.equal(status.canCreate,true);
+ const workItem=page.getByRole('treeitem').filter({has:page.getByText('work',{exact:true})}).first();
+ if(await workItem.isVisible()){
+   await workItem.hover();
+   const newWorkSession=workItem.getByRole('button',{name:/New session in|中新建会话/}).first();
+   if(await newWorkSession.isVisible())await newWorkSession.click();
+ }
  await page.getByRole('button',{name:/^(智能体|Agents)$/}).first().click();
  const local=page.getByRole('button',{name:'我的智能体',exact:true});
  if(await local.isVisible())await local.click();
@@ -153,6 +159,9 @@ async function send(marker,ack){
 try{
  await boot();assert.equal(proof.app.isPackaged,true);await checkpoint('started signed Electron package');
  await onboard();await checkpoint('configured isolated fixture model');
+ const configurationPid=proof.app.pid;
+ await shutdown();await boot();assert.notEqual(proof.app.pid,configurationPid);
+ await checkpoint('cold-started Studio with the configured model before creating the baseline session');
  const panel=await plugin();
  await install(panel,'0.0.29','安装');
  await createHarnessSession();
