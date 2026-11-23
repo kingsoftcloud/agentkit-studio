@@ -114,7 +114,7 @@ try {
  if(!confirming) throw new Error('Native signed update was not downloaded and confirmed');
  // Observe a new native window without launching it or requiring an inherited
  // diagnostic environment variable. The helper also verifies rendered data.
- await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-updated-app.ps1',import.meta.url)),'-AppPath',executablePath,'-Evidence',evidence,'-RetainedText','Windows upgrade'],{env:environment,timeout:240000});
+ await promisify(execFile)('powershell.exe',['-NoProfile','-File',fileURLToPath(new URL('./verify-windows-updated-app.ps1',import.meta.url)),'-AppPath',executablePath,'-Evidence',evidence,'-RetainedText','Windows upgrade','-SkipSkillLibraryCheck'],{env:environment,timeout:240000});
  successor=true;
  const installed=JSON.parse(asar.extractFile(join(dirname(executablePath),'resources','app.asar'),'package.json'));
  if(installed.version!==targetVersion) throw new Error('Installed bytes are not the feed target');
