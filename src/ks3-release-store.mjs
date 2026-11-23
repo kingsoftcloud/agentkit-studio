@@ -121,8 +121,11 @@ export async function uploadKs3ReleaseArtifact({ origin, bucket, accessKey, secr
     return { objectKey, bytes: digest.size, md5: digest.md5, sha512: digest.sha512, alreadyPresent: true };
   }
   if (digest.size >= 32 * 1024 * 1024) {
+    const windowsInstaller = objectKey.endsWith('-win-x64.exe');
     const multipart = await uploadKs3Multipart({ url, bucket, accessKey, secretKey, objectKey, path,
-      size: digest.size, contentType: required(contentType, 'KS3 release content type'), fetchImpl, now, onProgress });
+      size: digest.size, contentType: required(contentType, 'KS3 release content type'), fetchImpl, now, onProgress,
+      partSize: windowsInstaller ? 8 * 1024 * 1024 : undefined,
+      timeoutMs: windowsInstaller ? Math.min(timeoutMs, 180_000) : undefined });
     return { objectKey, bytes: digest.size, md5: digest.md5, ...multipart };
   }
   const headers = {

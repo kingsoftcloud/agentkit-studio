@@ -18,7 +18,7 @@ export async function uploadKs3Multipart({ url, bucket, accessKey, secretKey, ob
     const ordered = Object.entries(query).sort(([a], [b]) => a.localeCompare(b));
     for (const [key, value] of ordered) target.searchParams.set(key, value);
     const resource = `/${bucket}/${objectKey}?${ordered.map(([key, value]) => value ? `${key}=${value}` : key).join('&')}`;
-    const headers = { Date: now().toUTCString(), ...extra };
+    const headers = { ...extra };
     if (type) headers['Content-Type'] = type;
     if (body) {
       headers['Content-Length'] = String(body.length);
@@ -26,15 +26,18 @@ export async function uploadKs3Multipart({ url, bucket, accessKey, secretKey, ob
     }
     const canonicalHeaders = Object.keys(headers).filter(key => key.startsWith('x-kss-')).sort()
       .map(key => `${key}:${headers[key]}\n`).join('');
-    const canonical = `${method}\n${headers['Content-MD5'] || ''}\n${type}\n${headers.Date}\n${canonicalHeaders}${resource}`;
-    headers.Authorization = `KSS ${accessKey}:${createHmac('sha1', secretKey).update(canonical).digest('base64')}`;
     let error;
     for (let attempt = 0; attempt <= retries; attempt++) {
+      const date = now().toUTCString();
+      const canonical = `${method}\n${headers['Content-MD5'] || ''}\n${type}\n${date}\n${canonicalHeaders}${resource}`;
+      const authorization = `KSS ${accessKey}:${createHmac('sha1', secretKey).update(canonical).digest('base64')}`;
       try {
-        const response = await fetchImpl(target, { method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+        const response = await fetchImpl(target, { method, headers: { ...headers, Date: date, Authorization: authorization }, body,
+          redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
         const text = await response.text();
         if (!response.ok || /<Error[>\s]/u.test(text)) {
-          error = new Error(`KS3 multipart ${method} failed: ${response.status} ${objectKey}`);
+          const providerCode = text.match(/<Code>([A-Za-z][A-Za-z0-9._-]{0,49})<\/Code>/u)?.[1];
+          error = new Error(`KS3 multipart ${method} failed: ${response.status} ${objectKey}${providerCode ? ` (${providerCode})` : ''}`);
           error.retryable = response.status === 429 || response.status >= 500;
         } else {
           return { response, text };

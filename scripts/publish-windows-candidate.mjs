@@ -58,7 +58,8 @@ export async function publishWindowsCandidate({ candidate, proof, origin, source
     if (!identical && (previous === 'absent' || current.version !== previous)) throw Error('Previous feed changed');
   }
   const credentials = resolveKs3OriginCredentials(environment, origin);
-  const send = (objectKey, path, contentType) => upload({ ...credentials, origin, objectKey, path, contentType });
+  const send = (objectKey, path, contentType) => upload({ ...credentials, origin, objectKey, path, contentType,
+    onProgress: ({ completedParts, totalParts }) => console.log(`KS3 upload ${objectKey}: ${completedParts}/${totalParts} parts`) });
   await send(plan.assets.exe, installer, 'application/vnd.microsoft.portable-executable');
   await send(plan.assets.blockmap, blockmap, 'application/octet-stream');
   const head = await request(plan.assets.exe, { method: 'HEAD' });

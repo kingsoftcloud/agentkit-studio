@@ -48,16 +48,25 @@ test('multipart verifies part bytes and signatures, then completes in numeric or
   assert.equal(progress.at(-1).completedParts, 3);
 });
 
-test('transient part failure retries the same bytes without a duplicate completion', async t => {
+test('transient part failure signs each attempt with a fresh date and keeps the same bytes', async t => {
   const { options } = await fixture(t, 19);
+  const attemptsHeaders = [];
   let attempts = 0, completions = 0;
-  await uploadKs3Multipart({ ...options, fetchImpl: async (url, init) => {
+  let now = new Date('2026-10-13T00:00:00Z').getTime();
+  await uploadKs3Multipart({ ...options, now: () => new Date(now), fetchImpl: async (url, init) => {
     if (url.searchParams.has('uploads')) return response('<UploadId>id</UploadId>');
-    if (init.method === 'PUT') return ++attempts === 1 ? response('', 503) : response('', 200, { etag: 'part' });
+    if (init.method === 'PUT') {
+      attemptsHeaders.push(init.headers);
+      now += 16 * 60 * 1000;
+      return ++attempts === 1 ? response('', 503) : response('', 200, { etag: 'part' });
+    }
     completions++;
     return response('<CompleteMultipartUploadResult></CompleteMultipartUploadResult>');
   } });
   assert.equal(attempts, 2);
+  assert.notEqual(attemptsHeaders[0].Date, attemptsHeaders[1].Date);
+  assert.notEqual(attemptsHeaders[0].Authorization, attemptsHeaders[1].Authorization);
+  assert.equal(attemptsHeaders[0]['Content-MD5'], attemptsHeaders[1]['Content-MD5']);
   assert.equal(completions, 1);
 });
 
