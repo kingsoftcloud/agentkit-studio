@@ -33,7 +33,6 @@ export async function apply(ctx) {
     name: '__AGENTKIT_STUDIO__',
     value: {
       ...versions,
-      starHarnessUI: ctx.get('studioStarHarnessClient')?.descriptor ?? null,
       // Cordis exposes this service only after the providing plugin is active.
       // Resolve it when the Host collects the index, not during apply().
       hostCompatibility: ctx.get('studioHostCompatibility').inspect(),

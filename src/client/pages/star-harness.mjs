@@ -42,7 +42,7 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
         setMessage(success);
         if (changed) {
           window.dispatchEvent(new window.Event(STAR_HARNESS_CHANGED));
-          refreshStarHarnessUI(window, next.clientUI, ui.harnessUIError);
+          refreshStarHarnessUI(window, ui.harnessUIDescriptor, next.clientUI, ui.harnessUIError);
         }
       } catch (reason) {
         setError(reason?.message || 'Star Harness 操作失败。');
