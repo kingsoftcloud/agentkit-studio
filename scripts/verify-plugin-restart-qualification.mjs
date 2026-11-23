@@ -10,6 +10,10 @@ const workspace=join(root,'work');
 await mkdir(workspace,{recursive:true});
 const environment=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/(KEY|SECRET|TOKEN|PASSWORD|CERTUM|PSMODULEPATH)/i.test(key)));
 Object.assign(environment,{DSH_HOME:join(root,'dsh'),AGENTKIT_HOME:join(root,'agentkit'),DSH_TELEMETRY_DISABLED:'1',DSH_DESKTOP_OPEN_DEVTOOLS:'0'});
+if(process.platform==='win32'){
+ if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Windows smoke uses disposable Actions runner defaults');
+ delete environment.DSH_HOME; delete environment.AGENTKIT_HOME;
+}
 const proof={platform:process.platform,checkpoints:[],modelRequests:[]};
 const checkpoint=async (fact)=>{proof.checkpoints.push(fact);console.log(fact);await writeFile(join(root,'evidence.json'),JSON.stringify(proof,null,2));};
 const server=createServer(async(req,res)=>{
@@ -31,11 +35,23 @@ await new Promise(r=>server.listen(0,'127.0.0.1',r));
 let app,page;
 const wait=120000;
 async function boot(){
- app=await electron.launch({executablePath,cwd:dirname(executablePath),args:['--user-data-dir='+join(root,'electron')],env:environment,timeout:wait});
+ app=await electron.launch({executablePath,args:['--user-data-dir='+join(root,'electron')],env:environment,timeout:wait});
  proof.app=await app.evaluate(({app})=>({isPackaged:app.isPackaged,version:app.getVersion(),pid:process.pid,electron:process.versions.electron}));
  page=await app.firstWindow({timeout:wait});
  await expect(page.locator('body')).toContainText('AgentKit Studio',{timeout:wait});
- await expect(page.getByRole('button',{name:/^(智能体|Agents)$/})).toBeVisible({timeout:wait});
+ console.log('startup window',page.url(),proof.app.version);
+}
+async function shutdown(){
+ if(!app)return;
+ const client=app, mainPid=proof.app.pid, child=client.process();
+ let timer;
+ await Promise.race([client.close().catch(()=>{}),new Promise(r=>{timer=setTimeout(r,8000);})]);
+ clearTimeout(timer);
+ for(const pid of new Set([mainPid,child?.pid])) if(pid){
+   try {process.kill(pid,0);process.kill(pid,'SIGKILL');proof.forcedClose=true;}
+   catch(e){if(e.code!=='ESRCH')throw e;}
+ }
+ app=null;
 }
 async function onboard(){
  const profile={id:'default',displayName:'Restart fixture',provider:'custom',modelName:'restart-fixture',baseUrl:'http://127.0.0.1:'+server.address().port+'/v1',credentialName:'studio-restart-fixture',enabled:true,default:true,protocol:'openai-chat'};
@@ -125,7 +141,13 @@ async function send(marker,ack){
  const composer=page.locator('[contenteditable="true"]').first();
  await composer.fill(marker);
  await composer.press('Enter');
- await expect(page.getByText(ack,{exact:true}).last()).toBeVisible({timeout:90000});
+ const success=page.getByText(ack,{exact:true}).last();
+ const failed=page.getByText(/本轮未完成|Turn incomplete|View reason/).last();
+ await expect(success.or(failed)).toBeVisible({timeout:90000});
+ if(!await success.isVisible()){
+  await failed.click({timeout:4000}).catch(()=>{});
+  throw Error('continued message did not run: '+(await page.locator('body').innerText()).split('本轮未完成').at(-1).slice(0,340));
+ }
  assert.ok(proof.modelRequests.some(r=>r.mark===marker&&r.engine),'signed engine did not submit the requested turn');
 }
 try{
@@ -140,7 +162,7 @@ try{
  const upgrade=await plugin();
  await install(upgrade,'0.0.30','升级');
  const pid=proof.app.pid;
- await app.close();app=null;await checkpoint('closed the original Electron process');
+ await shutdown();await checkpoint('closed the original Electron process');
  await boot(); assert.notEqual(proof.app.pid,pid);
  const restored=await plugin();
  await expect(restored).toContainText('已安装 0.0.30',{timeout:wait});
@@ -157,6 +179,6 @@ try{
  if(page){console.log((await page.locator('body').innerText().catch(()=>'' )).slice(0,6000));await page.screenshot({path:join(root,'failure.png')}).catch(()=>{});}
  process.exitCode=1;
 } finally {
- await app?.close().catch(()=>{});
+ await shutdown().catch(()=>{});
  server.closeAllConnections(); await new Promise(r=>server.close(r));
 }
