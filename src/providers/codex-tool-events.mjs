@@ -14,7 +14,7 @@ export const CODEX_TOOL_EVENT = 'agentkit/codex-tool';
 // its output and the turn stalls on the missing result.
 const CODEX_COMMAND_TOOLS = new Set(['exec_command', 'write_stdin']);
 
-export function createCodexCommandFallback() {
+export function createCodexCommandFallback(runtime = 'codex') {
   const calls = new Map(), native = new Map();
   return {
     observeRaw(item) {
@@ -48,7 +48,7 @@ export function createCodexCommandFallback() {
         const known = exitCode !== null || rejected || sessionId !== null;
         const failed = rejected || (sessionId === null && (exitCode === null || exitCode !== 0));
         const status = sessionId !== null ? 'running' : known ? (failed ? 'failed' : 'completed') : 'unknown';
-        const tool = { type: 'tool', id, name: call.name === 'write_stdin' ? 'codex/write_stdin' : 'codex/command', arguments: call.arguments ?? {} };
+        const tool = { type: 'tool', id, name: call.name === 'write_stdin' ? `${runtime}/write_stdin` : `${runtime}/command`, arguments: call.arguments ?? {} };
         if (!phase) yield { ...tool, phase: 'started' };
         yield { ...tool, phase: failed ? 'failed' : 'completed', result: {
           content: [{ type: 'text', text }],
@@ -64,7 +64,7 @@ export function createCodexCommandFallback() {
 }
 
 /** Public App Server ThreadItem facts; Codex remains the executor. */
-export function codexItemToolChunk(item, phase) {
+export function codexItemToolChunk(item, phase, runtime = 'codex') {
   if (!item?.id || !['mcpToolCall', 'commandExecution', 'fileChange'].includes(item.type)) return null;
   const command = item.type === 'commandExecution', files = item.type === 'fileChange';
   const failed = item.status !== 'completed' || Boolean(item.error || item.result?.isError)
@@ -74,7 +74,7 @@ export function codexItemToolChunk(item, phase) {
     structuredContent: { status: item.status, exitCode: item.exitCode ?? null, durationMs: item.durationMs ?? null },
   } : files ? { structuredContent: { status: item.status, changes: item.changes || [] } } : item.result ?? null;
   return { type: 'tool', phase: phase === 'started' ? 'started' : failed ? 'failed' : 'completed',
-    id: String(item.id), name: command ? 'codex/command' : files ? 'codex/file-change' : `${item.server}/${item.tool}`,
+    id: String(item.id), name: command ? `${runtime}/command` : files ? `${runtime}/file-change` : `${item.server}/${item.tool}`,
     arguments: command ? { command: item.command, cwd: item.cwd } : files ? { changes: item.changes || [] } : item.arguments ?? {},
     ...(phase === 'started' ? {} : { result, ...(failed ? { error: item.error || { message: `Codex ${item.type}: ${item.status}${command && item.exitCode != null ? ` (exit ${item.exitCode})` : ''}` } } : {}) }),
   };

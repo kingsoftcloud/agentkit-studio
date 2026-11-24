@@ -23,7 +23,7 @@ const supportedVersion = (current, minimum) => {
 };
 
 export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1' } = {}) {
-  if (!isStudioRuntimeType(runtime) || !VERSION.test(clientVersion)) fail('DEPLOYMENT_RUNTIME_UNSUPPORTED', '部署仅支持 DSH Native、Codex 和 AgentKit Harness');
+  if (!isStudioRuntimeType(runtime) || !VERSION.test(clientVersion)) fail('DEPLOYMENT_RUNTIME_UNSUPPORTED', '部署运行时或 Studio 版本无效');
   if (!object(data) || data.Product !== 'agentkit-studio' || data.ClientType !== 'studio'
     || !ID.test(data.Environment || '') || !ID.test(data.Region || '')) {
     fail('DEPLOYMENT_CATALOG_INVALID', '云端镜像目录的产品、环境或区域不匹配');
@@ -51,7 +51,9 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
       || (item.runtimeIdentity !== undefined && typeof item.runtimeIdentity !== 'boolean')
       || typeof item.enabled !== 'boolean' || !['preview', 'stable'].includes(item.channel)
       || !Array.isArray(item.runtimes) || !item.runtimes.length || new Set(item.runtimes).size !== item.runtimes.length
-      || item.runtimes.some(value => !isStudioRuntimeType(value)) || item.bundleFormat !== 'agentkit.portable-bundle/v1'
+      || item.runtimes.some(value => !isStudioRuntimeType(value))
+      || (item.runtimes.includes('ksxc') ? item.runtimes.length !== 1 || item.bundleFormat !== 'agentengine.dsh-manifest/v1'
+        : item.bundleFormat !== 'agentkit.portable-bundle/v1')
       || !VERSION.test(item.minimumStudioVersion || '') || !Number.isInteger(item.port) || item.port !== 8080 || item.platform !== 'linux/amd64'
       || !ID.test(item.version || '') || typeof item.label !== 'string' || !item.label.trim() || item.label.length > 120
       || !Array.isArray(item.notices) || item.notices.some(value => typeof value !== 'string' || value.length > 300)) {
@@ -80,6 +82,7 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
   if (raw.defaultReleaseId && !ids.has(raw.defaultReleaseId)) fail('DEPLOYMENT_CATALOG_INVALID', '镜像目录默认版本不存在');
   const configuredDefaultReleaseId = raw.defaultReleaseId ?? null;
   let defaultReleaseId = releases.some(item => item.id === configuredDefaultReleaseId) ? configuredDefaultReleaseId : null;
+  if (runtime === 'ksxc' && !defaultReleaseId && releases.length === 1) defaultReleaseId = releases[0].id;
   let fallback = null;
   // Only a release this build cannot use for a scope reason may fall back to
   // another one: the publisher did not disable or remove it on purpose. A

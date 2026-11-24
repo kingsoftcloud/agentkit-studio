@@ -13,7 +13,6 @@ import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
-
 /** Runtimes that run in their own process behind the stream seam. */
 import { dshModelFailure } from '../model-failure.mjs';
 import { startDesktopRun } from '../telemetry/host-run.mjs';
@@ -23,9 +22,7 @@ import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType }
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
-
 const ROUTE = 'agentkit-studio';
-
 /**
  * Agent preset scopes dispatch `agent/request` before the root Agent loop
  * calls `llm.stream`. Keep the selected scope's transport context across that
@@ -56,11 +53,9 @@ export function bindDshAgentRoute(sessionId, binding = {}, owner, scope) {
   };
   return resolveRuntimeBridge(owner).bindRoute(id, route, scope);
 }
-
 export function unbindDshAgentRoutes(agentId, owner) {
   resolveRuntimeBridge(owner).unbindAgentRoutes(agentId);
 }
-
 /**
  * Publish the Host-owned bridge to preset-scoped DSH plugins. The plugin uses
  * the `llm/stream` waterfall, so the durable DSH request keeps its original
@@ -70,7 +65,6 @@ export function unbindDshAgentRoutes(agentId, owner) {
 export function setDshRuntimeAdapter(adapter, owner) {
   return resolveRuntimeBridge(owner).setAdapter(adapter);
 }
-
 /**
  * Install the Host-owned executor used by the public DSH ToolRegistry bridge.
  * The registry lives in the DSH loop, while MCP credentials and transports
@@ -79,11 +73,9 @@ export function setDshRuntimeAdapter(adapter, owner) {
 export function setDshResourceToolExecutor(executor, owner) {
   return resolveRuntimeBridge(owner).setResourceToolExecutor(executor);
 }
-
 export async function executeDshResourceTool(input = {}, owner) {
   return resolveRuntimeBridge(owner).executeResourceTool(input);
 }
-
 export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, cloudVersionId, toolAdapter, nativeTools } = {}, owner) {
   const id = String(agentId || '').trim();
   if (!id) throw new Error('AgentKit Studio runtime bridge is unavailable');
@@ -111,7 +103,6 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
     ...(nativeTools ? { studioNativeTools: true } : {}),
   }));
 }
-
 /** A single Host waterfall owns transport selection; unrelated LLM calls
  * (including titles) retain their original adapter and credentials. */
 export function routeDshRuntime(options, next, owner, requestOrigin) {
@@ -122,7 +113,6 @@ export function routeDshRuntime(options, next, owner, requestOrigin) {
   if (!route || (requestOrigin && !requestOrigin(options))) return next();
   return streamDshRuntime(options, route, owner);
 }
-
 function textOf(message) {
   if (!message || typeof message !== 'object') return '';
   const content = message.content;
@@ -131,7 +121,6 @@ function textOf(message) {
   return content.filter(part => part?.type === 'text' || part?.kind === 'text')
     .map(part => String(part.text || part.value || '')).join('');
 }
-
 function nativeInboxGuidance(agent, messages) {
   if (!agent?.inbox || !agent.session || typeof agent.session.append !== 'function') return {};
   const { inbox, session } = agent;
@@ -572,7 +561,8 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, nativeEngineRuntime, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, nativeEngineRuntime, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+  const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     async resolveModel(provider, model) {
@@ -591,16 +581,16 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const mode = routed ? (routed.local ? 'local' : 'cloud') : separator > 0 ? model.slice(0, separator) : 'cloud';
       const agentId = routed?.agentId || (separator > 0 ? model.slice(separator + 1) : model);
       const runtime = routed?.runtime || options.studioRuntime;
+      if (mode === 'local' && (options.provider === 'ksxc' || runtime === 'ksxc')
+        && (!routed || runtime !== 'ksxc' || options.provider !== 'ksxc')) {
+        throw Object.assign(new Error('请绑定 KSXC Agent，并从当前企业账号的模型目录选择模型。'), { code: 'KSXC_AGENT_MODEL_REQUIRED' });
+      }
       if (mode === 'local' && runtime === 'harness') throw Object.assign(new Error('Native Harness requires the whole-turn execution port.'), { code: 'STUDIO_NATIVE_TURN_REQUIRED' });
       const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
       const nativeTools = options.studioNativeTools === true || routed?.nativeTools === true;
       const buildId = String(options.buildId || routed?.buildId || '').trim();
       const agentRevision = routed?.agentRevision || options.agentRevision;
       const toolAgent = routed?.agent || options.agent;
-      if (mode === 'local' && typeof toolAgent?.session?.id === 'string' && toolAgent.session.id.trim()) bindDshInvocationContext(toolAgent, {
-        userId: String(options.userId || options.metadata?.userId || options.user?.id || 'studio-anonymous'),
-        runnerType: isProcessRuntimeType(runtime) ? runtime : 'dsh-native',
-      });
       const user = lastUser(options.messages, nativeTools);
       const input = textOf(user).trim();
       const hasImage = Array.isArray(user?.content) && user.content.some(block => block?.type === 'image' && block.offloaded !== true);
@@ -608,8 +598,12 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       if (!input && !hasImage) throw Object.assign(new Error('请输入文字或添加图片后发送'), { code: 'STUDIO_INPUT_REQUIRED' });
       const userId = resolveResourceUser
         ? await resolveResourceUser({ agentId, sessionId: String(options.sessionId || '') })
-        : String(options.userId || options.metadata?.userId || options.user?.id || '');
+        : runtime === 'ksxc' ? ksxcDesktopUser : String(options.userId || options.metadata?.userId || options.user?.id || '');
       if (mode === 'local') {
+        if (typeof toolAgent?.session?.id === 'string' && toolAgent.session.id.trim()) bindDshInvocationContext(toolAgent, {
+          userId: runtime === 'ksxc' ? userId : String(options.userId || options.metadata?.userId || options.user?.id || 'studio-anonymous'),
+          runnerType: isProcessRuntimeType(runtime) ? runtime : 'dsh-native',
+        });
         // The independent engine owns its previous image-bearing turns. Resolve
         // only the current attachment receipts for its next Run.
         const history = await gatewayHistory(runtime === 'native-engine' ? [user] : options.messages,
@@ -618,7 +612,15 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         if (isProcessRuntimeType(runtime)) {
           // Both process runtimes share this branch: same workspace, model, resource-context,
           // approval and trace handling. Only the process behind the stream differs.
-          const processRuntime = runtime === 'codex' ? codexRuntime : nativeEngineRuntime;
+          const processRuntime = processAdapters.get(runtime);
+          if (typeof processRuntime?.stream !== 'function') {
+            const [code, message] = runtime === 'codex'
+              ? ['CODEX_PROVIDER_UNAVAILABLE', 'Codex Provider 未注册；请安装并启用官方 Codex App Server Provider']
+              : runtime === 'ksxc'
+                ? ['KSXC_HOST_UNAVAILABLE', '当前 Studio Host 尚未配置 KSXC。']
+                : ['NATIVE_ENGINE_UNAVAILABLE', 'Native 引擎运行时未注册。'];
+            throw Object.assign(new Error(message), { code });
+          }
           // DSH persists the selected workspace on the official Session header;
           // its Codex subagent uses this same seam. Keep it scoped to this turn.
           const cwd = toolAgent?.session?.header?.cwd;
@@ -626,14 +628,14 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           const selection = { provider: options.provider, model: options.studioSelectedModel || options.studioCodexModel || options.model };
           const serviceOwnsModel = runtime === 'native-engine' && (
             processRuntime?.requiresServiceWorkspace || (processRuntime?.usesServiceFor?.(cwd) ?? processRuntime?.usesService) === true);
-          const selected = serviceOwnsModel ? {} : options.provider && options.provider !== CODEX_PROVIDER
+          const selected = runtime === 'ksxc' ? { model: selection.model } : serviceOwnsModel ? {} : options.provider && options.provider !== CODEX_PROVIDER
             ? await (typeof resolveCodexModel === 'function' ? resolveCodexModel(selection) : Promise.reject(Object.assign(new Error('此模型提供商未配置 Codex 接口，请在模型设置中检查配置。'), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' })))
             : { model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? selection.model : undefined) };
           if (runtime === 'native-engine' && !serviceOwnsModel && !selected.modelProvider?.baseUrl)
             throw Object.assign(new Error('Native 引擎需要一个已配置接口地址的模型，请在 Agent 上绑定网关模型。'), { code: 'NATIVE_ENGINE_MODEL_UNAVAILABLE' });
           if (runtime === 'native-engine' && (!processRuntime || typeof processRuntime.stream !== 'function'))
             throw Object.assign(new Error('Native 引擎运行时未注册。'), { code: 'NATIVE_ENGINE_UNAVAILABLE' });
-          if (runtime === 'codex' && (!codexRuntime || typeof codexRuntime.stream !== 'function')) {
+          if (runtime === 'codex' && (!processRuntime || typeof processRuntime.stream !== 'function')) {
             const error = new Error('Codex Provider 未注册；请安装并启用官方 Codex App Server Provider');
             error.code = 'CODEX_PROVIDER_UNAVAILABLE';
             throw error;
@@ -650,6 +652,11 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               agent: toolAgent,
               runtime,
               nativeService: serviceOwnsModel,
+              ...(runtime === 'ksxc' ? { authorizeTool: request => {
+                const sessionId = String(options.sessionId || '');
+                if (resolveResourceUser) return requestManagedApproval({ ...request, nativeSessionId: sessionId, sessionId });
+                return toolAgent && requestNativeApproval?.(toolAgent, request);
+              } } : {}),
               ...(serviceOwnsModel && routed?.runtimeRecord ? { runtimeRecord: routed.runtimeRecord } : {}),
             })
             : {};
@@ -666,15 +673,17 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
             } catch { /* evidence only */ }
           }
           const startedAt = new Date().toISOString();
-          const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
+          const traceId = String(options.runId || options.turnId || `run_${runtime}_${Date.now().toString(36)}`);
           const reportCodexRun = runtime === 'codex' ? startDesktopRun('codex', traceId) : undefined;
           const traceEvents = [{ event_type: 'run.started', at: startedAt, run_id: traceId, session_id: String(options.sessionId || '') }];
-          const toolRecorder = createCodexToolRecorder(toolAgent?.session, { recordModelContext: true });
+          const toolRecorder = createCodexToolRecorder(toolAgent?.session, { recordModelContext: true,
+            ...(runtime === 'ksxc' ? { label: 'KSXC', code: 'KSXC' } : {}),
+          });
           let responseText = '';
           const recordChunk = chunk => {
             const type = String(chunk?.type || '');
             const at = new Date().toISOString();
-            if (type === 'usage') traceEvents.push({ event_type: 'model.usage', at, run_id: traceId, payload: { source: 'codex-app-server', usage: chunk.usage } });
+            if (type === 'usage') traceEvents.push({ event_type: 'model.usage', at, run_id: traceId, payload: { source: runtime === 'ksxc' ? 'ksxc-app-server' : 'codex-app-server', usage: chunk.usage } });
             else if (type === 'request-metrics') traceEvents.push({ event_type: 'model.request', at, run_id: traceId, payload: chunk.metrics });
             else if (type === 'tool') traceEvents.push({ event_type: `tool.${String(chunk.phase || 'update')}`, at, run_id: traceId, payload: { name: String(chunk.name || 'bound tool') } });
             else if (type === 'reasoning' || type === 'text') {
@@ -717,6 +726,9 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
             yield* codexFrames(processRuntime, {
               turnId: String(options.turnId || options.runId || ''),
               agentId,
+              ...(runtime === 'ksxc' ? { userId, onRuntimeVerified: identity => traceEvents.push({
+                event_type: 'runtime.verified', at: new Date().toISOString(), run_id: traceId, payload: identity,
+              }) } : {}),
               ...(cwd ? { cwd } : {}),
               // The Session's current picker value; the provider validates it.
               ...(typeof permissionModeForSession === 'function' && toolAgent?.session
@@ -843,7 +855,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       // Studio deployment receipts have a separate endpoint/provenance
       // contract. API-created ManagedRuntime agents use the authenticated
       // AgentEngine RunAgent Action through `cloudClient` below.
-      if (cloudRuntime && (!routed || !routed?.source || routed?.source === 'studio-deployment')) {
+      if (runtime !== 'ksxc' && cloudRuntime && (!routed || !routed?.source || routed?.source === 'studio-deployment')) {
         yield* cloudRuntime({ ...options, agentId, cloudVersionId: routed?.cloudVersionId || options.cloudVersionId, userMessage: user, input, session: toolAgent?.session });
         return;
       }
@@ -869,7 +881,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         cloudRecord = await cloudClient.getAgent(agentId, { signal: options.signal });
       }
       const cloudBindings = cloudRecord.spec?.bindings;
-      const hasPlatformBindings = Array.isArray(cloudBindings?.plugins)
+      const hasPlatformBindings = runtime !== 'ksxc' && Array.isArray(cloudBindings?.plugins)
         && cloudBindings.plugins.some(item => {
           const kind = item?.config?.binding?.resource?.kind;
           return kind === 'knowledge-base' || kind === 'memory-instance' || kind === 'skill-space';
@@ -903,7 +915,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           ];
         }
       }
-      const toolRecorder = routed?.source === 'agentengine-managed-runtime' ? createResponsesToolRecorder(toolAgent?.session) : null;
+      const toolRecorder = runtime === 'ksxc' || routed?.source === 'agentengine-managed-runtime' ? createResponsesToolRecorder(toolAgent?.session) : null;
       try {
         const upstream = await cloudClient.streamAction('RunAgent', {
           AgentId: agentId,
@@ -913,6 +925,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           ApiFormat: 'responses',
           ...(invocationId ? { InvocationId: invocationId } : {}),
           ...(businessUserId ? { UserId: businessUserId } : {}),
+          ...(runtime === 'ksxc' && options.studioSelectedModel && options.provider === 'agentkit-studio-cloud'
+            ? { Model: options.studioSelectedModel } : {}),
         }, { signal: options.signal });
         let assistantText = '';
         for await (const frame of cloudFrames(upstream.body, options.signal, { onEvent: toolRecorder?.observe })) {
@@ -941,6 +955,19 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           }
         }
       } catch (error) {
+        if (runtime === 'ksxc' && error?.status === 403 && !options.signal?.aborted && typeof cloudClient.action === 'function') {
+          // Server returns the same 403 for missing authorization and invalid
+          // model selection. Confirm the caller's WPS status before suggesting a rebind.
+          const result = await cloudClient.action('GetKsxcConnection', {}, { signal: options.signal }).catch(() => null);
+          if (result?.data?.Status === 'disconnected' && !options.signal?.aborted) {
+            yield { type: 'finish', reason: { kind: 'error', failure: {
+              code: 'KSXC_CONNECTION_REQUIRED',
+              message: 'KSXC 的 WPS 授权已断开。请在「设置 → KSXC → 托管 Agent」重新绑定 WPS 后重试。',
+              status: 403,
+            } } };
+            return;
+          }
+        }
         if (options.signal?.aborted && typeof cloudClient.action === 'function') {
           // Closing the local SSE is not a cloud cancellation. Send the
           // explicit Server control action after the upstream stream is

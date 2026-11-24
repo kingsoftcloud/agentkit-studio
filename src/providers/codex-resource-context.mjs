@@ -7,7 +7,7 @@ import { nativeHostToolCallId } from './native-engine-runtime.mjs';
 import { nativeMcpInvocation } from './native-mcp-invocation.mjs';
 
 export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise, augmentContext }) {
-  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime, nativeService, runtimeRecord } = {}) => {
+  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime, nativeService, runtimeRecord, authorizeTool } = {}) => {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
     const independent = nativeService === true && runtime === 'native-engine';
     const frozenTeamRole = independent && runtimeRecord?.metadata?.teamRole;
@@ -72,7 +72,8 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
     const toolBindings = codexToolBindings([
       ...nativeTools,
       ...prepared.tools.filter(tool => (!presentation.length || tool.name !== 'present')
-        && !(tool._source === 'dsh' && nativeByName.has(tool.name))),
+        && !(tool._source === 'dsh' && nativeByName.has(tool.name)))
+        .map(tool => runtime === 'ksxc' ? { ...tool, name: `studio_${tool._source}_${tool.name}`, boundName: tool.name } : tool),
       ...presentation,
     ]);
     const systemPrompt = [
@@ -137,21 +138,32 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
       toolHandler: async ({ name, arguments: args, callId, signal }) => {
         const binding = toolBindings.find(item => item.name === name);
         if (!binding?.tool?._source) {
-          throw Object.assign(new Error(`Codex 请求了未绑定的工具：${name}`), { code: 'BOUND_TOOL_NOT_FOUND' });
+          const message = runtime === 'ksxc'
+            ? `KSXC 工具 ${name} 未绑定，未执行。请使用当前会话可用的工具。`
+            : `Codex 请求了未绑定的工具：${name}`;
+          throw Object.assign(new Error(message), { code: 'BOUND_TOOL_NOT_FOUND' });
         }
+        if (runtime === 'ksxc' && binding.tool._source === 'mcp' && binding.tool.annotations?.readOnlyHint !== true) {
+          signal?.throwIfAborted();
+          const decision = await authorizeTool?.({ toolName: name, callId,
+            reason: '执行已绑定的 KSXC 业务工具', arguments: args || {}, signal });
+          signal?.throwIfAborted();
+          if (decision !== 'allowed-once') throw Object.assign(new Error('KSXC 业务工具调用未获批准。'), { code: 'KSXC_TOOL_NOT_APPROVED' });
+        }
+        const boundName = binding.tool.boundName || binding.tool.name;
         if (binding.tool._source === 'dsh-presentation') {
           return toolAdapter.callPresentationTool(binding.tool._dshName, args || {}, { callId, signal, agent });
         }
         if (binding.tool._source === 'dsh') {
-          return toolAdapter.callTool(binding.tool.name, args || {}, { callId, signal, agent });
+          return toolAdapter.callTool(boundName, args || {}, { callId, signal, agent });
         }
         // One composition shared with the Native path so the two runtimes cannot
         // drift apart; Codex labels its own source and forwards the call id.
         // `runId` is intentionally absent: this scope has no DSH Run, and a
         // correlation id is never fabricated from the invocation id.
-        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal,
+        return resourceAdapter.callMcpTool(binding.tool._resourceId, boundName, args || {}, { signal,
           invocation: nativeMcpInvocation({ scope: { userId }, agent: { session: { id: sessionId } },
-            agentId, callId, source: 'codex' }) });
+            agentId, callId, source: runtime === 'ksxc' ? 'ksxc' : 'codex' }) });
       },
     };
     return augmentContext ? augmentContext(context, record.spec?.bindings || record.bindings || {}) : context;

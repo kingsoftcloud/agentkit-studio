@@ -186,7 +186,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     if (transport === 'stdio' && !server.command) throw new LocalResourceError('MCP_COMMAND_UNAVAILABLE', 'MCP 缺少启动命令', { resourceId: key });
     if (transport !== 'stdio' && (!endpoint || !/^https?:\/\//i.test(endpoint))) throw new LocalResourceError('MCP_ENDPOINT_UNAVAILABLE', 'MCP 没有可用的 HTTP Endpoint', { resourceId: key });
     return { resourceId: key, endpoint, transport, command: server.command, args: server.args || [], env: server.env || {}, headers: { ...(server.headers || detail.headers || config.headers || {}) },
-      envRefs: { ...(server.envRefs || detail.envRefs || config.envRefs || {}) },
+      envRefs: { ...(server.envRefs || server.env_refs || detail.envRefs || detail.env_refs || config.envRefs || config.env_refs || {}) },
       credentialRef: detail.credentialRef || config.credentialRef, apiKey: detail.api_key || detail.apiKey };
   }
 

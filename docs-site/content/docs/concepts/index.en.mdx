@@ -61,7 +61,7 @@ Agent agentId
 
 A complete run identity needs all five fields: `agentId`, `revision`, `buildId`, `sessionId`, `runId`. Missing one is rejected rather than degraded to a partial identity. The same rule implies: **an agent without a build can still converse, but without a build there is no reproducible run identity.**
 
-## The three runtimes
+## The four runtimes
 
 `runtime.type` has exactly three values, and they are `STUDIO_RUNTIME_TYPES` (`src/runtime-contract.mjs:6`):
 
@@ -70,6 +70,7 @@ A complete run identity needs all five fields: `agentId`, `revision`, `buildId`,
 | `dsh-native` | DSH Native Harness | Yes (default for new agents) | `native` |
 | `harness` | Star Harness | Conditionally: installed + enabled + a usable workspace | `native-kernel` |
 | `codex` | Codex Agent | Yes | `codex-app-server` |
+| `ksxc` | KSXC | When an approved release is installed and enabled | `ksxc-app-server` |
 
 Star Harness is the only pluggable one of the three: it is delivered as npm packages from ksadk-harness and only appears in the creation form once it is installed and bound to a workspace. See [the three runtimes](./runtimes.mdx).
 
@@ -92,7 +93,7 @@ Bindings live on the revision, so **changing resources means changing the revisi
 | Page | Question it answers |
 | --- | --- |
 | [Agent · Revision · Build · Run](./agent-revision-build.mdx) | What each freezing layer guarantees, and which operations break reproducibility |
-| [The three runtimes](./runtimes.mdx) | Who executes each of the three values, and how to read the capability matrix |
+| [The four runtimes](./runtimes.mdx) | Who executes each of the three values, and how to read the capability matrix |
 | [Resources and bindings](./resources.mdx) | The shape, exclusivity rules and degradation behavior of the five kinds |
 | [Sessions and workspaces](./sessions-workspaces.mdx) | Who owns the event journal, and how the workspace boundary decides what is writable |
 | [Experts and local teams](./experts-teams.mdx) | How expert templates and teams reuse the same freezing semantics |

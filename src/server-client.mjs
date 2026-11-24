@@ -17,12 +17,13 @@ export class AgentEngineError extends Error {
 const SERVER_ACTIONS = new Set([
   'ListStudioTemplates', 'GetStudioTemplate', 'GetStudioTemplateDownload', 'GetStudioTemplateCatalogCapabilities',
   'ListAgents', 'GetAgent', 'UpdateAgent', 'CreateSession', 'ListKnowledgeBases', 'ListMemoryInstances', 'ListMCPs',
-  'GetMCP', 'DeleteMCP', 'RetrieveKnowledge',
+  'GetMCP', 'CreateMCP', 'UpdateMCP', 'DeleteMCP', 'RetrieveKnowledge',
   'QueryMemorySdk', 'CreateMemorySdk', 'ListMemories', 'UpdateMemory', 'DeleteMemory',
   'ListSkillWorkspaces', 'ListAgentModels', 'ListSessions', 'GetSession',
   'ListSessionMessages', 'ListSessionEvents', 'ListAgentSchedules', 'GetAgentSchedule',
   'ListAgentScheduleOccurrences', 'GetObservabilityOverview', 'ListAgentRuntimeStats',
   'RunAgent', 'CancelRun', 'ResumeRun', 'SubmitInteraction', 'SubmitAgentControl',
+  'CreateKsxcConnection', 'GetKsxcConnectionResult', 'GetKsxcConnection', 'DeleteKsxcConnection',
   // Credential actions remain host-owned and never reach the browser bridge.
   'ListAgentApiKeys', 'CreateAgentApiKey',
 ]);

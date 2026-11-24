@@ -151,6 +151,22 @@ test('a managed runtime without a Build id persists a projection the Session log
   assert.deepEqual(await f.create().load(managed, signal()), saved);
 });
 
+test('managed version updates reissue handles while keeping the original approval delivery', async () => {
+  const managed = managedRequest(), f = fixture(managed.sessionId);
+  const approval = { type: 'response.approval_resolved', data: { approval_request_id: 'appr_fixture', decision: 'approved', revision: 2 } };
+  const prior = await f.create().save(managed, runtimeResponse(managed, { output: 'done' }, 'completed'), [approval], signal());
+  const contract = createRuntimeResponsesContract({ agentId, token, versionId: 'v2', definitionId: 'b'.repeat(64), model: 'fixed' });
+  const next = { ...await contract.parseManaged(payload, {}, { principal: 'owner', findNativeSession: async () => managed.sessionId }), agentId };
+  const replay = await f.create().load(next, signal());
+  assert.equal(replay.response.id, next.responseId);
+  assert.equal(replay.response.conversation.id, next.conversationId);
+  assert.equal(replay.response.metadata.agentkit.versionId, 'v2');
+  assert.equal(replay.response.output_text, 'done');
+  assert.deepEqual(replay.events, [approval]);
+  assert.deepEqual(await f.create().load(managed, signal()), prior);
+  assert.equal(f.rows.length, 1);
+});
+
 test('the managed HTTP runtime persists its version-identified projection without a Build id', async t => {
   const managed = managedRequest(), f = fixture(managed.sessionId), runtime = await startBuildRuntimeHttp({ agentId, managedIdentity, token,
     responseProjection: f.create(), runner: async () => ({ output: 'done' }), model: 'fixed', models: ['fixed'], port: 0 });

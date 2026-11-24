@@ -23,7 +23,7 @@ export const codexToolDefinition = {
     // terminal output, exit-code treatment and disclosure behavior as a
     // DSH-native command. The persisted event keeps its original wire name
     // (`codex/command`) for observability and model history.
-    const displayName = data.name === 'codex/command' ? 'bash' : data.name;
+    const displayName = /^(?:codex|ksxc)\/command$/.test(data.name) ? 'bash' : data.name;
     const argsRaw = typeof data.arguments === 'string' ? data.arguments : '';
     const args = PartialArguments.fromText(argsRaw);
     const root = data.phase === 'started' && !interrupted ? {

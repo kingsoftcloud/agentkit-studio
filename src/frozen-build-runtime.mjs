@@ -49,7 +49,7 @@ export function observeNativeRun(ctx, agent, onFrame) {
 }
 
 export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, managedResourceContext, admit, modelService, hostCompatibility, resources,
-  nativeEngineRuntime, env = process.env, createAutomationRunner = createNativeAutomationRunner }) {
+  nativeEngineRuntime, ksxcRuntime, env = process.env, createAutomationRunner = createNativeAutomationRunner }) {
   const agentId = managedRuntime?.identity.agentId || env.AGENTKIT_RUNTIME_AGENT_ID;
   const buildId = managedRuntime ? undefined : env.AGENTKIT_RUNTIME_BUILD_ID;
   if (!agentId && !buildId && !managedRuntime) return null;
@@ -64,7 +64,9 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   const bindings = frozen.spec?.bindings || {}, first = bindings.modelProfileIds?.[0];
   const primary = bindings.modelProfileId || (typeof first === 'string' ? first : first?.resourceId || first?.id) || '';
   const ids = [...new Set([primary, ...(bindings.modelProfileIds || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id)].filter(Boolean))];
-  const catalog = harnessModel || !modelService ? [] : frozenModels(await Promise.all(ids.map(async id => ({ ...await modelService.profile(id), id, default: id === primary }))));
+  const ksxc = managedRuntime?.identity.runtimeName === 'ksxc';
+  if (ksxc && !ksxcRuntime) throw Object.assign(new Error('当前托管 Host 没有 KSXC adapter。'), { code: 'KSXC_HOST_UNAVAILABLE' });
+  const catalog = ksxc || harnessModel || !modelService ? [] : frozenModels(await Promise.all(ids.map(async id => ({ ...await modelService.profile(id), id, default: id === primary }))));
   const selections = new Map();
   if (harnessModel) selections.set(harnessModel.model, harnessModel);
   for (const entry of catalog) {
@@ -75,22 +77,30 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   // The image declares the default conversation policy. A deployment may narrow
   // the ceiling later through its environment; image defaults keep parity with
   // Local DSH sessions (workspace-write) while allowing every mode to be chosen.
-  const executionModeDefault = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_DEFAULT) || DEFAULT_CLOUD_EXECUTION_MODE;
-  const executionModeMax = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_MAX) || DEFAULT_CLOUD_EXECUTION_MAX;
+  const configuredDefault = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_DEFAULT) || DEFAULT_CLOUD_EXECUTION_MODE;
+  const configuredMax = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_MAX) || DEFAULT_CLOUD_EXECUTION_MAX;
+  const executionModeMax = ksxc && configuredMax === 'danger-full-access' ? 'workspace-write' : configuredMax;
+  const executionModeDefault = executionModesUpTo(executionModeMax).includes(configuredDefault) ? configuredDefault : executionModeMax;
   const declaredPolicy = cloudExecutionPolicy(executionModeDefault);
   const nativeRun = createAutomationRunner({
     getService: name => ctx.get(name), reuseSession: true, executionPolicy: declaredPolicy,
     timeoutMs: frozenRuntimeTimeoutMs(env),
     assertHostCompatible: () => hostCompatibility?.require('frozen-runtime'),
-    loadReplay: request => loadFrozenRequestReplay(request, selections.get(request.model)),
-    admit: async () => admit(agentId, await resolveDefinition()),
-    ...(selections.size ? { selectModel: async key => {
+    loadReplay: request => loadFrozenRequestReplay(request, ksxc ? { provider: 'ksxc', model: request.model } : selections.get(request.model)),
+    admit: async () => {
+      const admission = await admit(agentId, await resolveDefinition());
+      return ksxc ? { ...admission, modelSelection: undefined } : admission;
+    },
+    ...(ksxc ? { selectModel: async key => ({ provider: 'ksxc', model: key }) } : selections.size ? { selectModel: async key => {
       if (!selections.has(key)) throw Object.assign(new Error('模型不在冻结绑定中'), { code: 'RESPONSES_FROZEN_MODEL_MISMATCH', status: 400 });
       return selections.get(key);
     } } : {}),
     observe: (agent, listener) => observeNativeRun(ctx, agent, listener),
   });
-  const runner = request => nativeRun({ ...request, requestFingerprint: responsesRequestFingerprint(request) });
+  const runner = request => {
+    const run = () => nativeRun({ ...request, requestFingerprint: responsesRequestFingerprint(request) });
+    return ksxc ? ksxcRuntime.withVerifiedModel(request.model, run) : run();
+  };
   const validatePrevious = async (previous, signal) => {
     try {
       const events = await readNativeRequestEvents(ctx.get('sessionController'), previous.sessionId, previous.occurrenceId, signal);
@@ -108,12 +118,12 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   // The Hosted UI renders exactly the modes this image declares; admission
   // validates a requested mode against the same list.
   const allowedPermissionModes = executionModesUpTo(executionModeMax);
-  const platformActions = managedRuntime ? await createManagedRuntimeActions({ ctx, runtime: managedRuntime, admit, model, models,
+  const platformActions = managedRuntime ? await createManagedRuntimeActions({ ctx, runtime: managedRuntime, admit, model, models, managedResourceContext,
     // Session ownership is Agent state, not deployment-version state: the Host
     // exports AGENTKIT_MANAGED_SESSIONS outside the version directory so an
     // accepted UpdateAgent keeps listing the Sessions it already recorded.
     directory: env.AGENTKIT_MANAGED_SESSIONS || join(env.AGENTKIT_HOME, 'managed-sessions'),
-    approval, executionPolicy: declaredPolicy, allowedPermissionModes }) : undefined;
+    approval, executionPolicy: declaredPolicy, allowedPermissionModes, ksxcRuntime, env }) : undefined;
   let hosted;
   if (!managedRuntime) {
     hosted = createFrozenHostedActions({ ctx, agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, frozen, admit, model,

@@ -11,6 +11,7 @@ import { bindDshAgentRoute, executeDshResourceTool } from '@kingsoftcloud/agentk
 import { businessInvocationFor } from './business-invocation-context.mjs';
 import { nativeMcpInvocation } from './native-mcp-invocation.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
+import { isAppServerRuntimeType } from '../runtime-types.mjs';
 import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
 import { nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
@@ -261,7 +262,8 @@ export function apply(ctx, config = {}) {
   const teamRole = service && config.teamRole === true;
   const teamHostTools = agent => (ctx.tools.schemas?.(agent) ?? []).filter(tool => Object.hasOwn(STUDIO_TEAM_HOST_TOOLS, tool.name))
     .map(tool => ({ ...tool, readOnly: STUDIO_TEAM_HOST_TOOLS[tool.name] }));
-  const toolAdapter = config.runtime === 'codex'
+  const appServer = isAppServerRuntimeType(config.runtime);
+  const toolAdapter = appServer
     ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) }
     : a2aHostTools.length || browserHostTool || teamRole ? {
       ...boundToolAdapter,
@@ -297,7 +299,7 @@ export function apply(ctx, config = {}) {
           result => ({ status: 'ok', content: result.content })),
       } : {}),
     } : boundToolAdapter;
-  const nativeTools = config.local === true && config.runtime !== 'codex';
+  const nativeTools = config.local === true && !appServer;
   if (service) ctx.on('agentkit/harness-resource-binding', () => {
     assertResources('Native Harness 资源恢复失败，请修复绑定后重试');
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });

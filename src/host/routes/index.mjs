@@ -1,3 +1,4 @@
+import { createKsxcRoute } from './ksxc.mjs';
 import { createHostRoutes } from './host.mjs';
 import { createTemplateRoutes } from './templates.mjs';
 import { createResourceRoutes } from './resources.mjs';
@@ -36,6 +37,7 @@ export function createStudioRoutes(ctx, services) {
     agents: createAgentRoutes(deps),
     skills: createSkillRoutes(deps),
     plugins: createPluginRoutes(deps),
+    ksxc: createKsxcRoute(deps.ksxc),
     'star-harness': createStarHarnessRoutes(deps.starHarness),
     sessions: createSessionRoutes(deps),
     schedules: createScheduleRoutes(deps),

@@ -107,6 +107,16 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
   });
 }
 
+test('KSXC platform MCP bindings allow an ID-only resource with explicit API-key refs', () => {
+  const resources = {
+    mcp_servers: [{ id: 'mcp-platform-fixture', env_refs: { Authorization: 'MCP_PLATFORM_FIXTURE_TOKEN' } }],
+  };
+  const parsed = parseManagedRuntimeManifest(stringify(declaration('ksxc', resources)), {
+    runtimeName: 'ksxc', runtimeVersion: 'fixture-1',
+  });
+  assert.deepEqual(parsed.resources, resources);
+});
+
 test('service turns keep resource ownership without re-registering the Harness workspace or command tools', async () => {
   const { createCodexResourceContext } = await import('../src/providers/codex-resource-context.mjs');
   const record = { spec: { runtime: { type: 'harness' }, bindings: {

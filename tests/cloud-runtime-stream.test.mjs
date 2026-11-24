@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { bindDshAgentRoute, createDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
 import { CODEX_TOOL_EVENT } from '../src/providers/codex-tool-events.mjs';
 import { createRuntimeResponsesStream } from '../src/runtime-responses-stream.mjs';
+import { createAgentEngineClient } from '../src/server-client.mjs';
 
 async function project(events, newline = '\n') {
   const data = events.map(event => `data: ${JSON.stringify(event)}${newline}${newline}`).join('');
@@ -71,6 +72,49 @@ test('API-created managed agents persist remote tool cards through RunAgent', as
       assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), '云端回答');
       assert.equal(chunks.some(chunk => chunk.type === 'reasoning-delta' || chunk.blockType === 'tool-call'), false);
       assert.equal(chunks.at(-1).reason.kind, 'stop');
+    } finally { release(); }
+  }
+});
+
+test('managed KSXC offers WPS rebind only when a rejected run has a confirmed disconnected account', async () => {
+  for (const [runtime, connection, expectedActions] of [
+    ['ksxc', 'disconnected', ['RunAgent', 'GetKsxcConnection']],
+    ['ksxc', 'connected', ['RunAgent', 'GetKsxcConnection']],
+    ['ksxc', 'check-failed', ['RunAgent', 'GetKsxcConnection']],
+    ['codex', 'disconnected', ['RunAgent']],
+  ]) {
+    const actions = [];
+    const client = createAgentEngineClient({
+      configuration: { resolve: async () => ({ values: { cloudServerUrl: 'http://127.0.0.1:8789' } }) },
+      fetchImpl: async (url, init) => {
+        const action = url.pathname.split('/').at(-1);
+        actions.push(action);
+        if (action === 'RunAgent') return Response.json({ Code: 403, Message: '无权执行该操作', RequestId: 'run-req', Data: null });
+        assert.deepEqual(JSON.parse(init.body), {});
+        if (connection === 'check-failed') return Response.json({ Code: 403, Message: '无法查询连接状态' });
+        return Response.json({ Code: 0, Data: { Status: connection } });
+      },
+    });
+    const sessionId = 'managed-rebind-session';
+    const release = bindDshAgentRoute(sessionId, { agentId: 'ar-managed-rebind', source: 'agentengine-managed-runtime', runtime,
+      agent: { spec: { bindings: { plugins: [] } } } });
+    try {
+      const adapter = createDshRuntimeAdapter({ cloudClient: client });
+      const turn = async () => {
+        const chunks = [];
+        for await (const chunk of adapter.stream({ sessionId, messages: [{ role: 'user', content: '你好' }] })) chunks.push(chunk);
+        return chunks;
+      };
+      if (runtime === 'ksxc' && connection === 'disconnected') {
+        const [chunk] = await turn();
+        assert.equal(chunk.type, 'finish');
+        assert.equal(chunk.reason.kind, 'error');
+        assert.equal(chunk.reason.failure.code, 'KSXC_CONNECTION_REQUIRED');
+        assert.match(chunk.reason.failure.message, /重新绑定 WPS/);
+      } else {
+        await assert.rejects(turn, { code: 'SERVER_ACTION_FAILED', status: 403, requestId: 'run-req' });
+      }
+      assert.deepEqual(actions, expectedActions);
     } finally { release(); }
   }
 });
