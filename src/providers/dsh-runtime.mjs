@@ -13,7 +13,6 @@ import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { HARNESS_SERVICE_MODEL_PROVIDER, NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
-/** Runtimes that run in their own process behind the stream seam. */
 import { dshModelFailure } from '../model-failure.mjs';
 import { startDesktopRun } from '../telemetry/host-run.mjs';
 import { createCodexToolRecorder, createResponsesToolRecorder } from './codex-tool-events.mjs';
