@@ -18,6 +18,9 @@ import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
 import { knowledgeBindings } from './knowledge-tools.mjs';
 import { legacyMemoryBindings } from './legacy-memory-tools.mjs';
 import { isRoutableRuntimeType, isNativeTurnRuntimeType } from './runtime-contract.mjs';
+import { dshModelRoute } from './model-route.mjs';
+
+export { dshModelRoute } from './model-route.mjs';
 
 // A degraded preset is usable immediately, but the Host keeps the exact same
 // prompt: one transport blip must not remove an MCP/Skill binding for the rest
@@ -55,13 +58,6 @@ function modelProfileIds(agent = {}) {
     ? bindings.modelProfileIds
     : bindings.modelProfileId ? [bindings.modelProfileId] : [];
   return [...new Set([bindings.modelProfileId, ...values.map(value => typeof value === 'string' ? value : value?.resourceId)].filter(Boolean).map(String))];
-}
-
-export function dshModelRoute(profile = {}, index = 0) {
-  const provider = String(profile?.provider || 'ksyun').trim() || 'ksyun';
-  const model = String(profile?.modelName || '').trim() || `model-${index + 1}`;
-  const id = String(profile?.id || `${provider}:${model}`).trim();
-  return `agentkit-studio-${id.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 64);
 }
 
 /**

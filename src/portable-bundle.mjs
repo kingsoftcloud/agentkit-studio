@@ -10,6 +10,7 @@ import { createAgentStore } from './agent-store.mjs';
 import { materializeCloudSkill } from './skill-files.mjs';
 import { capturePortableResources, portableError, sha256, rejectInlineSecrets } from './portable-resources.mjs';
 import { validatePortableNativeBuiltin } from './portable-native-tools.mjs';
+import { isSensitiveRequestHeader } from './model-profile-contract.mjs';
 
 const FORMAT = 'agentkit.portable-bundle/v1';
 const validBundleId = id => /^bundle_[0-9a-f]{64}$/.test(id || '');
@@ -32,6 +33,9 @@ export function verifyPortableBundle(zip) {
     const { createdAt: builtAt, ...definitionIdentity } = definition;
     if (definition.agentId !== identity.agentId || buildIdFor(definitionIdentity) !== identity.buildId) throw new Error('build identity mismatch');
     validateBuildEngineManifest(definition);
+    for (const profile of identity.resources.profiles || []) {
+      if (Object.keys(profile.headers || {}).some(isSensitiveRequestHeader)) throw new Error('sensitive model header in portable manifest');
+    }
     if (JSON.stringify(JSON.parse(readZipEntry(byName.get('agent-bundle.zip').data, 'agent-bundle/spec.json'))) !== JSON.stringify({ spec: definition.spec, bindings: definition.bindings })) throw new Error('build spec mismatch');
     rejectInlineSecrets(definition.spec); rejectInlineSecrets(definition.metadata);
     // The builtin capability manifest is cross-checked against the Frozen Build's

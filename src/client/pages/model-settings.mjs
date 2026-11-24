@@ -228,7 +228,7 @@ export function createModelSettingsSection({
     };
     const setProfile = (index, key, value) => patchProfile(index, {
       [key]: value,
-      ...(key === 'modelName' ? { input: undefined, inputCapability: 'pending' } : {}),
+      ...(key === 'modelName' ? { input: undefined, inputCapability: 'pending', protocol: undefined } : {}),
       ...(key === 'modelName' ? clearModelEffortRange(form.profiles[index]) : {}),
     });
     const setSharedField = (matches, key, value) => {
@@ -839,7 +839,7 @@ export function createModelSettingsSection({
                     const baseUrl = normalizeModelEndpoint(event.target.value, selected.provider);
                     const moved = credentialUsage > 1 && origin?.id === selected.id && origin.address !== baseUrl;
                     if (moved || baseUrl !== selected.baseUrl) {
-                      patchProfile(selectedIndex, { baseUrl, input: undefined, inputCapability: 'pending',
+                      patchProfile(selectedIndex, { baseUrl, input: undefined, inputCapability: 'pending', protocol: undefined,
                         ...clearModelEffortRange(selected), ...(moved ? separateCredential() : {}) });
                     }
                     setError('');

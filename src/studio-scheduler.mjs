@@ -23,10 +23,21 @@ export class StudioSchedulerError extends Error {
 
 const TASK_ID_RE = /^[a-z][a-z0-9-]{2,62}$/;
 const SCHEDULE_KINDS = new Set(['once', 'interval', 'cron']);
+const MISFIRE_POLICIES = new Set(['skip']);
 
 function parseCron(expr) {
   const fields = String(expr || '').trim().split(/\s+/);
   if (fields.length !== 5) throw new StudioSchedulerError('CRON_INVALID', 'cron 表达式需要 5 个字段', { expression: expr });
+  const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]];
+  fields.forEach((field, index) => {
+    if (!field || !/^(?:\*|\d+(?:-\d+)?(?:\/\d+)?)(?:,(?:\*|\d+(?:-\d+)?(?:\/\d+)?))*$/.test(field)) throw new StudioSchedulerError('CRON_INVALID', 'cron 表达式包含无效字段', { expression: expr });
+    for (const part of field.split(',')) {
+      const [base, step] = part.split('/');
+      if (step !== undefined && (!Number.isInteger(Number(step)) || Number(step) < 1)) throw new StudioSchedulerError('CRON_INVALID', 'cron 步长必须为正整数', { expression: expr });
+      const range = base === '*' ? null : base.split('-').map(Number);
+      if (range && (range.some(value => !Number.isInteger(value) || value < ranges[index][0] || value > ranges[index][1]) || range.length === 2 && range[0] > range[1])) throw new StudioSchedulerError('CRON_INVALID', 'cron 字段超出范围', { expression: expr });
+    }
+  });
   return fields;
 }
 
@@ -163,15 +174,18 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
     const kind = String(spec.kind || '');
     try { new Intl.DateTimeFormat('en', { timeZone: spec.timezone || 'Asia/Shanghai' }); } catch { throw new StudioSchedulerError('SCHEDULE_TIMEZONE_INVALID', '时区无效'); }
     if (!SCHEDULE_KINDS.has(kind)) throw new StudioSchedulerError('SCHEDULE_KIND_INVALID', `kind 必须是 once/interval/cron`);
+    if (!String(spec.agentId || '').trim()) throw new StudioSchedulerError('SCHEDULE_SPEC_INVALID', 'schedule 需要 agentId');
+    if (!MISFIRE_POLICIES.has(String(spec.misfirePolicy || 'skip'))) throw new StudioSchedulerError('MISFIRE_POLICY_INVALID', 'misfirePolicy 目前只支持 skip');
+    if (String(spec.prompt || '').length > 100_000) throw new StudioSchedulerError('SCHEDULE_SPEC_INVALID', 'prompt 过长');
     if (kind === 'once' && (!spec.at || !Number.isFinite(Date.parse(spec.at)))) throw new StudioSchedulerError('SCHEDULE_SPEC_INVALID', 'once 需要 at');
-    if (kind === 'interval' && (!spec.everySeconds || Number(spec.everySeconds) < 1)) throw new StudioSchedulerError('SCHEDULE_SPEC_INVALID', 'interval 需要 everySeconds');
+    if (kind === 'interval' && (!Number.isSafeInteger(Number(spec.everySeconds)) || Number(spec.everySeconds) < 1 || Number(spec.everySeconds) > 31_536_000)) throw new StudioSchedulerError('SCHEDULE_SPEC_INVALID', 'interval 需要 1 到 31536000 秒');
     if (kind === 'cron') { const fields = parseCron(spec.expression); return JSON.stringify(fields); }
     return null;
   }
 
   async function createSchedule(agentId, spec = {}) {
     await ensureReady();
-    spec = normalized(spec);
+    spec = { ...normalized(spec), agentId: String(agentId || '').trim() };
     const taskId = String(spec.taskId || `task-${randomUUID().slice(0, 8)}`);
     if (!TASK_ID_RE.test(taskId)) throw new StudioSchedulerError('TASK_ID_INVALID', 'task_id 格式必须是 ^[a-z][a-z0-9-]{2,62}$');
     const cronFields = validateSpec(spec);

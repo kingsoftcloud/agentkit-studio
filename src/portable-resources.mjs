@@ -4,7 +4,7 @@ import { readdir, lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
 import { nativeVisionProfileId } from './native-vision-model.mjs';
-import { modelRuntimeOptions } from './model-profile-contract.mjs';
+import { isSensitiveRequestHeader, modelRuntimeOptions, requestHeaders } from './model-profile-contract.mjs';
 import { isStudioRuntimeType } from './runtime-contract.mjs';
 import { LOCAL_SKILL_INSTALLATION_FILE } from './skill-discovery.mjs';
 
@@ -116,6 +116,9 @@ export async function capturePortableResources({ record, models, adapters, confi
     }
     const credentialName = requireEnv(refName(profile.credentialName) || `AGENTKIT_BUNDLE_MODEL_${sha256(id).slice(0, 12).toUpperCase()}`, id, 'model');
     rejectInlineSecrets(profile.parameters);
+    const headers = requestHeaders(profile.headers);
+    const sensitiveHeader = Object.keys(headers).find(isSensitiveRequestHeader);
+    if (sensitiveHeader) throw portableError('PORTABLE_MODEL_SENSITIVE_HEADER', `模型配置含敏感请求头 ${sensitiveHeader}，当前运行包不会导出其值，请改用 API Key 或目标 Host 凭证引用`);
     profiles.push({ id, provider: profile.provider, modelName: profile.modelName, baseUrl: endpoint(profile.baseUrl),
       credentialName, enabled: true, default: profiles.length === 0, ...(profile.input ? { input: profile.input } : {}),
       ...(profile.codexApi ? { codexApi: profile.codexApi } : {}),

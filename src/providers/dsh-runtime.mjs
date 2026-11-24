@@ -572,10 +572,13 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, nativeEngineRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, nativeEngineRuntime, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
-    resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
+    async resolveModel(provider, model) {
+      const resolved = typeof resolveModelMetadata === 'function' ? await resolveModelMetadata(provider, model).catch(() => null) : null;
+      return { provider, id: model, name: model, modalities: resolved?.input?.includes('image') ? ['text', 'image'] : ['text'] };
+    },
     async prepareCall(provider, model) {
       const metadata = await this.resolveModel(provider, model);
       return { model: metadata, stream: options => this.stream(options) };

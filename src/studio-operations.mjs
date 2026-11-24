@@ -19,6 +19,9 @@ export class OperationError extends Error {
     this.details = details;
   }
 }
+const OPERATION_ID_RE = /^op_[a-f0-9]{32}$/;
+const MAX_OPERATION_EVENTS = 10_000;
+const MAX_OPERATION_BYTES = 4 * 1024 * 1024;
 
 export function createOperationManager({ storeDir, clock = Date.now } = {}) {
   const root = storeDir;
@@ -29,6 +32,7 @@ export function createOperationManager({ storeDir, clock = Date.now } = {}) {
   })();
 
   function pathOf(operationId) {
+    if (!OPERATION_ID_RE.test(String(operationId || ''))) throw new OperationError('OPERATION_ID_INVALID', 'operation 标识无效', { operationId });
     return join(root, `${operationId}.json`);
   }
 
@@ -46,11 +50,13 @@ export function createOperationManager({ storeDir, clock = Date.now } = {}) {
   }
 
   async function write(record) {
+    if (!Array.isArray(record.events) || record.events.length > MAX_OPERATION_EVENTS) throw new OperationError('OPERATION_TOO_LARGE', 'operation 事件超过数量上限');
     const target = pathOf(record.operation.id);
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     // Atomic tmp+rename: readers poll this file while the host writes it, and
     // a plain in-place write would hand JSON.parse a truncated record.
     const payload = JSON.stringify(record, null, 2);
+    if (Buffer.byteLength(payload, 'utf8') > MAX_OPERATION_BYTES) throw new OperationError('OPERATION_TOO_LARGE', 'operation 记录超过大小上限');
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
     await writeFile(tmp, payload);
     await rename(tmp, target);
