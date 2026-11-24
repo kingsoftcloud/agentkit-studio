@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { createNativeEngineRuntime, resolveEngineCommand } from '../src/providers/native-engine-runtime.mjs';
+import { createNativeEngineRuntime, HARNESS_SERVICE_MODEL_PROVIDER, resolveEngineCommand, routeHarnessCompaction } from '../src/providers/native-engine-runtime.mjs';
 import { nativeEngineVerification } from '../src/providers/native-engine-verification.mjs';
 
 const installedEngine = fileURLToPath(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
@@ -26,13 +26,14 @@ const toolCall = (id, name, args) => [
 const final = text => [{ id: 'c', choices: [{ index: 0, delta: { role: 'assistant', content: text } }] },
   { id: 'c', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage }];
 function fixture(script) {
-  const requests = [];
+  const requests = [], paths = [];
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       const parsed = JSON.parse(body);
       requests.push(parsed);
+      paths.push(req.url);
       if (handle.stream) { await handle.stream(parsed, res); return; }
       const frames = handle.respond ? await handle.respond(parsed) : script[Math.min(requests.length - 1, script.length - 1)];
       if (!Array.isArray(frames)) {
@@ -45,7 +46,7 @@ function fixture(script) {
       res.end('data: [DONE]\n\n');
     });
   });
-  const handle = { requests, respond: null, stream: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
+  const handle = { requests, paths, respond: null, stream: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
   return new Promise(done => server.listen(0, '127.0.0.1', () => done(Object.assign(handle, { url: `http://127.0.0.1:${server.address().port}/v1` }))));
 }
 async function setup(t, script, extraEnv = {}) {
@@ -58,6 +59,33 @@ async function setup(t, script, extraEnv = {}) {
     modelProvider: { baseUrl: model.url, apiKey: 'studio-fixture-key' }, cwd, sessionId: 'session-1', turnId: '1' } };
 }
 const collect = async stream => { const chunks = []; for await (const chunk of stream) chunks.push(chunk); return chunks; };
+
+test('the spawned engine uses the saved Anthropic Messages protocol', async t => {
+  const f = await setup(t, [{ status: 400, body: { error: { message: 'fixture stop' } } }]);
+  const run = collect(f.runtime.stream({ ...f.options, modelProvider: {
+    ...f.options.modelProvider, baseUrl: f.model.url.replace(/\/v1$/, '/anthropic/v1'), protocol: 'anthropic-messages',
+  } }));
+  await assert.rejects(run);
+  assert.deepEqual(f.model.paths, ['/anthropic/v1/messages']);
+});
+
+test('only compaction of the committed Harness model uses the bound model-only adapter', async () => {
+  const previous = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'wide' };
+  const options = { ...previous, purpose: 'compaction', sessionId: 'session-1', messages: [{}], maxTokens: 64 };
+  let forwarded;
+  const dependency = {
+    resolveSession: id => id === 'session-1' ? { header: { cwd: '/workspace' }, requestHeader: () => ({ config: previous }) } : undefined,
+    resolveProfile: (cwd, model) => cwd === '/workspace' && model === 'wide' ? { id: 'old-profile', modelName: 'wide' } : undefined,
+    stream: request => { forwarded = request; return 'model-only stream'; },
+  };
+  const next = () => 'original stream';
+  assert.equal(routeHarnessCompaction(options, next, dependency), 'model-only stream');
+  assert.deepEqual(forwarded, { ...options, provider: 'agentkit-studio-old-profile' });
+  assert.equal(routeHarnessCompaction({ ...options, purpose: 'title' }, next, dependency), 'original stream');
+  assert.equal(routeHarnessCompaction({ ...options, model: 'unexpected' }, next, dependency), 'original stream');
+  await assert.rejects(collect(routeHarnessCompaction(options, next, { ...dependency, resolveProfile: () => undefined })),
+    { code: 'NATIVE_ENGINE_SUMMARY_MODEL_UNAVAILABLE' });
+});
 
 test('Studio forwards the configured search binding to its independent engine process', async t => {
   let searches = 0;
@@ -393,11 +421,11 @@ test('acceptance ignores unrelated success and rejects failed or stale matching 
   assert.equal(check([{ ...receipt, call: { ...receipt.call, arguments: { command: 'true' } } }]).status, 'blocked');
 });
 
-async function serviceRuntime(t, f, { images = false } = {}) {
+async function serviceRuntime(t, f, { images = false, contextWindow } = {}) {
   const createEngineService = await createTestService();
   const token = 'fixture-studio-service-approval-token';
   const service = createEngineService({ token, startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
-    model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY', images },
+    model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY', images, contextWindow },
     scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, env: { MODEL_KEY: 'fixture-key' } });
   t.after(() => service.close());
   await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
@@ -779,9 +807,12 @@ test('Studio model capabilities come from the bound service and image inputs rea
   const url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
   for (const images of [false, true]) {
     const f = await setup(t, [final('Image received.')]);
-    const runtime = await serviceRuntime(t, f, { images });
+    const contextWindow = images ? 1_048_576 : 128_000;
+    const runtime = await serviceRuntime(t, f, { images, ...(images ? { contextWindow } : {}) });
     const adapter = createHarnessServiceModelAdapter(class {}, ['fixture-model'], model => runtime.serviceModelInfo(model));
-    assert.deepEqual((await adapter.resolveModel('Harness', 'fixture-model')).modalities, images ? ['text', 'image'] : ['text']);
+    const resolved = await adapter.resolveModel('Harness', 'fixture-model');
+    assert.deepEqual(resolved.modalities, images ? ['text', 'image'] : ['text']);
+    assert.deepEqual(resolved.context, { contextWindow });
     const run = collect(runtime.stream({ ...f.options, inputImages: [{ type: 'image_url', image_url: { url } }] }));
     if (!images) {
       await assert.rejects(run, { code: 'NATIVE_ENGINE_IMAGE_UNAVAILABLE' });

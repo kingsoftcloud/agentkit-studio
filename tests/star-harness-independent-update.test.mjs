@@ -8,6 +8,7 @@ import { STAR_HARNESS_CORE, STAR_HARNESS_PACKAGE, STAR_HARNESS_UI, STAR_HARNESS_
   STAR_HARNESS_UI_CONTRACT, verifyStarHarnessProof } from '../src/host/services/star-harness-catalog.mjs';
 import { createStarHarnessReleases } from '../src/host/services/star-harness-release.mjs';
 import { createStarHarnessManager } from '../src/host/services/star-harness.mjs';
+import { createNativeEngineRuntime, createHarnessServiceModelAdapter } from '../src/providers/native-engine-runtime.mjs';
 import { starHarnessClientResponse } from '../src/host/routes/star-harness-client.mjs';
 import { loadActiveStarHarnessUI, refreshStarHarnessUI, watchStarHarnessUI } from '../src/client/dsh/star-harness-ui.mjs';
 
@@ -30,6 +31,69 @@ test('loads the new signed module if the active release changes during an import
   assert.deepEqual(requested, [old.sha256, next.sha256]);
   assert.deepEqual(active.descriptor, next);
   assert.equal(active.module.version, next.version);
+});
+
+test('an automatic model stays pinned during a lease and cutover leaves one worker per workspace', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-harness-model-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, 'workspace'), plugin = join(root, 'plugin');
+  await Promise.all([mkdir(workspace), mkdir(plugin)]);
+  await writeFile(join(plugin, 'settings.json'), JSON.stringify({ version: '0.0.31', previousVersion: null, enabled: true, bindings: [] }));
+  const old = { id: 'old', modelName: 'wide', default: true, contextWindow: 256000 };
+  const next = { id: 'new', modelName: 'small', contextWindow: 64000 };
+  let profiles = [old, next], failNext = false;
+  const active = new Set();
+  const manager = createStarHarnessManager({
+    root: plugin, modelProfiles: profiles, externalRoutes: new Map(),
+    workspaceRegistry: () => ({ list: () => [{ path: workspace }] }),
+    settings: async () => ({ modelProfiles: profiles }),
+    profile: async id => profiles.find(row => row.id === id),
+    releases: { entry: async () => plugin },
+    start: async ({ profile, stateDir }) => {
+      assert.equal(active.size, 0, 'another worker still owns this state directory');
+      if (failNext && profile.id === next.id) throw Error('new worker rejected');
+      const worker = { model: profile.modelName, stateDir, alive: true, stop: async () => {
+        worker.alive = false;
+        active.delete(worker);
+      } };
+      active.add(worker);
+      return worker;
+    },
+  });
+  try {
+    const lease = await manager.acquire(workspace);
+    const first = lease.connection;
+    profiles = [{ ...old, default: false }, { ...next, default: true }];
+    manager.refreshModelProfiles(profiles);
+    assert.equal(manager.route(workspace).modelSelection.model, 'wide');
+    const concurrent = await manager.acquire(workspace);
+    assert.equal(concurrent.connection, first);
+    concurrent.release();
+    lease.release();
+    assert.equal(manager.route(workspace).modelSelection.model, 'small');
+    assert.deepEqual(manager.modelInfo('small'), { images: false, contextWindow: next.contextWindow });
+    const runtime = createNativeEngineRuntime({ stateRoot: join(root, 'studio'), externalRoutes: new Map(), starHarness: manager });
+    await assert.rejects(runtime.stream({ input: 'Continue', cwd: workspace, expectedServiceModel: 'wide' }).next(),
+      { code: 'STAR_HARNESS_MODEL_CHANGED' });
+    const changed = await manager.acquire(workspace);
+    assert.equal(changed.connection.model, 'small');
+    assert.equal(changed.connection.stateDir, first.stateDir);
+    assert.equal(first.alive, false);
+    changed.release();
+    await manager.bind(workspace, 'old');
+    assert.equal(manager.route(workspace).modelSelection.model, 'wide');
+    assert.deepEqual(manager.summaryProfile(workspace, 'small'), profiles[1]);
+    failNext = true;
+    await assert.rejects(manager.bind(workspace, 'new'), /new worker rejected/);
+    assert.equal([...active][0].model, 'wide');
+    failNext = false;
+    await manager.unbind(workspace);
+    const automatic = await manager.acquire(workspace);
+    assert.equal(automatic.connection.model, 'small');
+    automatic.release();
+    await manager.setEnabled(false);
+    assert.equal(active.size, 0);
+  } finally { await manager.close(); }
 });
 
 const oldVersion = '0.0.26';
@@ -88,8 +152,9 @@ test('one release switches verified engine and UI together, and a failed candida
   const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-independent-update-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const workspace = join(root, 'workspace');
+  const explicitlyBound = join(root, 'explicit-workspace');
   const runtimeRoot = join(root, 'plugin');
-  await mkdir(workspace);
+  await Promise.all([mkdir(workspace), mkdir(explicitlyBound)]);
   const releasesDirectory = join(runtimeRoot, 'releases');
   const fixtures = Object.fromEntries([oldVersion, newVersion].map(version => [version, signedFixture(version)]));
   const installerMap = {};
@@ -130,9 +195,14 @@ test('one release switches verified engine and UI together, and a failed candida
   });
   let failedVersion;
   const starts = [];
+  const modelProfiles = [
+    { id: 'default', default: true, modelName: 'mock' },
+    { id: 'official', modelName: 'deepseek-flash', contextWindow: 1_048_576, input: ['text', 'image'] },
+  ];
   const makeManager = releases => createStarHarnessManager({
     root: runtimeRoot, releases, externalRoutes: new Map(), workspaceRegistry: () => ({ list: () => [{ path: workspace }] }),
-    settings: async () => ({}), profile: async () => ({ modelName: 'mock' }), probe: async () => {},
+    modelProfiles, settings: async () => ({ modelProfiles }),
+    profile: async id => modelProfiles.find(row => row.id === (id ?? 'default')), probe: async () => {},
     start: async ({ version, packageDirectory }) => {
       assert.match(packageDirectory, new RegExp(version.replaceAll('.', '\\.')));
       starts.push(version);
@@ -148,6 +218,7 @@ test('one release switches verified engine and UI together, and a failed candida
   const old = await manager.acquire(workspace);
   assert.equal(old.connection.version, oldVersion);
   old.release();
+  assert.deepEqual(await manager.modelInfo('mock'), { images: false, contextWindow: 128_000 });
   assert.equal((await manager.status({ checkUpdates: true })).availableUpgrade, newVersion);
 
   failedVersion = newVersion;
@@ -211,4 +282,12 @@ test('one release switches verified engine and UI together, and a failed candida
   assert.equal(status.version, oldVersion);
   assert.equal(status.clientUI.sha256, fixtures[oldVersion].sha256);
   assert.equal(starHarnessClientResponse(new Request('http://localhost/?sha256=' + fixtures[newVersion].sha256), manager.clientAsset).status, 404);
+
+  await manager.bind(explicitlyBound, 'official');
+  const runtime = createNativeEngineRuntime({ stateRoot: join(root, 'studio-state'), externalRoutes: new Map(), starHarness: manager });
+  const adapter = createHarnessServiceModelAdapter(class {}, () => runtime.serviceModels, model => runtime.serviceModelInfo(model));
+  assert.deepEqual(await adapter.resolveModel('Harness', 'deepseek-flash'), {
+    provider: 'Harness', id: 'deepseek-flash', name: 'deepseek-flash', modalities: ['text', 'image'],
+    context: { contextWindow: 1_048_576 },
+  });
 });

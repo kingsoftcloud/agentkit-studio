@@ -15,3 +15,14 @@ export function normalizeModelEndpoint(value, provider = 'custom') {
   url.pathname = path;
   return url.href.replace(/\/$/, '');
 }
+
+/** Harness appends `/messages` to an Anthropic API root with its version. */
+export function harnessModelEndpoint(baseUrl, protocol) {
+  if (protocol !== 'anthropic-messages') return baseUrl;
+  const url = new URL(baseUrl);
+  if (url.origin === 'https://api.deepseek.com' && url.pathname.replace(/\/+$/, '') === '/anthropic') {
+    url.pathname = '/anthropic/v1';
+    return url.href;
+  }
+  return baseUrl;
+}

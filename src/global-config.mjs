@@ -211,6 +211,7 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
       configurationOwner: 'studio-node',
     };
   }
+  const listeners = new Set();
   function update(patch) {
     if (!record(patch) || Object.keys(patch).some(key => !Object.hasOwn(FIELDS, key))) {
       return Promise.reject(new ConfigurationError('存在不支持的配置字段'));
@@ -263,11 +264,17 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
         await writeFile(temporary, stringify(document), { mode: 0o600, flag: 'wx' });
         await rename(temporary, path);
       } finally { await rm(temporary, { force: true }); }
-      return describe();
+      const current = await describe();
+      for (const listener of listeners) listener(current);
+      return current;
     };
     const result = pendingWrite.then(write);
     pendingWrite = result.catch(() => {}); // One rejected write must not block later corrections.
     return result;
   }
-  return { resolve, describe, update };
+  function onChange(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
+  return { resolve, describe, update, onChange };
 }

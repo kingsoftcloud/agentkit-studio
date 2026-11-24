@@ -268,7 +268,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const codexRuntime = createCodexRuntime(codexOptions);
   // The Native engine as its own process. Lazy like Codex: hosts without an
   // engine executable still load and report NATIVE_ENGINE_UNAVAILABLE on use.
-  const { createNativeEngineRuntime, createHarnessServiceModelAdapter, HARNESS_SERVICE_MODEL_PROVIDER } = await import('../providers/native-engine-runtime.mjs');
+  const { createNativeEngineRuntime, createHarnessServiceModelAdapter, routeHarnessCompaction, HARNESS_SERVICE_MODEL_PROVIDER } = await import('../providers/native-engine-runtime.mjs');
   const { engineServiceWorkspaces, canonicalEngineWorkspace } = await import('../providers/engine-service-workspaces.mjs');
   const externalRoutes = engineServiceWorkspaces(runtimeEnv);
   const credentials = credentialsService;
@@ -284,6 +284,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     })) : undefined;
   if (starHarness) {
     ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
+    const configuration = await configurationPromise;
+    ctx.effect(() => configuration.onChange(({ modelProfiles }) => starHarness.refreshModelProfiles(modelProfiles ?? [])),
+      'agentkit-studio: Star Harness model settings');
     await starHarness.restoreClientAsset().catch(error => {
       console.warn('[agentkit-studio] Star Harness UI restore failed:', error?.code || 'STAR_HARNESS_UI_RESTORE_FAILED');
     });
@@ -389,6 +392,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   ctx.effect(() => bridge.setAdapter(dshRuntimeAdapter), 'agentkit-studio: runtime transport registration');
   const routeDshRuntime = (options, next) => routeRuntime(options, next, bridge, request => hostCompatibility.isAgentLoopRequest(request));
   ctx.on('llm/stream', routeDshRuntime);
+  ctx.on('llm/stream', (options, next) => routeHarnessCompaction(options, next, {
+    resolveSession: id => ctx.get('sessions')?.get(id),
+    resolveProfile: (workspace, model) => starHarness?.summaryProfile(workspace, model),
+    stream: request => ctx.get('llm').stream(request),
+  }), { prepend: true });
   const { createBoundResourceToolExecutor } = await import('./services/resource-tools.mjs');
   ctx.effect(() => bridge.setResourceToolExecutor(createBoundResourceToolExecutor({
     agents: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise,

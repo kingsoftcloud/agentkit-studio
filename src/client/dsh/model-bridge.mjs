@@ -107,7 +107,9 @@ export function createModelBridge({ hostRemote }) {
           // that sets it while no model speaks that protocol — exactly the
           // case a profile declaring `protocol: openai-responses` creates —
           // so it is conditional on the wire this route actually uses.
-          compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
+          ...(wire !== 'anthropic-messages' ? {
+            compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
+          } : {}),
           // A route default would also be sent to every catalog sibling.
           ...(reasoning && dedicated ? { reasoning: reasoning.defaultEffort } : {}),
           models,
