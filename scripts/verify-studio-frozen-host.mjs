@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, realpath, readFile, readdir, writeFile } from 'node:fs/
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dshPin } from './dsh-pin.mjs';
 
 const source = process.env.AGENTKIT_DSH_ROOT;
@@ -105,10 +105,8 @@ await writeFile(join(home, 'config.yaml'), JSON.stringify({
   modelProfiles: profiles,
   modelProfileKeys: { STUDIO_FROZEN_FIXTURE_KEY: 'synthetic-frozen-fixture' },
 }), { mode: 0o600 });
-// The frozen Host runs the independent executable. It must not revive the
-// retired in-process loop merely to satisfy this integration proof.
-const studioRequire = createRequire(join(installed, 'package.json'));
-const engineServer = studioRequire.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server');
+// The verifier supplies its locked development fixture as an external process.
+const engineServer = fileURLToPath(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
 const env = { AGENTKIT_HOME: home, CODEX_HOME: join(home, 'codex'),
   AGENTKIT_ENGINE_COMMAND: process.execPath, AGENTKIT_ENGINE_ARGS: JSON.stringify([engineServer]) };
 const resourceAdapterFactory = async () => ({
