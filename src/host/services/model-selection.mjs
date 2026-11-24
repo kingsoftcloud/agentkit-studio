@@ -1,3 +1,4 @@
+import { dshModelRoute } from '../../model-route.mjs';
 import { ksxcAgentPreference } from './ksxc.mjs';
 
 /** Resolve a new Session's model without changing persisted Session projections. */
@@ -45,7 +46,7 @@ export function createAgentModelSelection({ models, agentStorePromise, codexMode
           const profile = index >= 0 ? profiles[index] : undefined;
           if (profile?.modelName) return {
             provider: dshModelSelection({ spec: { bindings: { modelProfileId: profile.id || profile.modelName } } }, settings)?.provider
-              || `agentkit-studio-${String(profile.id || profile.modelName).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 64),
+              || dshModelRoute(profile, index),
             model: String(profile.modelName).trim(),
           };
         }
