@@ -7,7 +7,7 @@ import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 import { requestHeaders } from './model-profile-contract.mjs';
-import { applyReasoningFallback, dropCarrierlessReasoningTurns, dropOrphanToolReceipts, isReasoningEffortRejection, isReasoningReplayRejection, logReasoningFallback, normalizeEmptyAssistantTurns, normalizeReasoningContent, studioReasoningFallbackWire } from './model-reasoning.mjs';
+import { applyReasoningFallback, dropCarrierlessReasoningTurns, dropOrphanToolReceipts, isReasoningEffortRejection, isReasoningReplayRejection, logReasoningFallback, normalizeEmptyAssistantTurns, normalizeReasoningContent, reasoningFallbackAllowed, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
 /**
  * Bounded provider identifiers from a rejected-request body.
@@ -44,7 +44,7 @@ export function upstreamErrorIdentifiers(detail) {
 export function upstreamRequestHeaders(profile) {
   const configured = requestHeaders(profile?.headers);
   const headers = { ...configured, 'Content-Type': 'application/json' };
-  if (!Object.keys(configured).some(name => name.toLowerCase() === 'authorization')) {
+  if (profile?.apiKey && !Object.keys(configured).some(name => name.toLowerCase() === 'authorization')) {
     headers.Authorization = `Bearer ${profile?.apiKey}`;
   }
   return headers;
@@ -149,7 +149,8 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         const detail = (await upstream.text().catch(() => '')).slice(0, 4096);
         upstreamBodyConsumed = true;
         const fallback = studioReasoningFallbackWire(profile);
-        const replaced = isReasoningEffortRejection(upstream.status, detail) ? applyReasoningFallback(body, fallback) : undefined;
+        const currentEffort = body.reasoning_effort || body.reasoning?.effort;
+        const replaced = isReasoningEffortRejection(upstream.status, detail) && reasoningFallbackAllowed(profile, currentEffort, fallback) ? applyReasoningFallback(body, fallback) : undefined;
         if (replaced !== undefined) {
           // Observability must never turn a recoverable 400 into a turn
           // failure, so a misbehaving hook is ignored.

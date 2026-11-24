@@ -24,7 +24,7 @@ export function createCodexRuntime(options = {}) {
       const metrics = [];
       const proxy = await createCodexModelProxy({ profile: { ...input.modelProvider, modelName: input.model || model }, onRequestMetrics: value => metrics.push({ type: 'request-metrics', metrics: value }), idleTimeoutMs: modelIdleTimeoutMs });
       try {
-        for await (const chunk of runtime.stream({ ...input, modelProvider: { api: input.modelProvider.api, baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } })) {
+        for await (const chunk of runtime.stream({ ...input, modelProvider: { ...input.modelProvider, api: input.modelProvider.api, baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } })) {
           while (metrics.length) yield metrics.shift();
           yield chunk;
         }

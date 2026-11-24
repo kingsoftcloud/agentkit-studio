@@ -22,6 +22,14 @@ function parseRange(range) {
   const hours = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[String(range || '24h')] || 24;
   return hours * 3600 * 1000;
 }
+const TRACE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MAX_TRACE_EVENTS = 10_000;
+const MAX_TRACE_EVENT_BYTES = 64 * 1024;
+const traceStorageId = value => {
+  const id = String(value || '').trim();
+  if (!TRACE_ID_RE.test(id)) throw new StudioObservabilityError('TRACE_ID_INVALID', 'Trace ID 无效');
+  return id;
+};
 
 function projectSpans(events) {
   const spans = [];
@@ -103,10 +111,12 @@ export function createStudioObservability({ storeDir, retentionDays = 30, maxTra
 
   async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, executionLocation = 'local', provenance, events = [], measuredTokenUsage }) {
     await ensureDir();
+    if (!Array.isArray(events) || events.length > MAX_TRACE_EVENTS || events.some(event => Buffer.byteLength(JSON.stringify(event), 'utf8') > MAX_TRACE_EVENT_BYTES)) throw new StudioObservabilityError('TRACE_TOO_LARGE', 'Trace 事件超过大小或数量上限');
+    traceId = traceStorageId(traceId || `trace_${randomUUID().replace(/-/g, '')}`);
     const spans = projectSpans(events);
     const tokenUsage = measuredUsage(measuredTokenUsage, events);
     const record = {
-      traceId: String(traceId || `trace_${randomUUID().replace(/-/g, '')}`),
+      traceId,
       sessionId: String(sessionId || ''), agentId: String(agentId || ''), agentName: String(agentName || ''),
       executionLocation, ...(provenance ? { provenance } : {}),
       status: String(status || 'completed'), startedAt: String(startedAt || (events[0]?.at || new Date().toISOString())),
@@ -175,7 +185,7 @@ export function createStudioObservability({ storeDir, retentionDays = 30, maxTra
   }
 
   async function get(traceId) {
-    try { return normalizeTrace(JSON.parse(await readFile(join(storeDir, `${traceId}.json`), 'utf8'))); } catch { return null; }
+    try { return normalizeTrace(JSON.parse(await readFile(join(storeDir, `${traceStorageId(traceId)}.json`), 'utf8'))); } catch { return null; }
   }
 
   async function getOtlp(traceId) {

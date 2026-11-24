@@ -126,7 +126,7 @@ gzip 体积不超过批准的增长预算。**预算文件是受版本控制的�
 
 - **`make doctor`**：只读诊断，回答"我的环境到底哪一步不对"，不重置任何配置。
 - **`make verify-patched-host`**：构建打过补丁的宿主并产出接受度报告。
-- **`make ref-parity`**：只读比较镜像分支与 GitHub `main`，不写远端。
+- **`make ref-parity`**：只读比较镜像分支与 GitHub `main` 的代码树，不写远端；两边可以保留独立提交历史。
 - **`ci/verify-public-web.mjs`**：用合成回环模型服务跑真实浏览器断言，不接触外部供应商。
 
 完整的命令清单见 `Makefile` 与 `scripts/` 目录。补丁相关的四个目标见[补丁治理](./patches.mdx)。

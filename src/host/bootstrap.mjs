@@ -10,7 +10,7 @@ import { nativeHarnessHostContract } from '../build-engine.mjs';
 import { loadConfiguredNativeSkills } from '../providers/native-skill-source.mjs';
 import { nativeLocalToolContract } from '../native-tool-catalog.mjs';
 import { registerAuthoringTools } from '../authoring-tools.mjs';
-import { DshPresetAdmission, dshModelSelection } from '../agent-preset-admission.mjs';
+import { DshPresetAdmission, dshModelRoute, dshModelSelection } from '../agent-preset-admission.mjs';
 import { createStartupReconciler } from '../preset-recovery.mjs';
 import { bindPresetRegistry } from '../preset-registry-binding.mjs';
 import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
@@ -388,6 +388,13 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       return requestNativeHostApproval(approval, agent, request);
     },
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
+    resolveModelMetadata: async (provider, model) => {
+      const settings = await models.settings();
+      const profile = (settings.modelProfiles || []).find(item => item.enabled !== false && dshModelRoute(item) === provider);
+      if (!profile) return null;
+      if (profile.modelName === model) return profile;
+      try { return (await models.catalog(profile.id)).items.find(item => item.id === model) || null; } catch { return null; }
+    },
     codexResourceContext,
     resolveResourceUser,
     resourceAdapter: await resourceAdaptersPromise,

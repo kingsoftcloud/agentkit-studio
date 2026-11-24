@@ -24,10 +24,13 @@ export function validateOperationResponse(operation, value) {
   const object = /** @type {Record<string, unknown> | null} */ (value);
   const error = /** @type {Record<string, unknown> | undefined} */ (object?.error);
   if (!object || typeof object !== 'object' || Array.isArray(object) || typeof object.ok !== 'boolean'
-    || (object.ok === false && error !== undefined && (!error || typeof error !== 'object' || Array.isArray(error)
+    || object.ok === false && (!error || typeof error !== 'object' || Array.isArray(error)
+      || typeof error.code !== 'string' || !error.code.trim()
       || (error.code !== undefined && typeof error.code !== 'string')
       || (error.message !== undefined && typeof error.message !== 'string')
-      || (error.status !== undefined && typeof error.status !== 'number')))) {
+      || (error.status !== undefined && (typeof error.status !== 'number' || !Number.isInteger(error.status) || error.status < 100 || error.status > 599))
+      || (error.details !== undefined && (error.details === null || typeof error.details !== 'object' || Array.isArray(error.details))))
+    || object.ok === true && Object.hasOwn(object, 'error')) {
     throw new StudioProtocolError('STUDIO_RESPONSE_INVALID', 'Invalid Studio response envelope', operation, 502);
   }
 }

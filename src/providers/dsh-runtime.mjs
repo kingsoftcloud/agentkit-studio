@@ -572,11 +572,14 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, nativeEngineRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, nativeEngineRuntime, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
-    resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
+    async resolveModel(provider, model) {
+      const resolved = typeof resolveModelMetadata === 'function' ? await resolveModelMetadata(provider, model).catch(() => null) : null;
+      return { provider, id: model, name: model, modalities: resolved?.input?.includes('image') ? ['text', 'image'] : ['text'] };
+    },
     async prepareCall(provider, model) {
       const metadata = await this.resolveModel(provider, model);
       return { model: metadata, stream: options => this.stream(options) };
@@ -641,6 +644,13 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
             : { model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? selection.model : undefined) };
           if (runtime === 'native-engine' && !serviceOwnsModel && !selected.modelProvider?.baseUrl)
             throw Object.assign(new Error('Native 引擎需要一个已配置接口地址的模型，请在 Agent 上绑定网关模型。'), { code: 'NATIVE_ENGINE_MODEL_UNAVAILABLE' });
+          if (runtime === 'native-engine' && (!processRuntime || typeof processRuntime.stream !== 'function'))
+            throw Object.assign(new Error('Native 引擎运行时未注册。'), { code: 'NATIVE_ENGINE_UNAVAILABLE' });
+          if (runtime === 'codex' && (!processRuntime || typeof processRuntime.stream !== 'function')) {
+            const error = new Error('Codex Provider 未注册；请安装并启用官方 Codex App Server Provider');
+            error.code = 'CODEX_PROVIDER_UNAVAILABLE';
+            throw error;
+          }
           const resources = typeof codexResourceContext === 'function'
             ? await codexResourceContext({
               agentId,

@@ -4,8 +4,8 @@ import { readdir, lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
 import { nativeVisionProfileId } from './native-vision-model.mjs';
-import { modelRuntimeOptions } from './model-profile-contract.mjs';
-import { isPortableRuntimeType } from './runtime-contract.mjs';
+import { isSensitiveRequestHeader, modelRuntimeOptions, requestHeaders } from './model-profile-contract.mjs';
+import { isStudioRuntimeType } from './runtime-contract.mjs';
 import { LOCAL_SKILL_INSTALLATION_FILE } from './skill-discovery.mjs';
 
 export const portableError = (code, message) => Object.assign(new Error(message), { code });
@@ -79,7 +79,7 @@ export async function capturePortableResources({ record, models, adapters, confi
   rejectInlineSecrets(record.spec);
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
-  if (!isPortableRuntimeType(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
+  if (!isStudioRuntimeType(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
   // Concrete Node builtin capabilities travel only with a Frozen Native engine
   // build. Optional services still require target Host configuration; a tool
   // binding is never permission to execute or a substitute for credentials.
@@ -116,6 +116,9 @@ export async function capturePortableResources({ record, models, adapters, confi
     }
     const credentialName = requireEnv(refName(profile.credentialName) || `AGENTKIT_BUNDLE_MODEL_${sha256(id).slice(0, 12).toUpperCase()}`, id, 'model');
     rejectInlineSecrets(profile.parameters);
+    const headers = requestHeaders(profile.headers);
+    const sensitiveHeader = Object.keys(headers).find(isSensitiveRequestHeader);
+    if (sensitiveHeader) throw portableError('PORTABLE_MODEL_SENSITIVE_HEADER', `模型配置含敏感请求头 ${sensitiveHeader}，当前运行包不会导出其值，请改用 API Key 或目标 Host 凭证引用`);
     profiles.push({ id, provider: profile.provider, modelName: profile.modelName, baseUrl: endpoint(profile.baseUrl),
       credentialName, enabled: true, default: profiles.length === 0, ...(profile.input ? { input: profile.input } : {}),
       ...(profile.codexApi ? { codexApi: profile.codexApi } : {}),

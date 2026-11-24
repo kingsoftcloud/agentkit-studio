@@ -11,6 +11,11 @@ const defaults = {
   rightRef: process.env.PARITY_RIGHT_REF || 'refs/heads/main',
 };
 
+const gitOptions = {
+  encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+};
+
 export function resolveRemoteRef(remote, ref, run = execFileSync) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote)
     || !/^refs\/heads\/[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(ref)) {
@@ -18,30 +23,35 @@ export function resolveRemoteRef(remote, ref, run = execFileSync) {
   }
   let output;
   try {
-    output = run('git', ['ls-remote', '--refs', '--exit-code', remote, ref], {
-      encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    });
+    output = run('git', ['ls-remote', '--refs', '--exit-code', remote, ref], gitOptions);
   } catch { throw new Error(`unable to read branch ref: ${remote} ${ref}`); }
   const rows = output.split(/\r?\n/).filter(Boolean).map(row => row.split(/\s+/));
   if (rows.length !== 1 || rows[0][1] !== ref || rows[0].length !== 2
     || !/^[0-9a-f]{40}$/i.test(rows[0][0])) {
     throw new Error(`remote ref not found or invalid: ${remote} ${ref}`);
   }
-  const sha = rows[0][0];
-  return sha.toLowerCase();
+  const sha = rows[0][0].toLowerCase();
+  let tree;
+  try {
+    run('git', ['fetch', '--no-tags', '--depth=1', remote, ref], gitOptions);
+    tree = run('git', ['rev-parse', 'FETCH_HEAD^{tree}'], gitOptions).trim().toLowerCase();
+  } catch { throw new Error(`unable to read branch tree: ${remote} ${ref}`); }
+  if (!/^[0-9a-f]{40}$/.test(tree)) {
+    throw new Error(`remote tree not found or invalid: ${remote} ${ref}`);
+  }
+  return { sha, tree };
 }
 
 export function assertParity(left, right) {
-  if (left.sha !== right.sha) {
+  if (left.tree !== right.tree) {
     throw new Error([
-      'remote ref parity failed',
-      `  ${left.remote} ${left.ref}: ${left.sha}`,
-      `  ${right.remote} ${right.ref}: ${right.sha}`,
+      'remote tree parity failed',
+      `  ${left.remote} ${left.ref}: commit ${left.sha}, tree ${left.tree}`,
+      `  ${right.remote} ${right.ref}: commit ${right.sha}, tree ${right.tree}`,
       'The sync job must stop; do not force-push either protected branch.',
     ].join('\n'));
   }
-  return left.sha;
+  return left.tree;
 }
 
 function usage() {
@@ -82,12 +92,10 @@ export function main(argv = process.argv.slice(2)) {
     usage();
     return 0;
   }
-  const left = { remote: options.leftRemote, ref: options.leftRef };
-  const right = { remote: options.rightRemote, ref: options.rightRef };
-  left.sha = resolveRemoteRef(left.remote, left.ref);
-  right.sha = resolveRemoteRef(right.remote, right.ref);
-  const sha = assertParity(left, right);
-  console.log(`remote ref parity passed: ${left.remote} ${left.ref} == ${right.remote} ${right.ref} @ ${sha}`);
+  const left = { remote: options.leftRemote, ref: options.leftRef, ...resolveRemoteRef(options.leftRemote, options.leftRef) };
+  const right = { remote: options.rightRemote, ref: options.rightRef, ...resolveRemoteRef(options.rightRemote, options.rightRef) };
+  const tree = assertParity(left, right);
+  console.log(`remote tree parity passed: ${left.remote} ${left.ref} == ${right.remote} ${right.ref} @ tree ${tree} (commits ${left.sha} / ${right.sha})`);
   return 0;
 }
 

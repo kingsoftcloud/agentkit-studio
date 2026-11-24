@@ -20,6 +20,10 @@ export async function resolveConfiguredCodexModel({ provider, model }, models) {
   return { model,
     ...(reasoning ? { reasoningEfforts: reasoning.efforts } : {}),
     modelProvider: { baseUrl: profile.baseUrl, apiKey: profile.apiKey,
+      ...(profile.headers ? { headers: profile.headers } : {}),
+      ...(profile.parameters ? { parameters: profile.parameters } : {}),
+      ...(profile.maxOutputTokens ? { maxOutputTokens: profile.maxOutputTokens } : {}),
+      ...(profile.requestTimeoutMs ? { requestTimeoutMs: profile.requestTimeoutMs } : {}),
       ...(['responses', 'chat-completions'].includes(profile.codexApi) ? { api: profile.codexApi } : {}) } };
 }
 

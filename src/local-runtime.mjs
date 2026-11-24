@@ -10,7 +10,8 @@ import { checkedResource } from './resource-checks.mjs';
 import { boundSkillResources, loadBoundSkills } from './skill-bindings.mjs';
 import { dshModelRoute } from './model-route.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
-import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, studioReasoningFallbackWire } from './model-reasoning.mjs';
+import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, reasoningFallbackAllowed, studioReasoningFallbackWire } from './model-reasoning.mjs';
+import { hasConfiguredAuthentication, requestHeaders } from './model-profile-contract.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -274,7 +275,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
 function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signal, modelIdleTimeoutMs, onReasoningFallback = logReasoningFallback }) {
-  if (!profile?.baseUrl || !profile?.apiKey) throw new LocalRuntimeError('MODEL_PROFILE_INVALID', '模型配置缺少 baseUrl 或 API Key');
+  if (!profile?.baseUrl || (!profile?.apiKey && !hasConfiguredAuthentication(profile?.headers))) throw new LocalRuntimeError('MODEL_PROFILE_INVALID', '模型配置缺少 baseUrl 或 API Key/认证请求头');
   // Only a level this profile declared reaches the wire; an undeclared level
   // would be an unknown parameter to the gateway.
   let reasoningWire = reasoningEffort && profile.reasoningEfforts?.[reasoningEffort];
@@ -284,15 +285,19 @@ function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signa
       // The explicit route signal comes from the response lifecycle. Do not
       // substitute the IncomingMessage signal here: its body is already
       // consumed before the model request starts.
-      const deadline = createModelIdleDeadline({ signal, timeoutMs: modelIdleTimeoutMs });
+      const deadline = createModelIdleDeadline({ signal, timeoutMs: profile.requestTimeoutMs ?? modelIdleTimeoutMs });
       const requestSignal = deadline.signal;
       try {
       const requestModel = async wire => {
         try {
+          const configuredHeaders = requestHeaders(profile.headers);
+          const headers = { ...configuredHeaders, 'Content-Type': 'application/json' };
+          if (profile.apiKey && !Object.keys(configuredHeaders).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${profile.apiKey}`;
+          const parameters = profile.parameters && typeof profile.parameters === 'object' && !Array.isArray(profile.parameters) ? profile.parameters : {};
           return await fetchImpl(`${profile.baseUrl}/chat/completions`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
-            body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(wire ? { reasoning_effort: wire } : {}) }),
+            headers,
+            body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...parameters, ...(profile.maxOutputTokens ? { max_tokens: profile.maxOutputTokens } : {}), ...(wire ? { reasoning_effort: wire } : {}) }),
             signal: requestSignal,
           });
         } catch {
@@ -307,7 +312,7 @@ function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signa
       if (response.status === 400 && reasoningWire) {
         const detail = (await response.text().catch(() => '')).slice(0, 4096);
         const fallback = studioReasoningFallbackWire(profile);
-        if (isReasoningEffortRejection(response.status, detail) && fallback && fallback !== reasoningWire) {
+        if (isReasoningEffortRejection(response.status, detail) && fallback && reasoningFallbackAllowed(profile, reasoningWire, fallback)) {
           try {
             onReasoningFallback({ provider: String(profile.provider || ''), model: String(profile.modelName || profile.id || ''),
               from: reasoningWire, to: fallback, status: response.status });

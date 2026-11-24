@@ -82,6 +82,7 @@ const connectionLocation = item => [item.provider, normalizedConnectionAddress(i
 export function modelConnections(profiles, records = []) {
   const groups = new Map();
   const byIdentity = new Map();
+  const recordIds = new Set(records.map(record => record.id));
   const register = (item, id) => {
     const group = { id, provider: item.provider, address: normalizedConnectionAddress(item), connection: connectionRecord(item, id), models: [] };
     groups.set(id, group);
@@ -92,7 +93,9 @@ export function modelConnections(profiles, records = []) {
   for (const [index, profile] of profiles.entries()) {
     const identity = connectionIdentity(profile);
     let group = groups.get(profile.connectionId);
-    if (!group || stableString(connectionLocation(group.connection)) !== stableString(connectionLocation(profile))) group = byIdentity.get(identity);
+    const identityGroup = byIdentity.get(identity);
+    if (!group || stableString(connectionLocation(group.connection)) !== stableString(connectionLocation(profile))
+      || recordIds.has(profile.connectionId) && stableString(connectionIdentity(group.connection)) !== stableString(identity) && identityGroup) group = identityGroup;
     if (!group) {
       let id = profileKey(profile, index);
       while (groups.has(id)) id += '-provider';
