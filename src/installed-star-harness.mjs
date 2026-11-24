@@ -19,7 +19,12 @@ export async function startInstalledStarHarness({ releaseVersion, installerEnv, 
   { createReleases = createStarHarnessReleases, start = startStarHarness } = {}) {
   if (releaseVersion !== undefined && !starHarnessVersion(releaseVersion))
     throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 版本无效。');
-  const directory = await privateRuntimeDirectory(join(dirname(options.stateDir), 'star-harness-releases'));
+  // A packaged image ships one reviewed release next to the installation and
+  // points every state root at it. The state root itself cannot hold it: the
+  // bundle launcher requires an empty first-run directory, and an Agent update
+  // must not re-download the release into each versioned state.
+  const directory = await privateRuntimeDirectory(process.env.AGENTKIT_STAR_HARNESS_RELEASES
+    || join(dirname(options.stateDir), 'star-harness-releases'));
   const selection = join(directory, 'selected-release.json');
   const releaseLock = await lockUntil(join(directory, '.selection.sqlite'), performance.now() + 240000, options.signal);
   try {
