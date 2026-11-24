@@ -97,7 +97,13 @@ export function createHarnessServiceModelAdapter(AdapterBase, models, describeMo
 export function routeHarnessCompaction(options, next, { resolveSession, resolveProfile, stream }) {
   if (options.provider !== HARNESS_SERVICE_MODEL_PROVIDER || options.purpose !== 'compaction') return next();
   const session = resolveSession(options.sessionId);
-  const previous = typeof session?.requestHeader === 'function' ? session.requestHeader()?.config : undefined;
+  // `typeof` only proves the method exists: a corrupted history can make it
+  // throw while it is read, and a raw error here would escape the `llm/stream`
+  // waterfall instead of falling through to the original stream. Treat an
+  // unreadable header as "no previous model", the same way prompt prediction
+  // does for legacy sessions.
+  let previous;
+  try { previous = typeof session?.requestHeader === 'function' ? session.requestHeader()?.config : undefined; } catch { /* legacy sessions have no request header */ }
   if (previous?.provider !== options.provider || previous.model !== options.model) return next();
   const profile = resolveProfile(session.header.cwd, options.model);
   if (!profile) return (async function* () {
