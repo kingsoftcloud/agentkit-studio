@@ -133,7 +133,7 @@ fix the pull request and re-enqueue it.
 
 - **`make doctor`**: read-only diagnostics answering "which part of my environment is wrong"; resets nothing.
 - **`make verify-patched-host`**: builds the patched host and writes an acceptance report.
-- **`make ref-parity`**: read-only comparison between the mirror branch and GitHub `main`; writes no remote.
+- **`make ref-parity`**: read-only comparison of the mirror tree with GitHub `main`; writes no remote and allows independent commit histories.
 - **`ci/verify-public-web.mjs`**: runs real browser assertions against a synthetic loopback model service, never an external provider.
 
 For the full command list see `Makefile` and the `scripts/` directory. For the four patch

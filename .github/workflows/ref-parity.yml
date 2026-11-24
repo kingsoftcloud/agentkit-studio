@@ -1,4 +1,4 @@
-name: Forge Ref Parity
+name: Forge Tree Parity
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ permissions:
 jobs:
   parity:
     if: github.repository == 'kingsoftcloud/agentkit-studio'
-    name: configured mirror == GitHub main
+    name: configured mirror tree == GitHub main tree
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
