@@ -107,6 +107,9 @@ test('stale explicit bindings do not hide the minimum context capacity of workin
   const bindings = profiles.map(({ id }) => ({
     workspace: join(root, id), profileId: id, model: 'wide', images: id === 'small',
   }));
+  // A binding predating profile IDs carries an empty one. It has no capacity of
+  // its own and must not veto the window every other binding agrees on.
+  bindings.push({ workspace: join(root, 'legacy'), profileId: '', model: 'wide', images: false });
   await Promise.all([plugin, ...bindings.map(binding => binding.workspace)].map(path => mkdir(path)));
   await writeFile(join(plugin, 'settings.json'), JSON.stringify({ version: '0.0.31', previousVersion: null, enabled: true, bindings }));
   const manager = createStarHarnessManager({

@@ -7,7 +7,7 @@ export async function createCodexModelProxy({ profile, fetchImpl, onRequestMetri
   const token = randomBytes(32).toString('hex');
   const authorization = Buffer.from(`Bearer ${token}`);
   const handler = createModelProxyHandler({
-    codexTools: true, fetchImpl, onRequestMetrics, onReasoningFallback, idleTimeoutMs, upstreamApi: profile.api || 'chat-completions',
+    codexTools: true, fetchImpl, onRequestMetrics, onReasoningFallback, idleTimeoutMs, upstreamApi: profile.protocol === 'anthropic-messages' ? 'anthropic-messages' : profile.api || 'chat-completions',
     models: { profile: async id => {
       if (id !== 'bound') throw Object.assign(new Error('模型路由不存在'), { code: 'MODEL_NOT_FOUND', status: 404 });
       return profile;

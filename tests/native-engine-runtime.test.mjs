@@ -112,6 +112,32 @@ test('only compaction of the committed Harness model uses the bound model-only a
   assert.deepEqual(forwarded, [{ ...options, provider: 'agentkit-studio-old-profile' }]);
 });
 
+test('a long history summarizes once and then switches to the new model', async () => {
+  const previous = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'wide' };
+  const options = { ...previous, purpose: 'compaction', sessionId: 'session-1', messages: [{}], maxTokens: 64 };
+  let committed = previous;
+  const summaries = [];
+  const dependency = {
+    resolveSession: () => ({ header: { cwd: '/workspace' }, requestHeader: () => ({ config: committed }) }),
+    resolveProfile: (cwd, model) => ({ id: `${model}-profile`, modelName: model }),
+    stream: request => { summaries.push(request); return 'model-only stream'; },
+  };
+  const next = () => 'original stream';
+  // The history overflows on the committed model, so its summary is generated
+  // against that model's adapter exactly once.
+  assert.equal(routeHarnessCompaction(options, next, dependency), 'model-only stream');
+  assert.deepEqual(summaries.map(request => request.provider), ['agentkit-studio-wide-profile']);
+  // DSH then switches the session to the smaller model: the next summary is
+  // generated against the new model instead of replaying the old one.
+  committed = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'small' };
+  assert.equal(routeHarnessCompaction({ ...options, model: 'small' }, next, dependency), 'model-only stream');
+  assert.deepEqual(summaries.map(request => request.provider),
+    ['agentkit-studio-wide-profile', 'agentkit-studio-small-profile']);
+  // A compaction for the model the session has left is never summarized again.
+  assert.equal(routeHarnessCompaction(options, next, dependency), 'original stream');
+  assert.equal(summaries.length, 2);
+});
+
 test('compaction rejects a legacy conflicting summary route without dispatching it', async () => {
   const config = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'wide' };
   const options = { ...config, purpose: 'compaction' };
@@ -123,7 +149,10 @@ test('compaction rejects a legacy conflicting summary route without dispatching 
   await assert.rejects(collect(routeHarnessCompaction(options, () => assert.fail('conflict must be diagnosed'), dependencies)), {
     code: 'NATIVE_ENGINE_SUMMARY_MODEL_ROUTE_COLLISION',
   });
-  for (const session of [{}, { requestHeader: {} }, { requestHeader: () => undefined }]) {
+  for (const session of [{}, { requestHeader: {} }, { requestHeader: () => undefined },
+    // A corrupted history throws while the header is read; the raw error must
+    // not escape the `llm/stream` waterfall.
+    { requestHeader: () => { throw new Error('corrupted history'); } }]) {
     assert.equal(routeHarnessCompaction(options, () => 'downstream', {
       ...dependencies,
       resolveSession: () => session,

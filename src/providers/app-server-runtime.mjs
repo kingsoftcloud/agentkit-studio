@@ -563,7 +563,7 @@ export function createAppServerRuntime(options, { id, label, ErrorClass, command
           if (!delta) continue;
           if (params.itemId) deltaItems.add(String(params.itemId));
           const phase = phases.get(String(params.itemId || ''));
-          yield { type: isReasoningPhase(phase) ? 'reasoning' : 'text', text: delta };
+          yield { type: isReasoningPhase(phase) ? 'reasoning' : 'text', text: delta, ...(phase ? { phase } : {}) };
           continue;
         }
         if (method === 'item/reasoning/summaryTextDelta'
@@ -571,7 +571,7 @@ export function createAppServerRuntime(options, { id, label, ErrorClass, command
           || method === 'item/plan/delta') {
           if (params.itemId) reasoningItems.add(String(params.itemId));
           const delta = String(params.delta || params.text || '');
-          if (delta) yield { type: 'reasoning', text: delta };
+          if (delta) yield { type: 'reasoning', text: delta, phase: 'reasoning' };
           continue;
         }
         if (method === 'item/completed') {
@@ -582,10 +582,10 @@ export function createAppServerRuntime(options, { id, label, ErrorClass, command
           if (tool) yield tool;
           if (item.type === 'reasoning' && !reasoningItems.has(String(item.id || ''))) {
             const text = completedReasoningText(item);
-            if (text) yield { type: 'reasoning', text };
+            if (text) yield { type: 'reasoning', text, phase: 'reasoning' };
           }
           if (item.type === 'agentMessage' && !deltaItems.has(String(item.id || '')) && typeof item.text === 'string' && item.text) {
-            yield { type: isFinalPhase(item.phase) ? 'text' : 'reasoning', text: item.text };
+            yield { type: isFinalPhase(item.phase) ? 'text' : 'reasoning', text: item.text, ...(item.phase ? { phase: item.phase } : {}) };
           }
           continue;
         }

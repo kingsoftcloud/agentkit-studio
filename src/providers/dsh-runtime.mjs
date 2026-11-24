@@ -192,7 +192,7 @@ async function* parseSse(body, signal) {
 
 function createChunkState() {
   return {
-    currentKind: '', currentIndex: -1, currentText: '', nextIndex: 0,
+    currentKind: '', currentPhase: '', currentIndex: -1, currentText: '', nextIndex: 0,
     toolNames: new Map(), toolStarted: new Set(), lastTextByKind: new Map(), finished: false,
   };
 }
@@ -203,6 +203,7 @@ function closeCurrentBlock(state) {
   const block = { type: state.currentKind, text: state.currentText };
   state.lastTextByKind.set(state.currentKind, state.currentText);
   state.currentKind = '';
+  state.currentPhase = '';
   state.currentIndex = -1;
   state.currentText = '';
   return [{ type: 'block-end', index, block }];
@@ -213,14 +214,15 @@ function closeBlock(state, kind) {
   return closeCurrentBlock(state);
 }
 
-function appendBlock(state, kind, value) {
+function appendBlock(state, kind, value, phase = '') {
   const text = String(value || '');
   if (!text) return [];
   const frames = [];
-  if (state.currentKind !== kind) {
+  if (state.currentKind !== kind || state.currentPhase !== phase) {
     frames.push(...closeCurrentBlock(state));
     const index = state.nextIndex++;
     state.currentKind = kind;
+    state.currentPhase = phase;
     state.currentIndex = index;
     state.currentText = '';
     frames.push({ type: 'block-start', index, blockType: kind });
@@ -290,7 +292,7 @@ async function* codexFrames(codexRuntime, options, onChunk, toolRecorder, record
       engineAttempt = chunk.attemptId;
       yield* appendBlock(state, 'reasoning', chunk.text);
     }
-    else if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
+    else if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text, chunk.phase || 'reasoning');
     else if (chunk?.type === 'tool') {
       // Codex tool calls are already recorded as an ignorable, native Chat
       // tool-card event by the recorder. Keep that card out of the Assistant
@@ -305,7 +307,8 @@ async function* codexFrames(codexRuntime, options, onChunk, toolRecorder, record
       }
       const name = String(chunk.name || 'bound tool');
       const phase = chunk.phase === 'started' ? '正在调用' : chunk.phase === 'completed' ? '已完成' : '失败';
-      yield* appendBlock(state, 'reasoning', `工具 ${name} ${phase}。`);
+      // Synthetic tool status has no phase: the default keeps it in place.
+      yield* appendBlock(state, 'reasoning', `工具 ${name} ${phase}。`, 'reasoning');
     }
     else if (chunk?.type === 'text') yield* appendBlock(state, 'text', chunk.text);
   }

@@ -190,7 +190,10 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         // shared catalog entry's capabilities.
         return selected?.modelName === model ? [{ images, window: selected.contextWindow ?? 128000 }] : [];
       });
-      const windows = capabilities.map(row => row.window);
+      // A legacy binding without a profile has no known capacity. Drop it
+      // instead of letting `undefined` veto every sibling: one stale binding
+      // must not strip the context window from the whole model.
+      const windows = capabilities.map(row => row.window).filter(value => value !== undefined);
       return { images: capabilities.some(row => row.images),
         ...(windows.length && windows.every(value => Number.isSafeInteger(value) && value > 0)
           ? { contextWindow: Math.min(...windows) } : {}) };

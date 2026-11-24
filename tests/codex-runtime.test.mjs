@@ -44,8 +44,8 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   const chunks = [];
   for await (const chunk of runtime.stream({ input: '你好', messages: [{ role: 'user', content: '之前的问题' }] })) chunks.push(chunk);
   assert.deepEqual(chunks, [
-    { type: 'reasoning', text: '先分析' },
-    { type: 'text', text: '答案' },
+    { type: 'reasoning', text: '先分析', phase: 'commentary' },
+    { type: 'text', text: '答案', phase: 'final_answer' },
   ]);
 });
 
@@ -92,7 +92,7 @@ test('Codex runtime keeps an explicit reasoning-summary override and accepts rea
   for await (const chunk of runtime.stream({ input: '显示摘要' })) chunks.push(chunk);
   assert.equal(turnParams.summary, 'concise');
   assert.deepEqual(chunks.filter(chunk => chunk.type === 'reasoning' || chunk.type === 'text'), [
-    { type: 'reasoning', text: '公开摘要' }, { type: 'text', text: '答案' },
+    { type: 'reasoning', text: '公开摘要', phase: 'reasoning' }, { type: 'text', text: '答案', phase: 'final_answer' },
   ]);
 });
 
@@ -118,7 +118,7 @@ test('Codex runtime recovers a reasoning summary from a completed item when no d
   const chunks = [];
   for await (const chunk of runtime.stream({ input: '恢复完成态摘要' })) chunks.push(chunk);
   assert.deepEqual(chunks.filter(chunk => chunk.type === 'reasoning' || chunk.type === 'text'), [
-    { type: 'reasoning', text: '完成态摘要' }, { type: 'text', text: '答案' },
+    { type: 'reasoning', text: '完成态摘要', phase: 'reasoning' }, { type: 'text', text: '答案', phase: 'final_answer' },
   ]);
 });
 
@@ -460,7 +460,7 @@ test('Codex runtime registers dynamic tools and answers item/tool/call on the Ho
   assert.deepEqual(chunks, [
     { type: 'tool', phase: 'started', name: 'search', id: 'call-1', arguments: { query: '金山云' } },
     { type: 'tool', phase: 'completed', name: 'search', id: 'call-1', arguments: { query: '金山云' }, result: { contentItems: [{ type: 'inputText', text: 'hit' }], success: true } },
-    { type: 'text', text: '工具已执行' },
+    { type: 'text', text: '工具已执行', phase: 'final_answer' },
   ]);
 });
 
@@ -649,7 +649,7 @@ test('Codex command approval is accepted only for a managed allowed-once answer'
   assert.equal(seen[0].reason, 'write marker');
   assert.equal(seen[0].method, 'item/commandExecution/requestApproval');
   assert.deepEqual(harness.replies, [{ decision: 'accept' }]);
-  assert.deepEqual(chunks, [{ type: 'text', text: '完成' }]);
+  assert.deepEqual(chunks, [{ type: 'text', text: '完成', phase: 'final_answer' }]);
 });
 
 test('Codex command approval declines rejected, throwing and missing handlers', async () => {

@@ -6,11 +6,10 @@
  * about it — no `native_endpoints`, no capability flag. A profile therefore has
  * to discover the wire, and the only honest way to discover it is to ask.
  *
- * The probe sends the smallest legal Responses request. A gateway that does not
- * implement the route answers 404, and that is the **only** signal read as
- * "Chat only". Everything else — a timeout, a rejected credential, a 5xx, a
- * model that is listed but not deployed — stays `unknown`, so an unreachable
- * gateway is never written into a profile as a Chat-only fact.
+ * The probe sends the smallest legal Responses request, then checks the
+ * Anthropic Messages route when Responses is absent. A gateway that answers
+ * 404 on both routes is the only signal read as Chat Completions. Everything
+ * else stays `unknown`, so an unreachable gateway is never written as a fact.
  *
  * This module is transport agnostic: the caller owns credentials and network
  * policy, so the browser half can run it through the Host and the tests can run
@@ -22,7 +21,7 @@ const PROBE_MAX_OUTPUT_TOKENS = 32;
 const PROBE_TIMEOUT_MS = 10_000;
 
 /**
- * @typedef {'openai-responses' | 'openai-completions' | 'unknown'} ModelWire
+ * @typedef {'openai-responses' | 'openai-completions' | 'anthropic-messages' | 'unknown'} ModelWire
  */
 
 /**
@@ -42,39 +41,35 @@ export async function probeModelWire({ baseUrl, modelName, apiKey, headers = {},
   const model = String(modelName ?? '').trim();
   const root = String(baseUrl ?? '').trim().replace(/\/+$/, '');
   if (!model || !root || signal?.aborted) return 'unknown';
-  let url;
-  try { url = new URL(`${root}/responses`); } catch { return 'unknown'; }
-  if (!['http:', 'https:'].includes(url.protocol)) return 'unknown';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const requestHeaders = new Headers({
-    'content-type': 'application/json',
-    ...(String(apiKey ?? '').trim() ? { authorization: `Bearer ${String(apiKey).trim()}` } : {}),
-  });
-  for (const [name, value] of Object.entries(headers)) requestHeaders.set(name, value);
+  const request = async (path, body, auth = 'bearer') => {
+    let url;
+    try { url = new URL(`${root}${path}`); } catch { return { status: 0, body: null }; }
+    if (!['http:', 'https:'].includes(url.protocol)) return { status: 0, body: null };
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+    const requestHeaders = new Headers({ 'content-type': 'application/json' });
+    if (apiKey) requestHeaders.set(auth === 'anthropic' ? 'x-api-key' : 'authorization', auth === 'anthropic' ? apiKey : `Bearer ${apiKey}`);
+    for (const [name, value] of Object.entries(headers)) requestHeaders.set(name, value);
+    if (auth === 'anthropic' && !requestHeaders.has('anthropic-version')) requestHeaders.set('anthropic-version', '2023-06-01');
+    try {
+      const response = await fetchImpl(url, { method: 'POST', headers: requestHeaders, body: JSON.stringify(body), signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal, redirect: 'error' });
+      const text = await response.text().catch(() => '');
+      let value; try { value = JSON.parse(text); } catch { value = null; }
+      return { status: response.status, body: value };
+    } catch { return { status: 0, body: null }; }
+    finally { clearTimeout(timer); }
+  };
   try {
-    const response = await fetchImpl(url, {
-      method: 'POST',
-      headers: requestHeaders,
-      body: JSON.stringify({
+    const responses = await request('/responses', {
         model,
         max_output_tokens: PROBE_MAX_OUTPUT_TOKENS,
         input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: PROBE_PROMPT }] }],
-      }),
-      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
-      redirect: 'error',
     });
-    const text = await response.text();
-    if (response.status === 404) return 'openai-completions';
-    if (!response.ok) return 'unknown';
-    const body = JSON.parse(text);
-    return Array.isArray(body?.output) && !body.error && !['failed', 'cancelled'].includes(body.status)
-      ? 'openai-responses' : 'unknown';
+    if (responses.status !== 404) return responses.status >= 200 && responses.status < 300 && Array.isArray(responses.body?.output) && !responses.body.error ? 'openai-responses' : 'unknown';
+    const anthropic = await request('/messages', { model, max_tokens: PROBE_MAX_OUTPUT_TOKENS, messages: [{ role: 'user', content: PROBE_PROMPT }] }, 'anthropic');
+    if (anthropic.status !== 404) return anthropic.status >= 200 && anthropic.status < 300 && anthropic.body?.type === 'message' && Array.isArray(anthropic.body.content) ? 'anthropic-messages' : 'unknown';
+    return 'openai-completions';
   } catch {
-    // Abort, DNS, TLS, connection reset: the probe proved nothing.
     return 'unknown';
-  } finally {
-    clearTimeout(timer);
   }
 }
 

@@ -1,5 +1,5 @@
 import { isCredentialRefName } from '../../credential-ref.mjs';
-import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { harnessModelEndpoint, normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { studioReasoning } from '../../model-reasoning.mjs';
 import { providerWireApi } from '../../model-profile-contract.mjs';
@@ -63,8 +63,14 @@ export function createModelBridge({ hostRemote }) {
         const route = routes[index];
         const modelName = String(profile.modelName).trim();
         const provider = String(profile.provider || 'ksyun').trim() || 'ksyun';
+        const wire = providerWireApi(profile);
         const baseUrl = normalizeModelEndpoint(profile.baseUrl, provider);
         if (!baseUrl) throw new Error(`模型 ${modelName} 需要填写 API 地址`);
+        // DSH appends `/messages` to an Anthropic route's base URL, so the
+        // route has to carry the same version segment the engine process is
+        // given. Without it a summary request to the official DeepSeek
+        // endpoint 404s while the engine's own turns keep working.
+        const routedBaseUrl = harnessModelEndpoint(baseUrl, wire);
         const credentialName = modelCredentialName(profile, index);
         const reasoning = studioReasoning(profile);
         const reasoningEfforts = reasoning?.efforts ?? (profile.reasoningLevels?.length === 0 ? false : undefined);
@@ -87,10 +93,9 @@ export function createModelBridge({ hostRemote }) {
               ...(configured && reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
               ...(configured && reasoning && supportsModelDefaults && !dedicated ? { defaultReasoningEffort: reasoning.defaultEffort } : {}) };
           });
-        const wire = providerWireApi(profile);
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
           displayName: `${provider} · ${modelName}`, api: wire, apiKeyEnv: credentialName,
-          baseURL: baseUrl,
+          baseURL: routedBaseUrl,
           // Kspmas validates message roles and answers
           // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends
           // the system prompt as `developer` to every reasoning model on a route
@@ -137,13 +142,26 @@ export function createModelBridge({ hostRemote }) {
           }
         } catch { /* best-effort compensation, original failure remains authoritative */ }
       };
+      // Write credentials before activating any route. The credential remote
+      // intentionally does not expose secret reads, so a failed write cannot
+      // be rolled back safely. An unused reference is harmless, while an
+      // active route with only some credentials is not.
+      for (const item of operations) {
+        const key = String(keys[item.credentialName] || '').trim();
+        if (!key) continue;
+        if (!isCredentialRefName(item.credentialName)) throw new Error(`模型 ${item.modelName} 的凭证引用不合法（只允许字母、数字和下划线，且不能以数字开头）：${item.credentialName}`);
+        checkActive();
+        const stored = await ctx.remote.credentials.set(item.credentialName, key);
+        checkActive();
+        if (!stored?.ok) throw new Error(stored?.error?.message || `模型 ${item.modelName} 凭证保存失败`);
+      }
       let response;
       try { response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, providerOperations, namespace?.revision); }
-      catch (error) { throw error; }
+      catch (error) { await rollback(); throw error; }
       checkActive();
-      if (!response?.ok) throw new Error(response?.error?.message || 'DSH 模型配置保存失败');
+      if (!response?.ok) { await rollback(); throw new Error(response?.error?.message || 'DSH 模型配置保存失败'); }
       const defaultNamespace = (await describe()).namespaces?.find(item => item.ns === DSH_DEFAULT_MODEL_SETTINGS_NS);
-      if (!defaultNamespace) throw new Error('DSH 默认模型设置不可用，无法让新会话使用该模型');
+      if (!defaultNamespace) { await rollback(); throw new Error('DSH 默认模型设置不可用，无法让新会话使用该模型'); }
       const first = operations[0];
       // The default effort belongs to the default model: a level left behind by
       // an earlier profile makes every fresh session fail with
@@ -159,20 +177,6 @@ export function createModelBridge({ hostRemote }) {
       } catch (error) { await rollback(defaultNamespace); throw error; }
       checkActive();
       if (!defaultResponse?.ok) { await rollback(defaultNamespace); throw new Error(defaultResponse?.error?.message || 'DSH 默认模型保存失败'); }
-      for (const item of operations) {
-        const key = String(keys[item.credentialName] || '').trim();
-        if (!key) continue;
-        // modelCredentialName already repairs the name, so this only fires when
-        // a caller reached the write path another way. Failing the save beats
-        // persisting a reference the Host cannot load on the next boot.
-        if (!isCredentialRefName(item.credentialName)) throw new Error(`模型 ${item.modelName} 的凭证引用不合法（只允许字母、数字和下划线，且不能以数字开头）：${item.credentialName}`);
-        checkActive();
-        let stored;
-        try { stored = await ctx.remote.credentials.set(item.credentialName, key); }
-        catch (error) { await rollback(defaultNamespace); throw error; }
-        checkActive();
-        if (!stored?.ok) { await rollback(defaultNamespace); throw new Error(stored?.error?.message || `模型 ${item.modelName} 凭证保存失败`); }
-      }
       return { provider: first.provider, route: first.route, model: first.modelName, profiles: operations.map(({ operation, ...item }) => item) };
     };
     return {

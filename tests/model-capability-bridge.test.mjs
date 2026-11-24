@@ -42,3 +42,24 @@ test('Anthropic profiles omit OpenAI-only compatibility options when synchronizi
   assert.equal(provider.api, 'anthropic-messages');
   assert.equal(Object.hasOwn(provider, 'compat'), false);
 });
+
+test('an Anthropic route carries the version segment DSH appends /messages to', async () => {
+  const namespaces = [{ ns: DSH_MODEL_SETTINGS_NS, value: { providers: {} } }, { ns: DSH_DEFAULT_MODEL_SETTINGS_NS, value: {} }];
+  const writes = [];
+  const bridge = createModelBridge({ hostRemote: { modelCatalog: async () => ({ items: [] }) } }).createDshModelBridge({
+    remote: { settings: {
+      describe: async () => ({ ok: true, value: { namespaces } }),
+      mutate: async (ns, operations) => { writes.push({ ns, operations }); return { ok: true }; },
+    } },
+  });
+  const routeBaseUrl = async baseUrl => {
+    writes.length = 0;
+    await bridge.applyProfiles({ profiles: [{ ...profile, baseUrl, protocol: 'anthropic-messages' }] });
+    return writes.find(write => write.ns === DSH_MODEL_SETTINGS_NS).operations[0].value.baseURL;
+  };
+  // The official DeepSeek Anthropic root has no version segment of its own, so
+  // DSH would append `/messages` to `/anthropic` and 404 on a summary request.
+  assert.equal(await routeBaseUrl('https://api.deepseek.com/anthropic'), 'https://api.deepseek.com/anthropic/v1');
+  // A gateway that already names its own version keeps it untouched.
+  assert.equal(await routeBaseUrl('https://gateway.invalid/v1'), 'https://gateway.invalid/v1');
+});
