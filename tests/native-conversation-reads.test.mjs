@@ -7,7 +7,7 @@ import { NativeKernel, MemoryRunStore, emptyUsage, projectSessionHistory } from 
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
 import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { sessionKeyFor, WorkspaceStateStore } from '@kingsoftcloud/agentkit-harness-node/native/workspace-state';
-import { nativeConversationReadStates } from '../src/providers/native-conversation-reads.mjs';
+import { nativeConversationReadStates } from './fixtures/retired-native/providers/native-conversation-reads.mjs';
 
 async function source(t, { partial = false, operation = 'read' } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-retained-reads-'))), workspaceRoot = join(root, 'workspace');

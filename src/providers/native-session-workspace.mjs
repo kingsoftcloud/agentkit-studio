@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../contracts/native-values.mjs';
 
 /** Bind one preset's tools to its owning Session, after that Session exists.
  * Managed runtimes retain their deployment-owned filesystem boundary. */

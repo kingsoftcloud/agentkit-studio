@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeChildObservationState } from '../src/client/state/native-child-observation.mjs';
-import { bindNativeSubagents } from '../src/client/dsh/session-task-events.mjs';
+import { nativeChildObservationState } from '@kingsoftcloud/agentkit-harness-ui/host/state/native-child-observation';
+import { bindNativeSubagents } from '@kingsoftcloud/agentkit-harness-ui/host/session-task-events';
 import { initialState, reduceAll } from '@kingsoftcloud/agentkit-harness-ui/reducer';
 
 test('parallel child identities follow parent call IDs even when children arrive in reversed order', () => {

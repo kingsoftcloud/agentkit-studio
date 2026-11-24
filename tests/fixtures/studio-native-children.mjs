@@ -63,7 +63,7 @@ export async function apply(ctx, options) {
     const proof = JSON.parse(await readFile(options.managedProofPath, 'utf8'));
     grantProof = proof.executionGrants === true;
     const target = { tenantId: 'managed-child-tenant', agentInstanceId: record.metadata.id };
-    const { createNativeKernelPermitVerifier } = await import('../../src/providers/native-kernel-permit.mjs');
+    const { createNativeKernelPermitVerifier } = await import('./retired-native/providers/native-kernel-permit.mjs');
     nativeManagedKernel = { target, principal: { userId: 'managed-child-user' }, assertCurrent: () => ctx.fiber.uid !== null,
       ...(a2aProof?.serverInput ? { authorizeInteraction: ({ command, pending }) =>
         command.payload.token_ref === 'managed-input-token' && command.payload.interaction_id === pending.interactionId } : {}),

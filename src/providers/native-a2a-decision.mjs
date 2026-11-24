@@ -1,7 +1,8 @@
 /** Host decisions are committed with the original control intent. Remote
  * status, request correlation and caller JSON are never approval evidence. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, compileToolInput } from '@kingsoftcloud/agentkit-harness-core';
+import { compileToolInput } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { a2aIdentity, a2aEventJournal, enqueueA2AEvents } from './native-a2a-events.mjs';
 import { validateA2aScopeCancellation } from './native-a2a-scope-cancellation.mjs';
 

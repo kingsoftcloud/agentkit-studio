@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from './native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './retired-native/providers/native-dsh-tools.mjs';
 import { nativeDshBatchPeer } from './native-dsh-batch-peer.mjs';
 const [mode, root, origin, queryId = 'cold-query'] = process.argv.slice(2), workspaceRoot = join(root, 'workspace');
 const store = new SqliteRunStore(join(root, 'runs.sqlite'));

@@ -1,6 +1,6 @@
 import { isCredentialRefName } from '../../credential-ref.mjs';
 import { harnessModelEndpoint, normalizeModelEndpoint } from '../../model-endpoint.mjs';
-import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
+import { admitModelCapabilities } from '../../model-capabilities.mjs';
 import { studioReasoning } from '../../model-reasoning.mjs';
 import { providerWireApi } from '../../model-profile-contract.mjs';
 import { dshModelRoute } from '../../model-route.mjs';

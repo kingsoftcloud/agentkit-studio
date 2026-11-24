@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical } from '../contracts/native-values.mjs';
 import { runtimeSkill } from '../skill-files.mjs';
 
 export const SKILL_SOURCE_CONTRACT = 'agentkit.studio-native-skill-source/v1';

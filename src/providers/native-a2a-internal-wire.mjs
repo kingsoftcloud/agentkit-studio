@@ -3,7 +3,7 @@
  * Grants and credential values stay in memory; only intent/fact digests persist.
  * A prepared initial call already bound to a remote Task becomes a read. */
 import { createHash, randomUUID } from 'node:crypto';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { a2aMessageDigest } from './native-a2a-message.mjs';
 import { createA2AProjection } from './native-a2a-protocol.mjs';
 export const A2A_INTERNAL_WIRE = 'agentkit.a2a-internal-wire/v1';

@@ -11,7 +11,7 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
 import { StudioNativeMemoryExtractionStore } from '../src/host/services/native-memory-extraction-store.mjs';

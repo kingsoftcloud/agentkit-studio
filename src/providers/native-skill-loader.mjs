@@ -4,7 +4,7 @@ import { hostFetch } from '../http-fetch.mjs';
 import { fetchKs3 } from '../ks3-endpoints.mjs';
 import { materializeCloudSkill } from '../skill-files.mjs';
 import { parseFrontmatter } from '../skill-discovery.mjs';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 
 export const NATIVE_SKILL_LOADER = 'agentkit.native-skill-loader/v1';
 const fail = code => Object.assign(new Error(code), { code });

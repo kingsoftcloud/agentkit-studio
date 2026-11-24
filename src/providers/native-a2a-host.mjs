@@ -8,11 +8,11 @@ import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { isIP } from 'node:net';
 import aws4 from 'aws4';
-import { canonical, copy, invariant, scopeKey, parseNativeJson, terminal } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, privateDirectory, readAll, tryLock } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
-import { isBlockedAddress } from '@kingsoftcloud/agentkit-harness-node/native/web-tools';
+import { canonical, copy, invariant, isTerminalRunPhase, scopeKey } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
+import { atomicPrivate, privateDirectory, readAll, tryLock } from '../host/private-state.mjs';
 import { hostFetch } from '../http-fetch.mjs';
-import { createSsrfPinnedFetch } from './native-dsh-web.mjs';
+import { createSsrfPinnedFetch, isBlockedAddress } from './ssrf-pinned-fetch.mjs';
 import { a2aSse, a2aTerminal, a2aSubscriptionEventId, createA2AProjection, NATIVE_A2A_PROTOCOL } from './native-a2a-protocol.mjs';
 import { a2aControlView, createA2ATaskControl } from './native-a2a-controls.mjs';
 import { createInternalA2AControlPlane } from './native-a2a-control-plane.mjs';
@@ -618,7 +618,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       settle(snapshot) {
         const checkTerminal = () => {
           deliveryGuard();
-          invariant(typeof assertQuestionTerminal === 'function' && terminal(snapshot.phase)
+          invariant(typeof assertQuestionTerminal === 'function' && isTerminalRunPhase(snapshot.phase)
             && canonical(snapshot.scope) === canonical(fixedScope) && snapshot.sessionId === sessionId,
           'A2A_QUESTION_TERMINAL_AUTHORITY_REQUIRED');
           const verdict = assertQuestionTerminal(snapshot);

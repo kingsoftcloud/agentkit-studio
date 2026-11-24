@@ -4,13 +4,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { createDshNodeE2BCommandTools } from '../src/providers/dsh-node-e2b-command-tools.mjs';
-import { createDshE2BCommandTools } from '@kingsoftcloud/agentkit-harness-node/native/e2b-command-tools';
+import { createDshE2BCommandTools } from '../src/providers/studio-e2b-command-transport.mjs';
+import { E2BCommandStore } from '../src/providers/studio-e2b-command-store.mjs';
 import { commandDigest, commandStateRoot } from '../src/providers/dsh-node-command-ledger.mjs';
+import { tryLock } from '../src/host/private-state.mjs';
 import { skillE2BSdk } from './fixtures/native-skill-e2b-sdk.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -48,6 +51,98 @@ function setup(t, { peer: options = {}, ...extra } = {}) {
     rmSync(root, { recursive: true, force: true }); });
   return { root, workspaceRoot, stateDir, config, peer, port, open, run, execution, ledgerFile, get loads() { return loads; } };
 }
+
+test('a detached E2B supervisor waits for a concurrent receipt probe', async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-e2b-probe-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot);
+  const ready = join(root, 'ready'), dispatch = join(root, 'dispatch'), effects = join(root, 'effects');
+  const transport = join(root, 'transport.mjs');
+  writeFileSync(transport, `
+    import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+    import { setTimeout as delay } from 'node:timers/promises';
+    export async function factory({ ready, dispatch, effects }) {
+      writeFileSync(ready, 'ready');
+      const deadline = performance.now() + 10000;
+      while (!existsSync(dispatch) && performance.now() < deadline) await delay(10);
+      if (!existsSync(dispatch)) throw new Error('missing test release');
+      return { async start(command, { sandboxId }) {
+        appendFileSync(effects, command);
+        return { pid: 41, sandboxId, handle: { result: { exitCode: 0 },
+          async *[Symbol.asyncIterator]() { yield { stdout: command }; } } };
+      } };
+    }
+  `);
+  const store = new E2BCommandStore({ workspaceRoot, stateRoot: join(root, 'state'), sessionId: 'original',
+    sandboxId: 'probe-fixture', authority: () => true, transportModule: pathToFileURL(transport).href,
+    transportConfig: { ready, dispatch, effects } });
+  const input = { operationKey: 'original', command: 'once', timeoutSeconds: 12 };
+  const original = await store.start(input);
+  await until(() => existsSync(ready));
+  const release = tryLock(join(original.directory, 'supervisor.sqlite'));
+  assert.equal(typeof release, 'function');
+  try {
+    writeFileSync(dispatch, 'open');
+    await pause(350);
+    assert.equal(existsSync(effects), false);
+  } finally { release(); }
+  assert.equal((await original.wait({ timeoutMs: 6500 })).stdout, 'once');
+  assert.notEqual(original.processId, process.pid);
+  const reopened = await store.start(input);
+  assert.equal(reopened.commandId, original.commandId);
+  assert.equal(reopened.readOutput().status, 'completed');
+  assert.equal(readFileSync(effects, 'utf8'), 'once');
+});
+
+test('detached E2B supervisors preserve receipts across a Studio and compatibility-library handoff', async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-e2b-worker-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot);
+  const peer = join(root, 'peer.mjs');
+  const launches = join(root, 'launches');
+  writeFileSync(peer, `
+    import { appendFileSync } from 'node:fs';
+    export function factory({ launches }) {
+      return {
+        async start(command, { sandboxId }) {
+          appendFileSync(launches, command + '\\n');
+          const handle = {
+            result: { exitCode: 0 },
+            async *[Symbol.asyncIterator]() { yield { stdout: command, stderr: '诊断' }; },
+          };
+          return { pid: 41, sandboxId, handle };
+        },
+        async reconnect() { throw new Error('completed command was reconnected'); },
+        async kill() { throw new Error('completed command was killed'); },
+      };
+    }
+  `);
+  const { E2BCommandStore: CompatibilityStore } = await import('@kingsoftcloud/agentkit-harness-node/native/e2b-background');
+  const scope = {
+    workspaceRoot, stateRoot: join(root, 'state'), sessionId: 'original-session',
+    sandboxId: 'fixture-detached', authority: record => record.sandboxId === 'fixture-detached',
+    transportModule: pathToFileURL(peer).href, transportConfig: { launches },
+  };
+  const oldStore = new CompatibilityStore(scope), studioStore = new E2BCommandStore(scope);
+  for (const { writer, reader, operationKey, command } of [
+    { writer: oldStore, reader: studioStore, operationKey: 'previous-release', command: 'previous 😀' },
+    { writer: studioStore, reader: oldStore, operationKey: 'studio-release', command: '现在 😀' },
+  ]) {
+    const input = { operationKey, command, timeoutSeconds: 8 };
+    const started = await writer.start(input);
+    await until(() => JSON.parse(readFileSync(join(started.directory, 'record.json'), 'utf8')).supervisorPid !== undefined);
+    assert.equal((await started.wait({ timeoutMs: 5000 })).stdout, command);
+    assert.notEqual(started.processId, process.pid);
+    assert.equal(reader.commandId(operationKey), started.commandId);
+    const resumed = await reader.start(input);
+    assert.deepEqual(await resumed.wait({ timeoutMs: 5000 }), { stdout: command, stderr: '诊断', exitCode: 0 });
+    assert.equal(resumed.readOutput({ maxBytes: 4 }).status, 'completed');
+    assert.equal(resumed.readOutput({ maxBytes: 4 }).stderr, '诊');
+  }
+  assert.equal(readFileSync(launches, 'utf8'), 'previous 😀\n现在 😀\n');
+});
 
 test('real E2B foreground command, exact output and original DSH identities survive duplicate/cold calls without SDK reentry', async t => {
   const h = setup(t); assert.equal(h.loads, 0); assert.equal(h.port.binding.backend, 'e2b');

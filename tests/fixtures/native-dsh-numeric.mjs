@@ -7,7 +7,7 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
 import { nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { createNativeDshTurnExecutor } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
-import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './retired-native/providers/native-dsh-tools.mjs';
 import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
 import { snapshotNativeMcpSchema } from '../../src/providers/native-mcp-schema.mjs';
 import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';

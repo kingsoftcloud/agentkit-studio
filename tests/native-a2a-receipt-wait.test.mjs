@@ -10,8 +10,8 @@ import { fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeA2aToolPort, nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
 import { prepareNativeA2AHost } from '../src/providers/native-a2a-host.mjs';
-import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
-import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter, nativeA2aReceiptWaitSource } from '../src/providers/native-a2a-receipt.mjs';
+import { createNativeToolAuthority } from './fixtures/retired-native/providers/native-tool-authority.mjs';
+import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter, nativeA2aReceiptWaitSource } from './fixtures/retired-native/providers/native-a2a-receipt.mjs';
 import { internalPeer, scope, spec } from './fixtures/native-a2a-internal-peer.mjs';
 import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';
 

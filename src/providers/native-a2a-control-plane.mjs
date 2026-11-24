@@ -2,7 +2,8 @@
  * public-service fallback or remote message dispatch. The Host persists each
  * potential-effect intent before calling this transport. */
 import { createHash, randomUUID } from 'node:crypto';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
 import { hostFetch } from '../http-fetch.mjs';
 import { A2A_EVENT_PERMANENT_ERRORS } from './native-a2a-events.mjs';
 import { parseA2aInboundSubmission } from './native-a2a-inbound-kernel.mjs';

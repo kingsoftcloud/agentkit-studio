@@ -1,11 +1,11 @@
 import test from 'node:test';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createManagedNativeKernel, managedNativeRunId } from '../src/providers/native-managed-kernel.mjs';
+import { createManagedNativeKernel, managedNativeRunId } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel';
 import { createA2aInboundTaskStore } from '../src/providers/native-a2a-inbound-task-store.mjs';
 import { streamA2aInboundKernelFacts } from '../src/providers/native-a2a-inbound-kernel.mjs';
 import { permitIssuer, command, target, scope, binding, response, tool } from './fixtures/native-managed-kernel.mjs';

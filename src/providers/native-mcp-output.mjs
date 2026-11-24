@@ -1,4 +1,5 @@
-import { canonical, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
 
 /** Project a known MCP receipt without fetching resource URIs or exposing binary data as text. */
 export function nativeMcpOutcome(result, { validateOutput, deduplicateStructured = false } = {}) {

@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { NativeKernel, MemoryRunStore, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest, tool } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from '../src/providers/native-tool-authority.mjs';
-import { createNativeHostInteraction } from '../src/providers/native-host-interaction.mjs';
+import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from './fixtures/retired-native/providers/native-tool-authority.mjs';
+import { createNativeHostInteraction } from './fixtures/retired-native/providers/native-host-interaction.mjs';
 
 for (const repair of [false, true]) for (const sqlite of [false, true]) test(`${sqlite ? 'SQLite' : 'Memory'}: ${repair ? 'repair' : 'receipt'} authority requires the actual new claim and exact original identity`, async t => {
   const root = mkdtempSync(join(tmpdir(), 'receipt-authority-'));

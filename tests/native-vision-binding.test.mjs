@@ -10,8 +10,8 @@ import {
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
-import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
-import { createStudioNativeVisionBinding, STUDIO_NATIVE_VISION_BINDING } from '../src/providers/native-vision-binding.mjs';
+import { createNativeToolAuthority } from './fixtures/retired-native/providers/native-tool-authority.mjs';
+import { createStudioNativeVisionBinding, STUDIO_NATIVE_VISION_BINDING } from './fixtures/retired-native/providers/native-vision-binding.mjs';
 
 const DATA_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
 

@@ -1,5 +1,5 @@
 /** Public, revision-pinned resource facts. No credentials or endpoint settings. */
-import { copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { copy, invariant } from '../contracts/native-values.mjs';
 export const DSH_COMPONENT_BINDINGS = 'agentkit.dsh-component-bindings/v1';
 
 export function dshComponentBindings(spec = {}) {

@@ -4,7 +4,8 @@ import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { canonical, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical } from '../../src/contracts/native-values.mjs';
+import { parseNativeJson } from '../../src/contracts/native-json.mjs';
 import { createA2aGatewayIdentityVerifier } from '../../src/providers/native-a2a-ingress-identity.mjs';
 import { createInternalA2AControlPlane } from '../../src/providers/native-a2a-control-plane.mjs';
 import { createA2aInboundAdmission } from '../../src/providers/native-a2a-inbound-admission.mjs';

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
-import { managedNativeOwnerProjection, STUDIO_MANAGED_NATIVE_EXECUTION } from '../src/host/services/native-managed-execution.mjs';
+import { managedNativeOwnerProjection, STUDIO_MANAGED_NATIVE_EXECUTION } from './fixtures/retired-native/host/services/native-managed-execution.mjs';
 
 const owner = turn => ({ contract: 'dsh.external-turn/v1', turn, engine: STUDIO_MANAGED_NATIVE_EXECUTION,
   binding: canonical({ contract: STUDIO_MANAGED_NATIVE_EXECUTION, configDigest: 'a'.repeat(64), identity: {

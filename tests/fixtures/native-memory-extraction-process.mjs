@@ -8,8 +8,8 @@ import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/nati
 import { createNativeContextPort } from '@kingsoftcloud/agentkit-harness-node/native/context-counter';
 import { memoryDigest } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
-import { nativeRecoveryBinding } from '../../src/providers/native-recovery-binding.mjs';
-import { createStudioNativeMemoryExtraction } from '../../src/host/services/native-memory-extraction.mjs';
+import { nativeRecoveryBinding } from './retired-native/providers/native-recovery-binding.mjs';
+import { createStudioNativeMemoryExtraction } from './retired-native/host/services/native-memory-extraction.mjs';
 import { StudioNativeMemoryExtractionStore } from '../../src/host/services/native-memory-extraction-store.mjs';
 
 const [root, phase, modelUrl] = process.argv.slice(2);

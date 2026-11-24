@@ -8,7 +8,7 @@ import { stringify } from 'yaml';
 import { loadManagedRuntimeDefinition } from '../src/managed-runtime-definition.mjs';
 import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
 import { nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { NativeKernel, MemoryRunStore, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';

@@ -11,7 +11,7 @@
  * carries a bad manifest. */
 import { isDeepStrictEqual } from 'node:util';
 import { selectedNativeBuildContract } from './build-engine.mjs';
-import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
+import { NATIVE_DSH_TURN_CONTRACT } from './contracts/native-dsh.mjs';
 import { NATIVE_NODE_BUILTIN_NAMES } from './providers/dsh-node-builtin-catalog.mjs';
 
 export const PORTABLE_NATIVE_BUILTIN_CONTRACT = 'agentkit.portable-native-builtin/v1';

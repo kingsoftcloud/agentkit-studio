@@ -9,7 +9,8 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { createDshNodeSkillWorkflowTools, DSH_NODE_SKILL_WORKFLOW } from '../src/providers/dsh-node-skill-workflow-tools.mjs';
-import { createDshLocalSkillRuntime, nativeSkillRuntimeSettings, DSH_LOCAL_SKILL_RUNTIME } from '../src/providers/native-skill-runtime.mjs';
+import { createDshLocalSkillRuntime, DSH_LOCAL_SKILL_RUNTIME } from '../src/providers/native-skill-runtime.mjs';
+import { nativeSkillRuntimeSettings } from '../src/providers/studio-skill-runtime-files.mjs';
 import { createDshNodeBuiltins } from '../src/providers/dsh-node-builtins.mjs';
 import { LocalCommandStore } from '@kingsoftcloud/agentkit-harness-node/native/local-background';
 import { runtimeSkill } from '../src/skill-files.mjs';
@@ -17,8 +18,8 @@ import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 
 const moduleUrl = new URL('../src/providers/dsh-node-skill-workflow-tools.mjs', import.meta.url).href;
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-async function waitFor(predicate) {
-  const until = performance.now() + 15000;
+async function waitFor(predicate, timeoutMs = 15000) {
+  const until = performance.now() + timeoutMs;
   while (!predicate()) { assert.ok(performance.now() < until, 'expected real process boundary'); await new Promise(resolve => setTimeout(resolve, 15)); }
 }
 function records(root) {
@@ -29,7 +30,7 @@ function records(root) {
     return record.contract === DSH_LOCAL_SKILL_RUNTIME ? [{ file, record }] : [];
   });
 }
-function setup(t, { script, ...extra } = {}) {
+function setup(t, { script, runtimeTimeout = '15', ...extra } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-skill-workflow-'))), workspaceRoot = join(root, 'workspace');
   const pkg = join(root, 'skill'), bin = join(root, 'bin'); mkdirSync(workspaceRoot); mkdirSync(bin);
   symlinkSync(process.execPath, join(bin, 'node')); symlinkSync('/bin/bash', join(bin, 'bash'));
@@ -39,7 +40,7 @@ function setup(t, { script, ...extra } = {}) {
   writeFileSync(join(pkg, 'scripts/run-workflow.sh'), script ?? `printf x >> '${workspaceRoot}/effect'\nprintf 'DSH result 😀' > "$KSADK_SKILL_OUTPUT_DIR/result.txt"\nprintf '\\000\\001\\377' > "$KSADK_SKILL_OUTPUT_DIR/raw.bin"\nprintf 'artifact=artifacts/result.txt\\nartifact=artifacts/raw.bin\\n'`, { mode: 0o700 });
   const config = { ctx: { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) } }, agentId: 'agent', agentRevision: 3,
     workspaceRoot, stateDir: join(root, 'state'), skillDefinitions: [runtimeSkill({ name: 'alpha', content, path: join(pkg, 'SKILL.md') })],
-    env: { KSADK_SKILL_RUNTIME_BACKEND: 'local_process', KSADK_SKILL_RUNTIME_TIMEOUT: '15', PATH: bin, PRIVATE_SECRET: 'never-inherit' }, ...extra };
+    env: { KSADK_SKILL_RUNTIME_BACKEND: 'local_process', KSADK_SKILL_RUNTIME_TIMEOUT: runtimeTimeout, PATH: bin, PRIVATE_SECRET: 'never-inherit' }, ...extra };
   const ports = [], open = options => { const port = createDshNodeSkillWorkflowTools({ ...config, ...options }); ports.push(port); return port; };
   const port = open(), args = { workflow_prompt: 'Use alpha', skill_names: ['alpha'] };
   const execution = (body = args, callId = 'call', sessionId = 'session') => ({ agent: { session: { id: sessionId } }, callId,
@@ -233,14 +234,15 @@ test('cancellation, Host retirement and workflow timeout retain original locator
 });
 
 test('real SIGKILL after a script effect leaves an uncertain original intent and a fresh owner never launches it', async t => {
-  const h = setup(t, { script: 'printf x > "$KSADK_SKILL_WORKDIR/effect"\n/bin/sleep 30' });
+  const h = setup(t, { script: 'printf x > "$KSADK_SKILL_WORKDIR/effect"\n/bin/sleep 60', runtimeTimeout: '60' });
   const code = `import {createDshNodeSkillWorkflowTools} from ${JSON.stringify(moduleUrl)};const config=JSON.parse(process.argv[1]),args=JSON.parse(process.argv[2]);
     config.ctx={sandboxPolicy:{resolve:()=>({mode:'workspace-write'})}};const port=createDshNodeSkillWorkflowTools(config);
     await port.execute('execute_skills',args,{agent:{session:{id:'session'}},callId:'call',name:'execute_skills',arguments:args,signal:new AbortController().signal});`;
   const child = spawn(process.execPath, ['--input-type=module', '-e', code, JSON.stringify({ ...h.config, ctx: undefined }), JSON.stringify(h.args)],
     { env: { ...process.env, PATH: h.config.env.PATH, AGENTKIT_KSADK_PYTHON: '/unavailable/python' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = ''; child.stderr.on('data', data => stderr += data); t.after(() => child.kill('SIGKILL'));
-  await waitFor(() => h.records().some(({ file }) => existsSync(join(file, '../work/effect'))));
+  await waitFor(() => h.records().some(({ file }) => existsSync(join(file, '../work/effect'))) || child.exitCode !== null, 35000);
+  assert.equal(child.exitCode, null, stderr);
   const exited = once(child, 'exit'); child.kill('SIGKILL'); const [exit, signal] = await exited;
   assert.equal(exit, null, stderr); assert.equal(signal, 'SIGKILL');
   const [{ file, record }] = h.records(), before = readFileSync(file, 'utf8'); assert.equal(record.phase, 'executing');

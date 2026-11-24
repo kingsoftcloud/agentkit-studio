@@ -1,6 +1,6 @@
 /** Studio's small routing contract; transcript ownership stays with each runtime. */
 import { DSH_ASSISTANT_STREAM_FRAME_TYPES, DSH_SESSION_EVENT_TYPES } from './host/dsh-session-contract.mjs';
-import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
+import { NATIVE_DSH_TURN_CONTRACT } from './contracts/native-dsh.mjs';
 import { STUDIO_RUNTIME_TYPES, isRoutableRuntimeType } from './runtime-types.mjs';
 
 /**

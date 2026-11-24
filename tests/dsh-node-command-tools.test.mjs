@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,11 +11,15 @@ import { createDshNodeCommandTools } from '../src/providers/dsh-node-command-too
 import { createDshNodeBuiltins } from '../src/providers/dsh-node-builtins.mjs';
 import { commandDigest, commandStateRoot, DshNodeCommandLedger } from '../src/providers/dsh-node-command-ledger.mjs';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { LocalCommandStore } from '@kingsoftcloud/agentkit-harness-node/native/local-background';
+import { LocalCommandStore as StudioCommandStore } from '../src/providers/studio-local-command/local-background.mjs';
+import { localCommandToolDefinitions } from '../src/providers/studio-local-command/local-command-tools.mjs';
+import { localCommandToolDefinitions as compatibilityDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/local-command-tools';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
-async function until(check) {
-  const deadline = performance.now() + 10000;
+async function until(check, timeoutMs = 10000) {
+  const deadline = performance.now() + timeoutMs;
   while (!check()) { assert.ok(performance.now() < deadline, 'condition deadline'); await pause(20); }
 }
 function fixture(t, options = {}) {
@@ -31,10 +35,35 @@ function fixture(t, options = {}) {
     const controller = new AbortController(); controllers.push(controller);
     return { name, arguments: args, callId, signal: controller.signal, agent: { session: { id: sessionId } }, controller };
   }
-  t.after(() => { for (const controller of controllers) controller.abort(); for (const item of ports) item.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { for (const controller of controllers) controller.abort(); for (const item of ports) item.close(); rmSync(root, { recursive: true, force: true, maxRetries: 4 }); });
   return { root, workspaceRoot, stateDir, config, port, open, execution,
     run: (name, args, callId, sessionId, target = port) => target.execute(name, args, execution(name, args, callId, sessionId)) };
 }
+
+test('old and new local process supervisors continue the same durable command in both directions', async t => {
+  const f = fixture(t);
+  const options = { stateRoot: f.stateDir, workspaceRoot: f.workspaceRoot, sessionId: 'original-session' };
+  assert.deepEqual(localCommandToolDefinitions(), compatibilityDefinitions());
+  const oldStore = new LocalCommandStore(options), studioStore = new StudioCommandStore(options);
+  for (const [writer, reader, mark, shellPolicy] of [
+    [oldStore, studioStore, '甲', 'bash-execution/v1'],
+    [studioStore, oldStore, '乙', null],
+  ]) {
+    const operationKey = `handoff-${mark}`;
+    const input = { operationKey, command: `printf '${mark}' >> effects; printf '${mark}😀'; sleep 0.3`,
+      cwd: f.workspaceRoot, env: { LANG: 'C.UTF-8', PATH: '/bin:/usr/bin' }, timeoutMs: 12000, shellPolicy };
+    const launched = await writer.start(input);
+    const resumed = await reader.start(input);
+    assert.equal(resumed.commandId, launched.commandId);
+    assert.equal(resumed.processId, launched.processId);
+    assert.notEqual(resumed.processId, process.pid);
+    const result = await resumed.wait({ timeoutMs: 10000 });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.stdout, mark + '😀');
+    assert.equal(resumed.readOutput({ maxBytes: 4 }).stdout, mark);
+  }
+  assert.equal(readFileSync(join(f.workspaceRoot, 'effects'), 'utf8'), '甲乙');
+});
 
 test('real supervised foreground output, changed paths and immutable duplicate calls survive reopen', async t => {
   const f = fixture(t), args = { command: 'printf x >> counter; printf "$HOST_SECRET:$CI"; exit 7' };
@@ -80,6 +109,17 @@ test('background read, byte cursors and scoped stop survive reopen without grant
   assert.equal(stopped.status, 'ok');
   const done = await f.run('read_command_output', { task_id: taskId, wait_seconds: 2 }, 'final', 'session', reopened);
   assert.equal(done.content.status, 'canceled'); assert.equal(done.content.exit_code, -osConstants.signals.SIGTERM);
+});
+
+test('stopping a newly launched background command confirms cancellation without a workload effect', async t => {
+  const f = fixture(t);
+  const launched = await f.run('run_command', { command: '/bin/sleep 2; printf effect > must-not-write', background: true });
+  assert.equal(launched.status, 'ok');
+  const task = { task_id: launched.content.task_id };
+  assert.equal((await f.run('stop_command', task, 'immediate-stop')).status, 'ok');
+  const stopped = await f.run('read_command_output', { ...task, wait_seconds: 2 }, 'canceled-output');
+  assert.equal(stopped.content.status, 'canceled');
+  assert.equal(existsSync(join(f.workspaceRoot, 'must-not-write')), false);
 });
 
 test('large supervised foreground output is retained in a real immutable Session-bound artifact', async t => {
@@ -139,14 +179,23 @@ test('original cancellation settles an uncooperative approval and observes its l
 
 for (const cancel of ['caller', 'host', 'close']) {
   test(`${cancel} cancels a supervised foreground command without replaying or reaching its later effect`, async t => {
-    const host = new AbortController(), f = fixture(t, { signal: host.signal });
-    const args = { command: 'printf ready > started; sleep 1; printf no > forbidden' }, exec = f.execution('run_command', args);
-    const pending = f.port.execute(exec.name, args, exec); await until(() => existsSync(join(f.workspaceRoot, 'started')));
+    const host = new AbortController(), f = fixture(t, { signal: host.signal, settings: { wallSeconds: 30 } });
+    const args = { command: 'printf ready > started; while [ ! -f release ]; do sleep 0.05; done; printf no > forbidden' };
+    const exec = f.execution('run_command', args);
+    const pending = f.port.execute(exec.name, args, exec);
+    let early;
+    void pending.then(result => { early = result; });
+    await until(() => existsSync(join(f.workspaceRoot, 'started')) || Boolean(early), 30000);
+    assert.equal(early, undefined, 'command must still be running at the cancellation boundary');
     if (cancel === 'caller') exec.controller.abort();
     if (cancel === 'host') host.abort();
     if (cancel === 'close') f.port.close();
     const result = await pending; assert.equal(result.status, 'uncertain'); assert.ok(result.content.task_id);
-    await pause(1200); assert.equal(existsSync(join(f.workspaceRoot, 'forbidden')), false);
+    const state = commandStateRoot(f.stateDir, f.workspaceRoot, 'bound-agent');
+    const processes = new LocalCommandStore({ stateRoot: join(state.root, 'processes'), workspaceRoot: f.workspaceRoot, sessionId: 'session' });
+    const stopped = await processes.connect(result.content.task_id).wait({ timeoutMs: 15000 });
+    assert.equal(stopped.status, 'canceled');
+    assert.equal(existsSync(join(f.workspaceRoot, 'forbidden')), false);
     const reopened = f.open({ signal: undefined });
     const retry = await f.run('run_command', args, 'call', 'session', reopened);
     assert.deepEqual(retry, result);
@@ -204,7 +253,8 @@ for (const invalid of ['async', 'false', 'mutates']) test(`ledger rejects ${inva
 });
 
 test('actual foreground Host SIGKILL leaves an uncertain call; detached supervisor completes without replay', async t => {
-  const f = fixture(t), fixturePath = fileURLToPath(new URL('./fixtures/dsh-node-command-crash.mjs', import.meta.url));
+  const f = fixture(t, { settings: { wallSeconds: 30 } });
+  const fixturePath = fileURLToPath(new URL('./fixtures/dsh-node-command-crash.mjs', import.meta.url));
   const child = spawn(process.execPath, [fixturePath, f.workspaceRoot, f.stateDir, 'after'], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = ''; child.stderr.on('data', bytes => { stderr += bytes; });
   const closed = once(child, 'close'); t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
@@ -214,10 +264,14 @@ test('actual foreground Host SIGKILL leaves an uncertain call; detached supervis
   const state = commandStateRoot(f.stateDir, f.workspaceRoot, 'bound-agent');
   const path = join(state.root, commandDigest({ agentId: 'bound-agent', sessionId: 'session' }), commandDigest('crash-call'), 'record.json');
   const intent = readFileSync(path, 'utf8'); assert.equal(JSON.parse(intent).phase, 'executing');
-  const args = { command: 'printf x >> counter; printf ready > ready; sleep 1; printf done' };
+  const args = { command: 'printf x >> counter; printf ready > ready; while [ ! -f release ]; do sleep 0.05; done; printf done' };
   const result = await f.run('run_command', args, 'crash-call');
   assert.equal(result.status, 'uncertain'); assert.equal(result.content.task_id, JSON.parse(intent).taskId);
-  await pause(1400);
+  writeFileSync(join(f.workspaceRoot, 'release'), 'continue');
+  const processes = new LocalCommandStore({ stateRoot: join(state.root, 'processes'), workspaceRoot: f.workspaceRoot, sessionId: 'session' });
+  const completed = await processes.connect(result.content.task_id).wait({ timeoutMs: 15000 });
+  assert.equal(completed.exitCode, 0);
+  assert.equal(completed.stdout, 'done');
   assert.equal(readFileSync(join(f.workspaceRoot, 'counter'), 'utf8'), 'x');
   assert.equal(readFileSync(path, 'utf8'), intent);
   const again = await f.run('run_command', args, 'crash-call'); assert.deepEqual(again, result);

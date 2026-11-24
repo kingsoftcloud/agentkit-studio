@@ -2,7 +2,7 @@
  * Tool arguments cannot select a user. A changed principal invalidates any
  * pending call which captured the previous context object.
  */
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../contracts/native-values.mjs';
 import { isInvocationContextRuntimeType } from '../runtime-types.mjs';
 const contexts = new WeakMap();
 export function bindDshInvocationContext(agent, { userId, runnerType }) {

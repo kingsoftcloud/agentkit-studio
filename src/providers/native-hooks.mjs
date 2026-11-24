@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, hookIdentity, validateHookDefinition } from '@kingsoftcloud/agentkit-harness-core';
-import { createNativeHookExecutor, nativeHookExecutionPolicyDigest } from '@kingsoftcloud/agentkit-harness-node/native/hook-executor';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { hookIdentity, validateHookDefinition } from '../contracts/native-hook.mjs';
+import { createNativeHookExecutor, nativeHookExecutionPolicyDigest } from '../host/native-hook-executor.mjs';
 
 export const STUDIO_NATIVE_HOOK_CONTRACT = 'agentkit.studio-native-hooks/v1';
 const digest = value => 'sha256:' + createHash('sha256').update(canonical(value)).digest('hex');

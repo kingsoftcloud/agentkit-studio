@@ -2,6 +2,11 @@
 export type JsonValue = null | boolean | number | string | JsonArray | JsonObject;
 export interface JsonArray extends Array<JsonValue> {}
 export interface JsonObject { [key: string]: JsonValue | undefined }
+
+/** Model and ledger JSON preserve exact integer values before wire encoding. */
+export type NativeJson = null | boolean | number | string | bigint | NativeJson[] | NativeJsonObject;
+export interface NativeJsonObject { [key: string]: NativeJson }
+
 export type StudioEnvelope =
   | { ok: true; value?: unknown; requestId?: string }
   | { ok: false; error?: { code?: string; message?: string; details?: unknown; status?: number } };

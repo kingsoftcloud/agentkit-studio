@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeSessionToolOutcomes } from '../src/host/services/native-session-tool-outcomes.mjs';
+import { nativeSessionToolOutcomes } from './fixtures/retired-native/host/services/native-session-tool-outcomes.mjs';
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };
 const record = (runId, turnId, projections = {}) => ({ snapshot: { scope, runId, turnId }, projections });
 const fact = (runId, turnId) => ({ runId, turnId, callId: 'call' });

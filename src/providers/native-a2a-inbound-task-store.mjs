@@ -4,8 +4,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, privateDirectory, readAll, tryLock } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
+import { atomicPrivate, privateDirectory, readAll, tryLock } from '../host/private-state.mjs';
 import { compileA2aPublicToolPolicy, projectA2aPublicTools } from './native-a2a-public-tool-producer.mjs';
 
 export const A2A_INBOUND_TASK_STORE = 'agentkit.a2a-inbound-task-store/v1';

@@ -10,7 +10,7 @@ import { NativeKernel, configure, emptyUsage, canonical, artifactToolDefinitions
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { fixture, scope, digest } from '../../../tests/fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeToolAuthority } from '../../../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority } from '../../fixtures/retired-native/providers/native-tool-authority.mjs';
 import { createNativeE2BCommandTools, e2bCommandToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/e2b-command-tools';
 import { E2BCommandStore } from '@kingsoftcloud/agentkit-harness-node/native/e2b-background';
 import { createOwnedCommandResolver } from '@kingsoftcloud/agentkit-harness-node/native/owned-command';

@@ -8,9 +8,9 @@ import { tmpdir } from 'node:os';
 import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
-import { studioNativeComponentStatus } from '../src/providers/native-component-status.mjs';
+import { studioNativeComponentStatus } from './fixtures/retired-native/providers/native-component-status.mjs';
 import { skillE2BSdk } from './fixtures/native-skill-e2b-sdk.mjs';
 
 function setup(t, { backend = 'e2b', deny = false } = {}) {

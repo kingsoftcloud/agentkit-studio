@@ -30,8 +30,9 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { createStudioWorkspaceTools, workspaceToolDefinitions } from './studio-workspace/workspace-tools.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
 
 export const DSH_NODE_WORKSPACE_CONTRACT = 'agentkit.dsh-node-workspace/v1';
@@ -94,9 +95,10 @@ const errorResult = (code, message) => ({
  * @param {string} opts.agentId Trusted bound agent id from the constructor;
  *   never confused with a DSH Agent.id.
  * @param {() => boolean} [opts.isClosed] Optional Host-side closed signal.
+ * @param {Set<string>} [opts.requested] Explicitly bound tool names, if supplied.
  * @returns {{contract,definitions,supports(name):boolean,execute(name,args,exec):Promise<object>,close()}}
  */
-export function createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agentId, isClosed = () => false } = {}) {
+export function createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agentId, isClosed = () => false, requested } = {}) {
   invariant(typeof workspaceRoot === 'string' && workspaceRoot.trim(), 'dsh_node_workspace_root_missing');
   invariant(typeof stateDir === 'string' && stateDir.trim(), 'dsh_node_workspace_state_dir_missing');
   invariant(typeof agentId === 'string' && agentId.trim(), 'dsh_node_workspace_agent_id_missing');
@@ -120,14 +122,7 @@ export function createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agen
   const namespace = `${sha256Hex(agentId).slice(0, 16)}-${sha256Hex(resolvedRoot).slice(0, 16)}`;
   const stateRoot = join(resolvedState, namespace);
 
-  // A template instance yields the ten formal definitions without executing;
-  // creating it pins the root boundary but writes no state to disk.
-  const template = createNativeWorkspaceTools({
-    workspaceRoot: resolvedRoot,
-    stateDir: join(stateRoot, '__definitions__'),
-    sessionId: '__definitions__',
-  });
-  const formalDefinitions = Object.freeze(template.definitions.map(definition => deepFreeze(copy(definition))));
+  const formalDefinitions = Object.freeze(workspaceToolDefinitions().filter(definition => !requested || requested.has(definition.name)).map(deepFreeze));
   const formal = new Map(formalDefinitions.map(definition => [definition.name, definition]));
   const supportedNames = new Set(formal.keys());
 
@@ -138,14 +133,11 @@ export function createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agen
   const sessions = new Map();
   function toolsFor(sessionId) {
     if (!sessions.has(sessionId)) {
-      sessions.set(sessionId, createNativeWorkspaceTools({
+      sessions.set(sessionId, createStudioWorkspaceTools({
         workspaceRoot: resolvedRoot,
+        pinnedRootReal: rootReal,
         stateDir: stateRoot,
         sessionId,
-        // The real permission pipeline (authorizeNativeBuiltin) runs in
-        // execute before dispatch. This callback may only return allow AFTER
-        // that pipeline permitted; it never grants approval on its own.
-        authorize: async () => 'allow',
       }));
     }
     return sessions.get(sessionId);
@@ -280,14 +272,11 @@ export function createDshNodeWorkspaceTools({ ctx, workspaceRoot, stateDir, agen
       call: { name, callId: sealed.callId, arguments: sealed.argsCopy },
       sessionId: sealed.sessionId,
       signal: sealed.originalSignal,
-      operationKey: `dsh-node-workspace:${sealed.callId}`,
     };
     const tools = toolsFor(sealed.sessionId);
     // Await even read-only tools: lint_workspace_file parses via an async WASM
-    // worker. The underlying port only runs assertCurrent for mutating tools,
-    // so the adapter must verify the sealed identity once more after the await
-    // and never surface an ok result it no longer has authority to return.
-    const result = await tools.execute(request, { assertCurrent: () => { guard(); return true; } });
+    // worker. Recheck the sealed identity after that await before returning.
+    const result = await tools.execute(request, guard);
     try { guard(); }
     catch (failure) {
       // A write that already happened keeps its receipt as uncertain with the

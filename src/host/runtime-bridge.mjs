@@ -62,6 +62,7 @@ export function createRuntimeBridge() {
     nativeContextSources,
     get signal() { return lifetime.signal; },
     setAdapter(value) { return register('adapter', value); },
+    managedHarnessModel(cwd) { return adapter?.value.managedHarnessModel?.(cwd); },
     setResourceToolExecutor(value) {
       if (typeof value !== 'function') throw new TypeError('Runtime tool executor must be a function');
       return register('executor', value);

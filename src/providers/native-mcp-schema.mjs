@@ -1,4 +1,6 @@
-import { canonical, compileToolInput, invariant, parseNativeJson, requiresExactJsonWire } from '@kingsoftcloud/agentkit-harness-core';
+import { compileToolInput } from '../contracts/tool-input.mjs';
+import { canonical, invariant } from '../contracts/native-values.mjs';
+import { parseNativeJson, requiresExactJsonWire } from '../contracts/native-json.mjs';
 import { nativeMcpSchemaValidator } from './native-mcp-json.mjs';
 
 export const NATIVE_MCP_SCHEMA_CONTRACT = 'agentkit.native-mcp-schema/v1';

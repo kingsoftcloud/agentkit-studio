@@ -5,7 +5,7 @@ import { fixture, scope, tool, digest } from './fixtures/native-core.mjs';
 import { nativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
 import { nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { createNativeDshTurnExecutor } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
-import { nativeConversationForkSeed } from '../src/providers/native-conversation-fork.mjs';
+import { nativeConversationForkSeed } from './fixtures/retired-native/providers/native-conversation-fork.mjs';
 
 const final = () => ({ kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() });
 const call = () => ({ ...final(), text: '', kind: 'tool_calls', toolCalls: [{ callId: 'write-1', name: 'write', arguments: {} }] });

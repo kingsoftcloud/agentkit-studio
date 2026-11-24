@@ -1,6 +1,6 @@
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
-import { configure, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
-import { createNativeKernelPermitVerifier, nativeKernelPermitBytes } from '../../src/providers/native-kernel-permit.mjs';
+import { configure, copy, emptyUsage, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { createNativeKernelPermitVerifier, nativeKernelPermitBytes } from './retired-native/providers/native-kernel-permit.mjs';
 
 export const target = { tenantId: 'tenant', agentInstanceId: 'ar-managed' };
 export const scope = { tenantId: target.tenantId, agentId: target.agentInstanceId, workspaceId: 'managed-workspace', userId: 'managed-user' };
@@ -36,3 +36,20 @@ export const binding = (command, ports = { model: { generate: async () => respon
 export const tool = (options = {}) => ({ name: 'write', description: 'Write a fixture', parameters: { type: 'object', properties: {} },
   readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 1000,
   contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal', ...options });
+
+export function createStudioManagedNativeSessionControl({ runtime, target, principal }) {
+  const boundTarget = copy(target), boundPrincipal = copy(principal);
+  const query = request => {
+    invariant(request.agentId === boundTarget.agentInstanceId, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    return { scope: { tenantId: boundTarget.tenantId, workspaceId: request.workspaceId,
+      userId: boundPrincipal.userId, agentId: boundTarget.agentInstanceId },
+      sessionId: request.sessionId, ...(request.runId === undefined ? {} : { runId: request.runId }) };
+  };
+  return Object.freeze({ agentId: boundTarget.agentInstanceId,
+    inspect: request => runtime.inspectSession(query(request)),
+    retry: request => runtime.retryAcceptedRun(query(request)),
+    childRecord: request => runtime.readChildRecord({ ...query(request), childRunId: request.childRunId }),
+    childHistory: (request, options) => runtime.readChildHistory({ ...query(request),
+      ...Object.fromEntries(['offset', 'limit', 'inventoryDigest', 'childRunId'].filter(key => request[key] !== undefined)
+        .map(key => [key, request[key]])) }, options) });
+}

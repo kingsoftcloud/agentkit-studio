@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CHILD_ALLOCATION_POLICY,
   roleAllocationDefaults, resolveChildCallLimits, createNativeChildOwner } from '@kingsoftcloud/agentkit-harness-node/native/child-owner';
-import { nativeChildRoles } from '../src/providers/native-subagents.mjs';
+import { nativeChildRoles } from './fixtures/retired-native/providers/native-subagents.mjs';
 import { canonical, configure, MemoryRunStore, admittedToolBudget, emptyUsage,
   prepareEffect, transition, initialSnapshot } from '@kingsoftcloud/agentkit-harness-core';
 import { createHash } from 'node:crypto';

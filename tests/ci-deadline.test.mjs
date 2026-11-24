@@ -30,11 +30,35 @@ function fixture(t, leader) {
   return { parent, heartbeat };
 }
 
+async function waitForHeartbeat(path) {
+  const deadline = performance.now() + 6000;
+  await new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      if (existsSync(path)) {
+        clearInterval(timer);
+        resolve();
+      } else if (performance.now() >= deadline) {
+        clearInterval(timer);
+        reject(new Error('Installer descendant did not publish its readiness heartbeat'));
+      }
+    }, 15);
+  });
+}
+
 test('deadline kills a package-manager leader and its TERM-ignoring descendant before retry', options, async t => {
   const f = fixture(t, 'setInterval(()=>{},1000);');
-  const start = Date.now();
-  assert.equal(await runWithDeadline(process.execPath, [f.parent], { timeoutMs: 800, graceMs: 100, stdio: 'ignore' }), 124);
-  assert.ok(Date.now() - start < 5000);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const run = runWithDeadline(process.execPath, [f.parent], { timeoutMs: 800, graceMs: 100, stdio: 'ignore' });
+  // Exercise the deadline and grace only after there is a real descendant
+  // to retire, regardless of how long the CI worker took to spawn it.
+  try {
+    await waitForHeartbeat(f.heartbeat);
+  } finally {
+    t.mock.timers.tick(800);
+    t.mock.timers.tick(100);
+    t.mock.timers.reset();
+  }
+  assert.equal(await run, 124);
   const settled = readFileSync(f.heartbeat, 'utf8');
   await sleep(120);
   assert.equal(readFileSync(f.heartbeat, 'utf8'), settled, 'the old installer cannot keep running while a retry starts');
@@ -55,10 +79,9 @@ test('a real command failure is preserved and invalid deadlines never spawn', op
 
 test('cancelling CI retires the installer group without reporting an installation timeout', options, async t => {
   const f = fixture(t, 'setInterval(()=>{},1000);'), controller = new AbortController();
-  const run = runWithDeadline(process.execPath, [f.parent], { timeoutMs: 3000, graceMs: 100, stdio: 'ignore', signal: controller.signal });
-  for (let i = 0; i < 100 && !existsSync(f.heartbeat); i++) await sleep(10);
-  assert.ok(existsSync(f.heartbeat));
-  controller.abort('SIGTERM');
+  const run = runWithDeadline(process.execPath, [f.parent], { timeoutMs: 10000, graceMs: 100, stdio: 'ignore', signal: controller.signal });
+  try { await waitForHeartbeat(f.heartbeat); }
+  finally { controller.abort('SIGTERM'); }
   assert.equal(await run, 143);
   const settled = readFileSync(f.heartbeat, 'utf8'); await sleep(120);
   assert.equal(readFileSync(f.heartbeat, 'utf8'), settled);

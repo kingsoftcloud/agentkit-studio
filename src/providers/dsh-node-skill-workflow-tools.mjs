@@ -1,9 +1,10 @@
 /** Durable local/E2B Skill workflows admitted by the real DSH ToolRegistry. */
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { nativeSkillWorkflowToolDefinitions, normalizeSkillNames } from '@kingsoftcloud/agentkit-harness-node/native/skill-tools';
-import { createDshLocalSkillRuntime, nativeSkillRuntimeSettings } from './native-skill-runtime.mjs';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { studioSkillWorkflowDefinition, normalizeSkillNames } from './studio-skill-tool-contracts.mjs';
+import { nativeSkillRuntimeSettings } from './studio-skill-runtime-files.mjs';
 import { prepareDshE2BHost } from './native-e2b-host.mjs';
 import { createDshE2BSkillRuntime, DSH_SKILL_E2B_RUNTIME } from './native-skill-e2b-runtime.mjs';
 import { NATIVE_SKILL_E2B_FILES } from './native-skill-e2b-files.mjs';
@@ -50,7 +51,7 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
     userSpaceIds: userSpaces, publicSpaceIds: publicSpaces, publicAllowlist,
     localSourceBinding: localSource?.binding ?? null, serviceBindingDigest: connection?.bindingDigest ?? null,
     ...(fixedInputs.length ? { inputs: { contract: NATIVE_SKILL_INPUT_FILES, digest: hash(fixedInputs) } } : {}) };
-  const bindingDigest = hash(binding), [definition] = nativeSkillWorkflowToolDefinitions();
+  const bindingDigest = hash(binding), definition = studioSkillWorkflowDefinition();
   const service = connection?.client ? createNativeSkillService(connection.client) : null;
   const lifetime = new AbortController(), ownerSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
   const sessions = new Map();
@@ -61,13 +62,16 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
     invariant(closed === false, closed === true ? 'dsh_skill_workflow_closed' : 'dsh_skill_workflow_lifetime_invalid');
     invariant(!ownerSignal.aborted, 'dsh_skill_workflow_closed');
   };
-  function sessionFor(sessionId) {
+  async function sessionFor(sessionId, assertCurrent) {
+    if (sessions.has(sessionId)) return sessions.get(sessionId);
+    const createRuntime = e2b ? createDshE2BSkillRuntime : (await import('./native-skill-runtime.mjs')).createDshLocalSkillRuntime;
+    assertCurrent();
     if (!sessions.has(sessionId)) {
       const cache = nativeSkillSessionCache({ stateRoot: join(stateDir, 'skill-workflows'), workspaceRoot,
         owner: { contract: DSH_NODE_SKILL_WORKFLOW, agentId, sessionId } });
       const load = service ? createNativeSkillLoader({ serviceClient: service, cacheDir: cache.cacheDir,
         ...(fetchImpl ? { fetchImpl } : {}) }) : undefined;
-      const runtime = (e2b ? createDshE2BSkillRuntime : createDshLocalSkillRuntime)({ stateRoot: join(cache.cacheDir, 'runtime'), workspaceRoot,
+      const runtime = createRuntime({ stateRoot: join(cache.cacheDir, 'runtime'), workspaceRoot,
         agentId, sessionId, bindingDigest, settings, env: environment, assertStorage: cache.assertStorage,
         ...(e2b ? { prepared: e2b, inProcessTransport: Boolean(loadSdk) } : {}),
         loadPackages: (request, events) => loadSkillRuntimePackages({ request, events, localSource, localDefinitions,
@@ -105,7 +109,7 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
         assertCurrent = () => { stable(); assertOpen(); stable(); return true; };
         assertCurrent();
         await abortable(authorizeNativeBuiltin(ctx, exec, definition), signal); assertCurrent();
-        session = sessionFor(original.sessionId); assertCurrent();
+        session = await sessionFor(original.sessionId, assertCurrent); assertCurrent();
         request = { agentId, sessionId: original.sessionId, callId: original.callId,
           operationKey: `dsh-skill-workflow:${original.callId}`, call: { callId: original.callId, name, arguments: copy(args) },
           workflowPrompt: args.workflow_prompt.trim(), skillNames: normalizeSkillNames(args.skill_names),

@@ -6,8 +6,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { createPrivate, privateDirectory, privateFile } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant } from './contracts/native-values.mjs';
+import { parseNativeJson } from './contracts/native-json.mjs';
+import { createPrivate, privateDirectory, privateFile } from './host/private-state.mjs';
 
 export const LEGACY_MEMORY_EFFECTS = 'agentkit.legacy-memory-effects/v1';
 const digest = value => createHash('sha256').update(canonical(value)).digest('hex');

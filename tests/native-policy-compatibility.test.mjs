@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { NativeKernel, MemoryRunStore, canonical, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { freezeNativeDshConfiguration, rebindNativeDshConfiguration, NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
-import { restoredPolicyConfiguration } from '../src/host/services/native-harness-bindings.mjs';
+import { restoredPolicyConfiguration } from './fixtures/retired-native/host/services/native-harness-bindings.mjs';
 import { nativeDshOwnership, readNativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
 
 test('historical Studio/DSH ownership revalidates without adding manifests or changing its original digest', async () => {

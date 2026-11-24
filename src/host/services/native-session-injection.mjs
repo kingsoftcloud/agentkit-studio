@@ -1,13 +1,19 @@
-import { canonical, copy, invariant, validateSessionInjection } from '@kingsoftcloud/agentkit-harness-core';
-import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
-import { NATIVE_DSH_MANAGED_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-managed-ownership';
+import { canonical, copy, invariant } from '../../contracts/native-values.mjs';
+import { NATIVE_DSH_MANAGED_TURN_CONTRACT, NATIVE_DSH_TURN_CONTRACT } from '../../contracts/native-dsh.mjs';
+
+const identifier = value => typeof value === 'string' && value.trim()
+  && value.length <= 256 && !value.includes('\0');
 
 export function validateNativeInjectionRequest(request) {
   invariant(request && typeof request === 'object' && !Array.isArray(request)
     && Object.keys(request).sort().join(',') === 'agentId,injectionId,sessionId,source,text'
-    && ['agentId', 'sessionId'].every(key => typeof request[key] === 'string' && request[key].trim()
-      && request[key].length <= 256 && !request[key].includes('\0')), 'STUDIO_NATIVE_INJECTION_INVALID');
-  return validateSessionInjection({ injectionId: request.injectionId, text: request.text, source: request.source });
+    && identifier(request.agentId) && identifier(request.sessionId), 'STUDIO_NATIVE_INJECTION_INVALID');
+  const { injectionId, text, source } = request;
+  invariant(identifier(injectionId) && typeof text === 'string' && text.trim()
+    && Buffer.byteLength(text) <= 16384 && !text.includes('\0') && source
+    && Object.keys(source).sort().join(',') === 'kind,ref'
+    && identifier(source.kind) && identifier(source.ref), 'invalid_session_injection');
+  return { injectionId, text, source: copy(source) };
 }
 
 /** Resolve ownership without prompt assembly, credentials, model or tool ports. */

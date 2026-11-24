@@ -35,6 +35,8 @@ export function createNativeRoleFields({ React, kit }) {
   const { createElement: h } = React;
   const { Section, Row, Field, Input, TextArea, Select, Switch, CheckCard, Button, HelpTip } = kit;
   return function fields({ roles, onChange, models, selectedModels, tools, selectedTools, hasMcp }) {
+    const toolRows = new Map(tools.map(tool => [tool.resourceId, tool]));
+    const workspaceTools = selectedTools.filter(id => toolRows.get(id)?.contract?.childWorkspace ?? NATIVE_CHILD_WORKSPACE_TOOLS.includes(id));
     const update = (index, patch) => onChange(roles.map((role, at) => at === index ? { ...role, ...patch } : role));
     const updateLimit = (index, key, value) => onChange(roles.map((role, at) => {
       if (at !== index) return role;
@@ -56,8 +58,8 @@ export function createNativeRoleFields({ React, kit }) {
         Field({ label: '任务说明' }, TextArea({ 'aria-label': `角色 ${index + 1} 任务说明`, value: role.instructions ?? '', rows: 3, maxLength: 32768,
           onChange: e => update(index, { instructions: e.target.value }) })),
         h('div', { className: 'af-field-label' }, '角色工具', HelpTip('选择父任务已绑定的工作区工具；MCP 和 Skills 通过下方开关继承。')),
-        h('div', { className: 'af-choices', style: { marginBottom: '16px' } }, ...[...new Set([...selectedTools.filter(id => NATIVE_CHILD_WORKSPACE_TOOLS.includes(id)), ...(role.tools ?? [])])].map(id => CheckCard({ key: id,
-          checked: (role.tools ?? []).includes(id), title: tools.find(tool => tool.resourceId === id)?.displayName || id,
+        h('div', { className: 'af-choices', style: { marginBottom: '16px' } }, ...[...new Set([...workspaceTools, ...(role.tools ?? [])])].map(id => CheckCard({ key: id,
+          checked: (role.tools ?? []).includes(id), title: toolRows.get(id)?.displayName || id,
           desc: selectedTools.includes(id) ? '' : '未绑定，请移除或重新绑定', inputProps: { 'aria-label': `角色 ${index + 1} 工具 ${id}` },
           onChange: e => update(index, { tools: e.target.checked ? [...(role.tools ?? []), id] : (role.tools ?? []).filter(tool => tool !== id) }) }))),
         h('div', { className: 'af-grid-3' },

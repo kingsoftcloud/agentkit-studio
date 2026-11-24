@@ -1,6 +1,6 @@
 /** A Server scope cancellation is an authorized withdrawal of the original
  * invocation. It is never a human answer or a grant to continue remote work. */
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { createHash } from 'node:crypto';
 const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
 

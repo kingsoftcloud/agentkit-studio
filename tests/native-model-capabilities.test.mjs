@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { canonical, configure } from '@kingsoftcloud/agentkit-harness-core';
 import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { createNativeModelDescriptions, frozenNativeModelDescription } from '../src/providers/native-model-capabilities.mjs';
-import { nativeRecoveryBinding, readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding, readNativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
 const profiles=['parent','child','vision'].map((id,index)=>({id,provider:'openai',modelName:id,baseUrl:`https://${id}.invalid/v1`,
   input:index===2?['text','image']:['text'],apiKey:'must-not-be-persisted'}));

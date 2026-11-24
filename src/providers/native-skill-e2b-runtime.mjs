@@ -6,14 +6,17 @@ import { createHash } from 'node:crypto';
 import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, openSync, opendirSync,
   readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, relative, resolve, sep } from 'node:path';
-import { canonical, copy, invariant, parseNativeJson, scopeKey } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, delay, openPrivate, privateDirectory, syncDirectory, TERMINAL, tryLock } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
-import { E2BCommandStore } from '@kingsoftcloud/agentkit-harness-node/native/e2b-background';
-import { stagePackages, publishArtifacts, NATIVE_SKILL_RUNTIME } from './native-skill-runtime.mjs';
+import { canonical, copy, invariant, scopeKey } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { atomicPrivate, openPrivate, privateDirectory, syncDirectory, tryLock } from '../host/private-state.mjs';
+import { E2BCommandStore } from './studio-e2b-command-store.mjs';
+import { stagePackages, publishArtifacts, NATIVE_SKILL_RUNTIME } from './studio-skill-runtime-files.mjs';
 import { createNativeSkillWorkflowExecutor, readSkillWorkflowArtifact } from './native-skill-workflow.mjs';
 import { createNativeSkillE2BFiles, NATIVE_SKILL_E2B_FILES } from './native-skill-e2b-files.mjs';
 import { NATIVE_SKILL_INPUT_FILES, SKILL_INPUT_ROOT, normalizeSkillInputFiles, stageSkillInputFiles } from './native-skill-inputs.mjs';
-import { createNativeSkillEventJournal, nativeSkillEventEvidence, SKILL_EVENT_FILE, SKILL_EVENT_BYTES } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
+import { isTerminalCommandStatus, SKILL_EVENT_FILE } from '../contracts/native-dsh.mjs';
+import { createNativeSkillEventJournal, nativeSkillEventEvidence, SKILL_EVENT_BYTES } from './studio-skill-event-journal.mjs';
 
 export const NATIVE_SKILL_E2B_RUNTIME = 'agentkit.native-skill-e2b-runtime/v1';
 
@@ -171,7 +174,7 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
         signal.addEventListener('abort', cancel, { once: true }); if (signal.aborted) cancel();
         let observed;
         try {
-          while (!TERMINAL.has((observed = handle.readOutput()).status)) { check(); await delay(20); }
+          while (!isTerminalCommandStatus((observed = handle.readOutput()).status)) { check(); await delay(20); }
           check(); invariant(!observed.evidenceIncomplete && observed.status !== 'unknown', 'SKILL_RUNTIME_OUTPUT_INCOMPLETE');
           const output = await boundary(() => handle.wait({ timeoutMs: 100 })); check();
           invariant(Number.isSafeInteger(output.exitCode), 'SKILL_RUNTIME_OUTPUT_INCOMPLETE');

@@ -1,6 +1,6 @@
 /** Local question ledger. Answers are not operation grants. Its observation
  * stream is delivered only to the owning Studio Session, never to Append. */
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { a2aPendingApproval, a2aPendingInput, a2aDecisionDigest, normalizeA2aInputParts } from './native-a2a-decision.mjs';
 import { a2aIdentity } from './native-a2a-events.mjs';
 

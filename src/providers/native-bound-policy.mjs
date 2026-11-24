@@ -1,4 +1,4 @@
-import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical } from '../contracts/native-values.mjs';
 import { createHash } from 'node:crypto';
 import { nativeAgentPolicyDecision, normalizeNativeAgentPolicy } from '../native-agent-policy.mjs';
 

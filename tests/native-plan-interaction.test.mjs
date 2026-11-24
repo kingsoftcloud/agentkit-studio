@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NativeKernel, MemoryRunStore, emptyUsage, planModeToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
-import { createNativeHostInteraction } from '../src/providers/native-host-interaction.mjs';
+import { createNativeHostInteraction } from './fixtures/retired-native/providers/native-host-interaction.mjs';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
 
 async function pending() {

@@ -1,5 +1,5 @@
 /** Explicit trusted disclosure policy; never loaded from a request or model. */
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { a2aIdentity } from './native-a2a-events.mjs';
 import { A2A_TOOL_ACTIVITY_URI, a2aActivityJson, buildA2aPublicToolActivity } from './native-a2a-tool-activity.mjs';
 

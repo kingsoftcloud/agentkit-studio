@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ingressSigner, kernelFact, targetBinding, platformTaskId, targetVersionId } from '../tests/fixtures/native-a2a-inbound.mjs';
-import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical } from '../src/contracts/native-values.mjs';
 
 export function createMountedInboundProof(root) {
   const signer = ingressSigner(), commandId = randomUUID(), messageId = randomUUID(), calls = [], facts = new Map();

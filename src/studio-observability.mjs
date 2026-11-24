@@ -7,7 +7,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, unlink, open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { NATIVE_SKILL_EVENTS, selectNativeSkillEvents } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
+import { NATIVE_SKILL_EVENTS, selectNativeSkillEvents } from './contracts/engine-skill-events.mjs';
 
 export class StudioObservabilityError extends Error {
   constructor(code, message, details = {}) {

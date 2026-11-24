@@ -1,7 +1,7 @@
 /** Managed Server admission and durable Session facts. This is deliberately
  * independent of the local Native run/event schema: a Server receipt never
  * authorizes fabricating a local Run, command or successful A2A Task. */
-import { copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { copy, invariant } from '../contracts/native-values.mjs';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max = 4096) => typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0');

@@ -1,5 +1,5 @@
 const fail = code => Object.assign(new Error(code), { code });
-import { NATIVE_DSH_CONTENT_FORMAT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
+import { NATIVE_DSH_CONTENT_FORMAT } from '../contracts/native-dsh.mjs';
 
 /** Resolve a Host-admitted content block list without consulting message paths or URLs. */
 export async function projectNativeDshContent(content, { attachments, fileRequestText, signal } = {}, images = new Map()) {

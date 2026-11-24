@@ -12,9 +12,9 @@ import { fixture, scope, digest, tool } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeChildOwner } from '@kingsoftcloud/agentkit-harness-node/native/child-owner';
 import { nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
-import { nativeA2aReceiptWaitSource } from '../src/providers/native-a2a-receipt.mjs';
-import { nativeChildA2aWaitSource, NATIVE_CHILD_A2A_WAIT } from '../src/providers/native-child-a2a-wait.mjs';
-import { createStudioNativeRecovery } from '../src/host/services/native-recovery.mjs';
+import { nativeA2aReceiptWaitSource } from './fixtures/retired-native/providers/native-a2a-receipt.mjs';
+import { nativeChildA2aWaitSource, NATIVE_CHILD_A2A_WAIT } from './fixtures/retired-native/providers/native-child-a2a-wait.mjs';
+import { createStudioNativeRecovery } from './fixtures/retired-native/host/services/native-recovery.mjs';
 const childScope = { ...scope, agentId: 'child-agent' };
 async function until(check) {
   for (let i = 0; i < 500; i++) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 5)); }

@@ -2,8 +2,8 @@ import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
-import { createManagedNativeKernel } from '../../src/providers/native-managed-kernel.mjs';
-import { createNativeKernelPermitVerifier } from '../../src/providers/native-kernel-permit.mjs';
+import { createManagedNativeKernel } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel';
+import { createNativeKernelPermitVerifier } from './retired-native/providers/native-kernel-permit.mjs';
 import { binding, response, target, tool, managedProcessLeaseMs } from './native-managed-kernel.mjs';
 
 const send = data => new Promise((resolve, reject) => process.send(data, error => error ? reject(error) : resolve()));

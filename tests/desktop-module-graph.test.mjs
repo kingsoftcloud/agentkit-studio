@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyDesktopArchiveEntries, verifyDesktopModuleGraph, STUDIO_DESKTOP_ENTRIES } from '../scripts/desktop-module-graph.mjs';
 
+test('Studio desktop archives reject embedded Harness implementations in Windows and POSIX paths', () => {
+  for (const path of ['\\dsh\\node_modules\\@kingsoftcloud\\agentkit-harness-node\\package.json',
+    '/dsh/node_modules/@kingsoftcloud/agentkit-harness-ui/package.json'])
+    assert.throws(() => verifyDesktopArchiveEntries([path], { studio: true }), /includes a Harness implementation/);
+  assert.equal(verifyDesktopArchiveEntries(STUDIO_DESKTOP_ENTRIES, { studio: true }).embeddedHarnessAbsent, true);
+});
+
 test('the actual archive entry policy rejects Coveralls metadata on Unix and Windows', () => {
   for (const path of ['/.coveralls.yml', '/dsh/node_modules/debug/.coveralls.yaml',
     '\\dsh\\node_modules\\debug\\.coveralls.yml', '\\dsh\\node_modules\\outer\\node_modules\\debug\\.coveralls.yaml']) {

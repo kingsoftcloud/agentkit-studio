@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryRunStore, NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, digest, tool } from './fixtures/native-core.mjs';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 import { nativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
-import { createStudioNativeConversation, validateNativeConversationRequest } from '../src/host/services/native-conversation.mjs';
+import { createStudioNativeConversation, validateNativeConversationRequest } from './fixtures/retired-native/host/services/native-conversation.mjs';
 
 // The focused Host double exercises races and failed persistence. The packed
 // verifier separately uses actual Agents, Session surfaces, SQLite and HTTP.

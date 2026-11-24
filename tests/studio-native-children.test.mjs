@@ -9,20 +9,20 @@ import { canonical, MemoryRunStore, artifactToolDefinitions, todoToolDefinitions
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
-import { nativeChildRoles } from '../src/providers/native-subagents.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
+import { nativeChildRoles } from './fixtures/retired-native/providers/native-subagents.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
-import { readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { readNativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 import { previousChildPublication } from '@kingsoftcloud/agentkit-harness-node/native/child-publication';
 import { internalPeer, spec as a2aSpec } from './fixtures/native-a2a-internal-peer.mjs';
 import { hasUnsafeChildReceipt } from '@kingsoftcloud/agentkit-harness-node/native/owned-child';
 import { createNativeChildHistory } from '@kingsoftcloud/agentkit-harness-node/native/child-history';
-import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
-import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
-import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
-import { managedNativeOwnerProjection, STUDIO_MANAGED_NATIVE_EXECUTION } from '../src/host/services/native-managed-execution.mjs';
+import { createManagedNativeKernel } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel';
+import { createStudioManagedNativeBinding } from './fixtures/retired-native/host/services/native-managed-binding.mjs';
+import { createStudioManagedNativeSessionControl } from './fixtures/native-managed-kernel.mjs';
+import { managedNativeOwnerProjection, STUDIO_MANAGED_NATIVE_EXECUTION } from './fixtures/retired-native/host/services/native-managed-execution.mjs';
 import { command as managedCommand, permitIssuer } from './fixtures/native-managed-kernel.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 

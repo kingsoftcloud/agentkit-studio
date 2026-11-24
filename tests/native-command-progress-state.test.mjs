@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createStudioNativeCommandProgress } from '../src/host/services/native-command-progress.mjs';
+import { createStudioNativeCommandProgress } from './fixtures/retired-native/host/services/native-command-progress.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const scope = { tenantId: 'local', workspaceId: 'w', userId: 'local-user', agentId: 'a' };
 function fixture(project) {

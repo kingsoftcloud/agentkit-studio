@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeSkillNames, matchSkillRefs, skillManifestItem, selectPublicSkillRefs, createNativeSkillTools, SKILL_TOOL_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/skill-tools';
-import { createStudioNativeSkills } from '../../../src/providers/native-dsh-skills.mjs';
+import { createStudioNativeSkills } from '../../fixtures/retired-native/providers/native-dsh-skills.mjs';
 import { createNativeSkillEventJournal, nativeSkillEventEvidence } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
 
 const SCOPE = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };

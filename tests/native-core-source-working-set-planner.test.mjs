@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, planNativeContext, contextMessageRef, artifactToolDefinitions, configure } from '@kingsoftcloud/agentkit-harness-core';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 import { fixture, digest, tool } from './fixtures/native-core.mjs';
 
 const counters = {

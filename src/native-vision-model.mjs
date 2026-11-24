@@ -1,4 +1,4 @@
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from './contracts/native-values.mjs';
 
 /** Separate screenshot observer; it is never a conversation model selection. */
 export function nativeVisionProfileId(record) {

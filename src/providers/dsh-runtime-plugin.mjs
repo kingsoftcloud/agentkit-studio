@@ -14,9 +14,8 @@ import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { isAppServerRuntimeType } from '../runtime-types.mjs';
 import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
-import { nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
 import { sandboxRegistryName } from './sandbox-code-name.mjs';
-import { assertConcreteBuiltin, unavailableNodeBuiltin } from './dsh-node-builtin-catalog.mjs';
+import { DSH_NODE_A2A_NAMES, assertConcreteBuiltin, unavailableNodeBuiltin } from './dsh-node-builtin-catalog.mjs';
 import { STUDIO_TEAM_HOST_TOOLS } from '../studio-team-tools.mjs';
 import { executeNativeDshToolCall } from './native-dsh-tool-call.mjs';
 
@@ -57,18 +56,16 @@ function createBuiltinExecutor(nodeTools) {
   };
 }
 
-function registerBuiltinTools(ctx, contracts, config, bridge) {
+function registerBuiltinTools(ctx, contracts, config, bridge, isStopped) {
   const declared = (Array.isArray(contracts) ? contracts : [])
     .filter(contract => contract && contract.executor === 'builtin' && contract.enabled !== false && contract.name);
   // A persisted DSH preset can outlive the catalog request that originally
   // admitted it. Preserve the Agent's explicit builtin bindings in that case;
   // an unavailable Node port rejects the call without another executor.
-  const a2aDefinitions = config.a2aBindings?.length ? nativeA2aToolDefinitions() : [];
-  for (const definition of a2aDefinitions) {
-    if ((contracts ?? []).some(contract => contract.name === definition.name && contract.enabled !== false && contract.executor !== 'builtin'))
+  for (const name of config.a2aBindings?.length ? DSH_NODE_A2A_NAMES : []) {
+    if ((contracts ?? []).some(contract => contract.name === name && contract.enabled !== false && contract.executor !== 'builtin'))
       throw builtinError('A2A_TOOL_NAME_COLLISION', 'A managed A2A name is already bound to another executor');
-    if (!declared.some(contract => contract.name === definition.name)) declared.push({ name: definition.name,
-      description: definition.description, parameters: definition.parameters, executor: 'builtin', enabled: true });
+    if (!declared.some(contract => contract.name === name)) declared.push({ name, executor: 'builtin', enabled: true });
   }
   const declaredNames = new Set(declared.map(contract => String(contract.name)));
   const fallback = toolNames(config.toolBindings)
@@ -87,27 +84,31 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
   for (const contract of values) assertConcreteBuiltin(contract.name);
   if (!values.length) return;
   if (typeof ctx.tools?.register !== 'function') return;
-  const nodeTools = bridge.createBuiltinTools?.({ ctx, config }) ?? null;
-  if (nodeTools && typeof ctx.effect === 'function') ctx.effect(() => () => nodeTools.close(), 'agentkit-studio: Node builtin lifetime');
-  const executeBuiltin = createBuiltinExecutor(nodeTools);
-  const install = () => {
-    const disposers = values.map(contract => {
-      const formal = nodeTools?.supports(String(contract.name))
-        ? nodeTools.definitions.find(definition => definition.name === String(contract.name)) : null;
-      return ctx.tools.register({
-        name: String(contract.name),
-        description: String(formal?.name === 'browser_inspect_workspace' ? formal.description
-          : contract.description || `AgentEngine 内置 Tool：${contract.name}`),
-        parameters: formal?.parameters || contract.parameters || { type: 'object', properties: {} },
-        output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
-        execute: async (args, exec) => bridgedOutput(await executeBuiltin(contract, args, exec)),
+  const bind = nodeTools => {
+    if (isStopped()) return nodeTools?.close();
+    if (nodeTools && typeof ctx.effect === 'function') ctx.effect(() => () => nodeTools.close(), 'agentkit-studio: Node builtin lifetime');
+    const executeBuiltin = createBuiltinExecutor(nodeTools);
+    const install = () => {
+      const disposers = values.map(contract => {
+        const formal = nodeTools?.supports(String(contract.name))
+          ? nodeTools.definitions.find(definition => definition.name === String(contract.name)) : null;
+        return ctx.tools.register({
+          name: String(contract.name),
+          description: String(formal?.name === 'browser_inspect_workspace' ? formal.description
+            : contract.description || formal?.description || `AgentEngine 内置 Tool：${contract.name}`),
+          parameters: formal?.parameters || contract.parameters || { type: 'object', properties: {} },
+          output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
+          execute: async (args, exec) => bridgedOutput(await executeBuiltin(contract, args, exec)),
+        });
       });
-    });
-    return () => disposers.forEach(dispose => { try { dispose?.(); } catch {} });
+      return () => disposers.forEach(dispose => { try { dispose?.(); } catch {} });
+    };
+    if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: builtin tool bindings');
+    else install();
+    return nodeTools;
   };
-  if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: builtin tool bindings');
-  else install();
-  return nodeTools;
+  const nodeTools = bridge.createBuiltinTools?.({ ctx, config }) ?? null;
+  return typeof nodeTools?.then === 'function' ? nodeTools.then(bind) : bind(nodeTools);
 }
 
 function registerMcpTools(ctx, contracts, config, bridge) {
@@ -249,14 +250,22 @@ export function apply(ctx, config = {}) {
     if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: bound skills');
     else install();
   }
-  const builtinToolBindings = registerBuiltinTools(ctx, config.toolContracts, config, bridge);
+  const isStopped = () => stopped;
+  const builtinTools = registerBuiltinTools(ctx, config.toolContracts, config, bridge, isStopped);
+  const install = builtinToolBindings => {
+    if (!stopped) installPresetHandlers(ctx, config, { agentId, bridge, routeScope, routes, assertResources, isStopped, builtinToolBindings });
+  };
+  if (typeof builtinTools?.then === 'function') return builtinTools.then(install);
+  install(builtinTools);
+}
+
+function installPresetHandlers(ctx, config, { agentId, bridge, routeScope, routes, assertResources, isStopped, builtinToolBindings }) {
   registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, [...toolNames(config.toolBindings),
-    ...(config.a2aBindings?.length ? nativeA2aToolDefinitions().map(tool => tool.name) : [])]);
+    ...(config.a2aBindings?.length ? DSH_NODE_A2A_NAMES : [])]);
   const service = config.runtime === 'native-engine';
-  const a2aNames = new Set(nativeA2aToolDefinitions().map(tool => tool.name));
   const a2aHostTools = service && config.a2aBindings?.length
-    ? builtinToolBindings?.definitions.filter(tool => a2aNames.has(tool.name)) ?? [] : [];
+    ? builtinToolBindings?.definitions.filter(tool => DSH_NODE_A2A_NAMES.includes(tool.name)) ?? [] : [];
   const browserHostTool = service && toolNames(config.toolBindings).includes('browser_inspect_workspace')
     ? builtinToolBindings?.definitions.find(tool => tool.name === 'browser_inspect_workspace') : undefined;
   const teamRole = service && config.teamRole === true;
@@ -280,9 +289,9 @@ export function apply(ctx, config = {}) {
         ...(builtinToolBindings.observeA2aReceipt ? {
           observeNativeA2aReceipt: ({ agent, ...request }) => {
             const session = agent?.session;
-            if (!session?.id || stopped) return {};
+            if (!session?.id || isStopped()) return {};
             return builtinToolBindings.observeA2aReceipt({ ...request, sessionId: session.id,
-              assertCurrent: () => !stopped && agent.session === session && session.id === request.sessionId }, session.header?.cwd);
+              assertCurrent: () => !isStopped() && agent.session === session && session.id === request.sessionId }, session.header?.cwd);
           },
         } : {}),
         callNativeA2aTool: (name, args, options) => executeIndependentHostTool(ctx,
@@ -300,14 +309,28 @@ export function apply(ctx, config = {}) {
       } : {}),
     } : boundToolAdapter;
   const nativeTools = config.local === true && !appServer;
+  if (service && config.local === true) {
+    const syncModel = ({ agent }) => {
+      if (isStopped() || !agent?.model) return;
+      const binding = bridge.managedHarnessModel(agent.session?.header?.cwd);
+      if (!binding) return;
+      const current = agent.model.current();
+      if (current?.provider !== binding.provider || current?.model !== binding.model) agent.model.select(binding);
+    };
+    // DSH captures the step selection immediately after claiming input.
+    // Update the pending choice before that capture, keeping the committed
+    // request header available to DSH's model-switch compaction.
+    ctx.on('agent/created', syncModel);
+    ctx.on('agent/inbox/claimed', syncModel);
+  }
   if (service) ctx.on('agentkit/harness-resource-binding', () => {
     assertResources('Native Harness 资源恢复失败，请修复绑定后重试');
-    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    if (isStopped()) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     return { agentId, agentRevision: config.agentRevision, buildId: config.buildId, scopedPresetId: config.scopedPresetId };
   });
   if (config.local === true && config.a2aBindings?.length) ctx.on('agentkit/dsh-a2a-binding', async () => {
     assertResources('A2A resources unavailable');
-    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    if (isStopped()) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     return { contract: 'agentkit.studio-dsh-a2a-binding/v1', agentId, runtime: config.runtime, local: true,
       agentRevision: config.agentRevision, buildId: config.buildId ?? null, tools: builtinToolBindings };
   });
@@ -318,7 +341,7 @@ export function apply(ctx, config = {}) {
   ctx.on(AGENT_REQUEST_EVENT, async (payload, next) => {
     assertResources('此会话的 Agent 资源恢复失败，请检查资源配置后重新选择 Agent 或重新打开应用');
     const resolved = await next();
-    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    if (isStopped()) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     if (config.runtime === 'codex' && config.local === true) migrateLegacyCodexObservations(payload?.agent?.session);
     const sessionId = String(payload?.agent?.id || '').trim();
     if (sessionId) {

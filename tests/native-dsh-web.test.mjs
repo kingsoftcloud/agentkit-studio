@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
-import { resolveWebSearchConfig, resolveWebSsrfPolicy, createNativeDshWebTools, createSsrfPinnedFetch, NATIVE_WEB_TOOLS_CONTRACT } from '../src/providers/native-dsh-web.mjs';
+import { resolveWebSearchConfig, resolveWebSsrfPolicy, createNativeDshWebTools, createSsrfPinnedFetch, NATIVE_WEB_TOOLS_CONTRACT } from './fixtures/retired-native/providers/native-dsh-web.mjs';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 
 const allowAuthorize = async () => 'allow';

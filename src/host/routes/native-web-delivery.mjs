@@ -1,10 +1,9 @@
 import { realpath } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { createBrowserWorkspaceServer, resolveBrowserWorkspaceEntry } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-server';
-import * as engineViewAdapter from '@kingsoftcloud/agentkit-harness-ui/engine-view/adapter';
+import { createBrowserWorkspaceServer, resolveBrowserWorkspaceEntry } from '../workspace-preview-server.mjs';
+import { ENGINE_EVENT_SCHEMA, engineWebDeliveries, relativeDeliveryPath } from '../../contracts/engine-delivery.mjs';
 import { NATIVE_ENGINE_EVENT } from '../../providers/native-engine-runtime.mjs';
 
-const { ENGINE_EVENT_SCHEMA, engineWebDeliveries, relativeDeliveryPath } = engineViewAdapter;
 const previewLimit = 8;
 const imageLimit = 8 * 1024 * 1024;
 const imageTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };

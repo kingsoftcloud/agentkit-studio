@@ -4,9 +4,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, lstatSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { invariant, canonical } from '@kingsoftcloud/agentkit-harness-core';
-import { privateDirectory, privateFile, createPrivate } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
-import { nativeMemorySensitiveLabels } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
+import { invariant, canonical } from './contracts/native-values.mjs';
+import { privateDirectory, privateFile, createPrivate } from './host/private-state.mjs';
+import { nativeMemorySensitiveLabels } from './host/legacy-memory-sensitivity.mjs';
 
 const inode = path => { const stat = lstatSync(path); return `${stat.dev}:${stat.ino}`; };
 const sha = value => /^[a-f0-9]{64}$/.test(value);

@@ -11,8 +11,8 @@ import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node
 import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
 import { createNativeContextPort } from '@kingsoftcloud/agentkit-harness-node/native/context-counter';
 import { memoryDigest, nativeMemoryScopeBindings } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
-import { createStudioNativeMemoryExtraction } from '../src/host/services/native-memory-extraction.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
+import { createStudioNativeMemoryExtraction } from './fixtures/retired-native/host/services/native-memory-extraction.mjs';
 import { StudioNativeMemoryExtractionStore } from '../src/host/services/native-memory-extraction-store.mjs';
 
 const prose = '我们公司的发票日期和财务报表统一使用协调世界时，金额必须注明币种，小数位保留两位。客户支持答复应使用简体中文，并保留用户提供的订单编号以便后续核查。';

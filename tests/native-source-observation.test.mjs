@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import {
   WORKSPACE_SOURCE_MODEL_VERSION,
   workspaceSourceModelReply,
-} from "../src/providers/native-source-observation.mjs";
+} from "./fixtures/retired-native/providers/native-source-observation.mjs";
 
 function page() {
   return {

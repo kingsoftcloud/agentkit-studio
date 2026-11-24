@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNativeE2BHostBinding, nativeCommandBackend, prepareNativeE2BHost } from '../src/providers/native-e2b-host.mjs';
+import { createNativeE2BHostBinding, nativeCommandBackend, prepareNativeE2BHost } from './fixtures/retired-native/providers/native-e2b-host.mjs';
+import { createDshE2BSandboxOwner as createInstalledOwner } from '@kingsoftcloud/agentkit-harness-node/native/e2b-sandbox-owner';
+import { createDshE2BSandboxOwner } from '../src/providers/dsh-e2b-sandbox-owner.mjs';
 
 const scope = { tenantId: 'tenant', workspaceId: 'workspace', userId: 'user', agentId: 'agent' };
 const environment = () => ({ KSADK_SANDBOX_BACKEND: 'e2b', E2B_API_URL: 'https://original.fixture.invalid',
@@ -33,6 +35,22 @@ test('Studio backend selection preserves local default and rejects unsupported e
     assert.equal(nativeCommandBackend({ KSADK_SANDBOX_BACKEND: raw }), 'local_process');
   assert.equal(nativeCommandBackend({ KSADK_SANDBOX_BACKEND: ' E2B ' }), 'e2b');
   for (const raw of ['pod', 'pod_process', 'not-real', 12]) assert.throws(() => nativeCommandBackend({ KSADK_SANDBOX_BACKEND: raw }));
+});
+
+test('the Studio DSH owner reads an installed command sandbox record without creating a second sandbox', async t => {
+  const { options } = fixture(t);
+  const identity = { agentId: 'agent', sessionId: 'session' };
+  const ownerOptions = { ...identity, workspaceRoot: options.workspaceRoot, stateRoot: options.stateRoot,
+    bindingDigest: 'a'.repeat(64), assertAuthority: () => true, killSandbox: async () => true };
+  const call = callId => ({ ...identity, operationKey: 'owned:' + callId, call: { name: 'run_command', callId },
+    definition: { name: 'run_command' }, signal: new AbortController().signal });
+  const installed = createInstalledOwner({ ...ownerOptions, createSandbox: async () => ({ sandboxId: 'original-sandbox' }) });
+  await installed.ensure(call('initial'));
+  const replacement = createDshE2BSandboxOwner({ ...ownerOptions, createSandbox: async () => assert.fail('creation was already committed') });
+  assert.deepEqual(replacement.inspect(), installed.inspect());
+  assert.deepEqual(await replacement.ensure(call('recovery')), { sandboxId: 'original-sandbox', created: false });
+  assert.deepEqual(await replacement.close(call('cleanup')), { sandboxId: 'original-sandbox', confirmed: true });
+  assert.equal(installed.inspect().phase, 'closed');
 });
 
 test('preset preparation validates synchronously and pins the same connection before asynchronous Session construction', async t => {

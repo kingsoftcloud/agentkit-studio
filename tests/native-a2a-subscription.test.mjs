@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { prepareNativeA2AHost, prepareDshA2AHost } from '../src/providers/native-a2a-host.mjs';
 import { a2aSse } from '../src/providers/native-a2a-protocol.mjs';
-import { validateNativeA2aControlRequest } from '../src/host/services/native-a2a-control.mjs';
+import { validateNativeA2aControlRequest } from './fixtures/retired-native/host/services/native-a2a-control.mjs';
 import { validateDshA2aRequest } from '../src/host/services/dsh-a2a-control.mjs';
 import { internalPeer, spec, scope, taskId } from './fixtures/native-a2a-internal-peer.mjs';
 import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';

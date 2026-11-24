@@ -2,7 +2,7 @@
  * Append's event_id idempotency permits a retry after a lost acknowledgement.
  * Send/Prepare/Bind are never part of this worker. Store callbacks own the
  * short publication lock; deliveryLock is a separate cross-process lock. */
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../contracts/native-values.mjs';
 import { A2A_EVENT_PERMANENT_ERRORS } from './native-a2a-events.mjs';
 const permanent = new Set(A2A_EVENT_PERMANENT_ERRORS);
 const safeError = error => permanent.has(error?.code) ? error.code : 'A2A_EVENT_DELIVERY_UNAVAILABLE';

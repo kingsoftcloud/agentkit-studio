@@ -11,9 +11,9 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { createNativeChildOwner } from '@kingsoftcloud/agentkit-harness-node/native/child-owner';
 import { nativeChildToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/child-tools';
 import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
-import { createStudioNativeChildWorkspaces } from '../src/providers/native-child-workspace-host.mjs';
-import { createStudioNativeChildMerge } from '../src/providers/native-child-merge.mjs';
-import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
+import { createStudioNativeChildWorkspaces } from './fixtures/retired-native/providers/native-child-workspace-host.mjs';
+import { createStudioNativeChildMerge } from './fixtures/retired-native/providers/native-child-merge.mjs';
+import { createNativeToolAuthority } from './fixtures/retired-native/providers/native-tool-authority.mjs';
 
 const role = { name: 'writer', tools: ['write_workspace_file', 'write_workspace_files'], concurrentSafe: false };
 const childScope = { ...scope, agentId: `${scope.agentId}:child:writer` };

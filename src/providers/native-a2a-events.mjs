@@ -2,7 +2,7 @@
  * claim to map remote content/interaction events; those use a separate adapter.
  * Mutate only inside the original call's atomic state publication. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 
 export const A2A_EVENT_JOURNAL = 'agentkit.a2a-event-journal/v1';
 export const A2A_EVENT_PERMANENT_ERRORS = Object.freeze(['A2A_EVENT_BATCH_TOO_LARGE', 'A2A_KERNEL_FACT_INVALID',

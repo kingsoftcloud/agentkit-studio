@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { NativeKernel, MemoryRunStore, emptyUsage, projectSessionHistory, configure, initialSnapshot } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, digest, tool } from './fixtures/native-core.mjs';
 import { nativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
-import { nativeConversationRetainedCommands } from '../src/providers/native-conversation-tasks.mjs';
+import { nativeConversationRetainedCommands } from './fixtures/retired-native/providers/native-conversation-tasks.mjs';
 
 async function history() {
   const scope = { tenantId: 'local', workspaceId: 'workspace', userId: 'local-user', agentId: 'agent' }, store = new MemoryRunStore();

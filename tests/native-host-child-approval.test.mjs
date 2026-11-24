@@ -7,7 +7,7 @@ import { NativeKernel, MemoryRunStore, configure, emptyUsage } from '@kingsoftcl
 import { fixture, scope, digest, tool } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeChildOwner } from '@kingsoftcloud/agentkit-harness-node/native/child-owner';
-import { createNativeHostInteraction } from '../src/providers/native-host-interaction.mjs';
+import { createNativeHostInteraction } from './fixtures/retired-native/providers/native-host-interaction.mjs';
 
 const childScope = { ...scope, agentId: 'child' };
 const start = tool({ name: 'native_start_child', childBudgetPolicy: 'start/v1', readOnly: false, concurrentSafe: false,

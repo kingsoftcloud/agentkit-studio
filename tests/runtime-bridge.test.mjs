@@ -40,6 +40,30 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unrestricted met
 
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
 
+test('deferred builtin admission publishes only while its preset is live', async () => {
+  for (const retired of [false, true]) {
+    const bridge = createRuntimeBridge(), ready = deferred();
+    const disposers = [], tools = [], listeners = [];
+    let closed = 0;
+    bridge.setBuiltinToolsFactory(() => ready.promise);
+    const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+      tools: { register: tool => { tools.push(tool.name); return () => {}; } },
+      on: name => { listeners.push(name); }, effect: install => { disposers.push(install()); } };
+    const pending = applyPreset(ctx, { agentId: 'async-node-agent', runtime: 'dsh-native', local: true,
+      toolBindings: ['read_workspace_file'] });
+    assert.deepEqual(tools, []);
+    assert.deepEqual(listeners, []);
+    if (retired) await disposers.shift()();
+    ready.resolve({ supports: () => false, close: () => { closed++; } });
+    await pending;
+    assert.deepEqual(tools, retired ? [] : ['read_workspace_file']);
+    assert.deepEqual(listeners, retired ? [] : ['agent/request']);
+    await Promise.all(disposers.map(dispose => dispose?.()));
+    assert.equal(closed, 1);
+    bridge.close();
+  }
+});
+
 test('the production bridge exposes no in-process Harness execution entry', () => {
   const bridge = createRuntimeBridge();
   for (const key of ['setNativeTurnExecutor', 'executeNativeTurn', 'setNativeToolsFactory', 'createNativeTools'])

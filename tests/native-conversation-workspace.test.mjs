@@ -7,10 +7,10 @@ import { NativeKernel, MemoryRunStore, emptyUsage, projectSessionHistory } from 
 import { fixture, digest, scope } from './fixtures/native-core.mjs';
 import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { committedWorkspaceCheckpoint } from '@kingsoftcloud/agentkit-harness-node/native/workspace-checkpoints';
-import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority } from './fixtures/retired-native/providers/native-tool-authority.mjs';
 import { nativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
-import { nativeConversationWorkspaceCheckpoint } from '../src/providers/native-conversation-workspace.mjs';
+import { nativeConversationWorkspaceCheckpoint } from './fixtures/retired-native/providers/native-conversation-workspace.mjs';
 
 async function history() {
   const root = mkdtempSync(join(tmpdir(), 'native-workspace-')), workspace = join(root, 'workspace'),

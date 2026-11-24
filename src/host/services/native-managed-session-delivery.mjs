@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { canonical, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { nativeDshIdleOwnershipHost } from '@kingsoftcloud/agentkit-harness-node/native/dsh-background-ownership';
+import { canonical, invariant } from '../../contracts/native-values.mjs';
+import { parseNativeJson } from '../../contracts/native-json.mjs';
+import { requireDshIdleTurns } from '../dsh-external-turns.mjs';
 import { NATIVE_ENGINE_EVENT } from '../../providers/native-engine-runtime.mjs';
 import { engineServiceEndpoint, engineServiceFetch } from '../../providers/engine-service-client.mjs';
 
@@ -249,7 +250,7 @@ export function createStudioManagedSessionDelivery({ ctx, remote }) {
     active.set(sessionId, slot);
     slot.work = (async () => {
       await waitFor(agent.whenIdle(), lifetime.signal);
-      const host = nativeDshIdleOwnershipHost(agent);
+      const host = requireDshIdleTurns(agent);
       const pending = host.pending();
       invariant(!pending || pending.engine === MANAGED_SESSION_DELIVERY && pending.binding === binding,
         'MANAGED_SESSION_DELIVERY_OWNER_CHANGED');

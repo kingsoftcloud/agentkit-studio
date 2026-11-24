@@ -29,7 +29,8 @@ function fixture(t) {
   pkg(NODE_HOST_ROOTS[1], { optionalDependencies: { [asset]: 'workspace:*' } });
   pkg(NODE_HOST_ROOTS[2], { peerDependencies: { [peer]: 'workspace:*' } });
   pkg(NODE_HOST_ROOTS[3], { exports: { '.': './lib/index.js', './src/*': './src/*' } });
-  for (const name of [changed, asset, peer, '@deepseek-ai/unchanged', '@deepseek-ai/dsh-desktop']) pkg(name);
+  pkg(changed, { version: '0.1.2' });
+  for (const name of [asset, peer, '@deepseek-ai/unchanged', '@deepseek-ai/dsh-desktop']) pkg(name);
   const assetPath = paths.get(asset); rmSync(join(assetPath, 'lib'), { recursive: true }); mkdirSync(join(assetPath, 'dist'));
   writeFileSync(join(assetPath, 'dist/index.html'), '<html>one</html>');
   writeFileSync(join(assetPath, 'package.json'), JSON.stringify({ name: asset, version, exports: { './dist/*': { default: ['./dist/*'] } }, files: ['dist'] }));
@@ -63,6 +64,7 @@ test('real pnpm archives include changed production/optional/peer closure and as
   assert.ok(existsSync(join(f.source, 'untracked/package.json')));
   const consumed = await readNodeHostPackages(join(f.output, 'host-packages.json'), f.studio);
   assert.equal(Object.keys(consumed.dependencies).length, 7);
+  assert.equal(consumed.evidence.packages.find(item => item.name === '@deepseek-ai/changed').version, '0.1.2');
   await assert.rejects(packMaintainedNodeHost(f.options), /already exists/);
 });
 
@@ -115,7 +117,13 @@ test('fresh Host acceptance refuses archive or lock drift and development-direct
   await assert.rejects(readNodeHostInstallation(installation, options), /tested Studio archive/);
   writeFileSync(archive, 'original archive'); writeFileSync(lockPath, lock + ' ');
   await assert.rejects(readNodeHostInstallation(installation, options), /lock changed/);
+  const embedded = JSON.stringify({ packages: { ...packages,
+    'node_modules/dep-0/node_modules/@kingsoftcloud/agentkit-harness-core': { version: '0.0.31' } } });
+  writeFileSync(lockPath, embedded);
+  writeFileSync(join(installation, 'proof.json'), JSON.stringify({ ...proof, lockSha256: digest(embedded) }));
+  await assert.rejects(readNodeHostInstallation(installation, options), /contains a Harness implementation package/);
   writeFileSync(lockPath, lock);
+  writeFileSync(join(installation, 'proof.json'), JSON.stringify(proof));
   const external = join(installation, 'node_modules', NODE_HOST_ROOTS[0]);
   rmSync(external, { recursive: true }); symlinkSync(f.source, external);
   await assert.rejects(readNodeHostInstallation(installation, options), /escapes installation/);

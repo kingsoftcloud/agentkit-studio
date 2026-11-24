@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeConversationForkSeed } from '../src/providers/native-conversation-fork.mjs';
+import { nativeConversationForkSeed } from './fixtures/retired-native/providers/native-conversation-fork.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 
 function setup(prefix) {

@@ -1,12 +1,13 @@
 /** Stateless legacy inspection, owned by the original DSH Agent/Session/call.
  * Native's persistent BrowserSessionRef contract remains separate. */
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { browserInspectParameters, parseWorkspaceBrowserInput } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-protocol';
-import { createBrowserWorkspaceServer, resolveBrowserWorkspaceEntry } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-server';
-import { browserCanvasMetrics } from '@kingsoftcloud/agentkit-harness-node/native/browser-canvas-metrics';
-import { resolveNativeBrowserExecutable } from '@kingsoftcloud/agentkit-harness-node/native/browser-availability';
-import { isInside, publishWorkspaceBytes, realpathExisting } from '@kingsoftcloud/agentkit-harness-node/native/workspace-paths';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { browserInspectParameters, parseWorkspaceBrowserInput } from '../host/browser-inspection-input.mjs';
+import { createBrowserWorkspaceServer, resolveBrowserWorkspaceEntry } from '../host/workspace-preview-server.mjs';
+import { browserCanvasMetrics } from '../host/browser-canvas-metrics.mjs';
+import { resolveStudioBrowserExecutable } from '../host/browser-executable.mjs';
+import { isInside, publishWorkspaceBytes, realpathExisting } from '../host/workspace-files.mjs';
 import { commandStateRoot, DshNodeCommandLedger } from './dsh-node-command-ledger.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
 
@@ -92,7 +93,7 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
     executable: browserExecutablePath ?? null, backend, browser: 'playwright-chromium', network: 'local-workspace-only/v1' });
   const launch = launchBrowser ?? (async () => {
     const { chromium } = await import('playwright-core');
-    const executablePath = browserExecutablePath ?? resolveNativeBrowserExecutable();
+    const executablePath = browserExecutablePath ?? resolveStudioBrowserExecutable();
     return launchOwnedInspectionBrowser(chromium, executablePath);
   });
   const lifetime = new AbortController(), lifetimeSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);

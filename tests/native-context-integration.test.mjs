@@ -9,7 +9,7 @@ import { fixture, scope, tool, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
 import { estimateNativeText, estimateNativeWireInput } from '@kingsoftcloud/agentkit-harness-node/native/context-counter';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 
 test('production counter admits real HTTP summaries and SQLite recovery keeps one workspace effect', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'native-context-live-')), filename = join(directory, 'runs.sqlite');

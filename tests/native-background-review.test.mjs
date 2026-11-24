@@ -7,7 +7,7 @@ import { fixture, scope as fixtureScope, tool } from './fixtures/native-core.mjs
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 import { nativeRunPresentation } from '../src/client/state/native-outcome.mjs';
-import { createStudioNativeRecovery, validateNativeBackgroundReviewRequest } from '../src/host/services/native-recovery.mjs';
+import { createStudioNativeRecovery, validateNativeBackgroundReviewRequest } from './fixtures/retired-native/host/services/native-recovery.mjs';
 import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 const scope = { ...fixtureScope, tenantId: 'local', userId: 'local-user' };
 

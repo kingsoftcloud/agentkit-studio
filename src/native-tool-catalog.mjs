@@ -1,55 +1,69 @@
 /** Native-owned additions to the legacy tool catalog. Catalog rows describe
  * capabilities; execution still requires an explicitly bound Native Build. */
-import { workspacePatchDefinition, workspaceRewindDefinitions, workspaceToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
-import { nativeWebToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/web-tools';
-import { studioBrowserDefinition } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-protocol';
-import { resolveNativeBrowserExecutable } from '@kingsoftcloud/agentkit-harness-node/native/browser-availability';
-import { localCommandToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/local-command-tools';
-import { supportsLocalProcessPlatform } from '@kingsoftcloud/agentkit-harness-node/native/local-process';
-import { nativeCommandBackend } from './providers/native-e2b-host.mjs';
-import { resolveWebSearchConfig } from './providers/native-dsh-web.mjs';
+import { accessSync, constants, statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
+import { chromium } from 'playwright-core';
+import toolDefaults from './contracts/harness-tool-defaults.json' with { type: 'json' };
+import { nativeCommandBackend } from './providers/native-command-backend.mjs';
+import { resolveWebSearchConfig } from './providers/native-web-configuration.mjs';
 import { nativeDefaultToolsFromCatalog } from './native-capability-defaults.mjs';
+import { NATIVE_CHILD_WORKSPACE_TOOLS } from './native-child-tools.mjs';
 import { paginateResources } from './resource-catalog.mjs';
-const commandNames = new Set(['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
-const definitions = (env = process.env) => [workspacePatchDefinition(), ...workspaceRewindDefinitions(), ...workspaceToolDefinitions(), ...nativeWebToolDefinitions(),
-  studioBrowserDefinition(),
-  ...(nativeCommandBackend(env) === 'local_process' && supportsLocalProcessPlatform() ? localCommandToolDefinitions() : [])];
+function hostHasBrowser(env) {
+  const candidates = env.KSADK_BROWSER_EXECUTABLE_PATH ? [env.KSADK_BROWSER_EXECUTABLE_PATH] : [chromium.executablePath(),
+    ...(process.platform === 'darwin' ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium'] : []),
+    ...(process.platform === 'linux' ? ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'] : []),
+  ];
+  return candidates.some(path => {
+    try { return isAbsolute(path) && statSync(path).isFile() && (accessSync(path, constants.X_OK), true); }
+    catch { return false; }
+  });
+}
 
-export function nativeLocalToolContract(name) {
-  const definition = definitions().find(tool => tool.name === name);
+function definitions({ env = process.env, catalog = toolDefaults } = {}) {
+  const commands = nativeCommandBackend(env) === 'local_process'
+    && catalog.supportedCommandPlatforms.includes(`${process.platform}-${process.arch}`);
+  return catalog.tools.filter(tool => tool.availability !== 'local-command' || commands);
+}
+export function nativeLocalToolContract(name, options) {
+  const definition = definitions(options).find(tool => tool.name === name);
   if (!definition) return undefined;
   return contractForDefinition(definition);
 }
 function contractForDefinition(definition) {
   return { resourceId: definition.name, name: definition.name, description: definition.description,
-    parameters: definition.parameters, executor: 'builtin', enabled: true,
-    timeoutSeconds: definition.timeoutMs / 1000, sideEffect: definition.readOnly ? 'none' : commandNames.has(definition.name) ? 'unknown' : 'workspace', permissions: definition.permissions };
+    parameters: structuredClone(definition.parameters), executor: 'builtin', enabled: true,
+    timeoutSeconds: definition.timeoutMs / 1000, sideEffect: definition.readOnly ? 'none' : definition.availability === 'local-command' ? 'unknown' : 'workspace',
+    permissions: [...definition.permissions] };
 }
 
-export function nativeLocalToolResources({ env = process.env } = {}) {
+export function nativeLocalToolResources({ env = process.env, catalog = toolDefaults } = {}) {
   const search = resolveWebSearchConfig(env);
-  const browserExecutable = resolveNativeBrowserExecutable({ env });
-  return definitions(env).map(tool => {
+  const browserAvailable = hostHasBrowser(env);
+  const childWorkspaceTools = new Set(catalog.childWorkspaceTools ?? NATIVE_CHILD_WORKSPACE_TOOLS);
+  return definitions({ env, catalog }).map(tool => {
     const contract = contractForDefinition(tool), { parameters, ...metadata } = contract;
-    const unavailableReason = tool.name === 'web_search' && !search.provider
+    const unavailableReason = tool.availability === 'search' && !search.provider
       ? '尚未配置网页搜索服务；公开网页读取仍可用。'
-      : tool.name === 'browser_inspect_workspace' && !browserExecutable ? '未找到可用的本地浏览器，无法交互验证网页。' : null;
+      : tool.availability === 'browser' && !browserAvailable ? '未找到可用的本地浏览器，无法交互验证网页。' : null;
     return { resourceId: contract.resourceId, name: contract.name,
       displayName: tool.name === 'apply_workspace_patch' ? '结构化文件补丁 · Native' : `${tool.name} · Native`, description: contract.description,
       kind: 'tool', source: 'studio-native', status: unavailableReason ? 'not-configured' : 'available',
-      ...(unavailableReason ? { disabled: true, unavailableReason } : {}), contract: { ...metadata, inputSchema: parameters } };
+      ...(unavailableReason ? { disabled: true, unavailableReason } : {}), contract: { ...metadata,
+        childWorkspace: childWorkspaceTools.has(tool.name), inputSchema: parameters } };
   });
 }
 
 /** Merge before pagination, as for the other Studio local/cloud catalogs.
  * Only authoring Native agents uses this merged catalog. Other engines retain
  * their original remote contract and cursor. No remote tool is registered here. */
-export async function listStudioTools({ query = {}, serverClient, signal }) {
+export async function listStudioTools({ query = {}, serverClient, signal, catalog }) {
   const remoteQuery = { kind: 'tool', query: query.query, limit: query.limit,
     cursor: query.cursor, source: query.source, status: query.status };
   if (query.runtimeType !== 'harness') return serverClient.listCatalogResources(remoteQuery, { signal });
   paginateResources([], { ...query, kind: 'native-tool' }); // Reject invalid merged cursors/filters before remote I/O.
-  const local = nativeLocalToolResources().filter(item => !query.status || query.status === item.status);
+  const local = nativeLocalToolResources({ catalog }).filter(item => !query.status || query.status === item.status);
   const rows = [], cursors = new Set(); let cursor, warnings = [];
   for (let page = 0; ; page++) {
     signal?.throwIfAborted();
@@ -73,5 +87,5 @@ export async function listStudioTools({ query = {}, serverClient, signal }) {
 }
 
 export function defaultNativeToolBindings(options) {
-  return nativeDefaultToolsFromCatalog(nativeLocalToolResources(options)).map(resourceId => ({ resourceId }));
+  return nativeDefaultToolsFromCatalog(nativeLocalToolResources(options), options?.catalog?.defaultTools).map(resourceId => ({ resourceId }));
 }

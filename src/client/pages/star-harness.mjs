@@ -32,6 +32,27 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
       };
     }, [view]);
 
+    useEffect(() => {
+      if (!status?.busy || busy) return;
+      const lifetime = new AbortController();
+      let timer;
+      const schedule = () => { timer = window.setTimeout(poll, 1000); };
+      const poll = async () => {
+        try {
+          const next = await hostRemote.starHarnessStatus({}, lifetime.signal);
+          if (lifetime.signal.aborted || pending.current) return;
+          setStatus(next);
+          if (!next.busy) return;
+        } catch { /* Keep the last status while a subsequent poll retries. */ }
+        if (!lifetime.signal.aborted && !pending.current) schedule();
+      };
+      schedule();
+      return () => {
+        lifetime.abort();
+        window.clearTimeout(timer);
+      };
+    }, [busy, status?.busy]);
+
     async function perform(label, operation, success, changed = true) {
       if (pending.current) return;
       pending.current = true;

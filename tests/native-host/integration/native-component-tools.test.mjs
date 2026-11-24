@@ -11,7 +11,7 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import {
   createNativeComponentTools, nativeComponentToolDefinitions, NATIVE_COMPONENT_TOOLS_CONTRACT,
 } from '@kingsoftcloud/agentkit-harness-node/native/component-tools';
-import { createNativeToolAuthority } from '../../../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority } from '../../fixtures/retired-native/providers/native-tool-authority.mjs';
 
 const scope = { tenantId: 'tenant', workspaceId: 'workspace', userId: 'user', agentId: 'agent' };
 const identity = { scope, runId: 'run', sessionId: 'session', turnId: 'turn', buildId: 'build', parentRunId: null, taskChainId: 'chain' };

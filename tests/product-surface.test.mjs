@@ -7,7 +7,12 @@ import { readClientSource } from './helpers/client-source.mjs';
 import { mountStudio } from '../src/client/dsh/mount.mjs';
 import React from 'react';
 import * as ReactDOM from 'react-dom';
-import { requireNativeConversationPresentation } from '../src/client/dsh/task-timeline.mjs';
+import { installTaskTimeline, requireNativeConversationPresentation } from '../src/client/dsh/task-timeline.mjs';
+
+test('without an active Harness UI, Studio keeps the Host conversation renderer', () => {
+  const ctx = { get slots() { assert.fail('The Host presentation slot must be left alone'); } };
+  assert.doesNotThrow(() => installTaskTimeline(ctx, {}));
+});
 
 test('Native UI refuses a Host without the whole-conversation presentation seam', () => {
   for (const slots of [{}, { snapshot: () => [] }, { snapshot: () => [{ type: 'slot', name: 'conversation.chat', kind: 'single' }] }])

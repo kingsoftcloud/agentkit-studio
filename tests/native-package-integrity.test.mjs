@@ -20,7 +20,7 @@ function installation(t) {
   const pins = { schemaVersion: 'agentkit.native-registry-pins/v2', packages: { [name]: { version,
     integrity: 'sha512-' + createHash('sha512').update('registry-archive-fixture').digest('base64'), files } } };
   writeFileSync(pinsPath, JSON.stringify(pins));
-  const product = { dependencies: { [name]: version } };
+  const product = { devDependencies: { [name]: version } };
   writeFileSync(join(root, 'package.json'), JSON.stringify(product));
   return { root, name, installed, pins, pinsPath, product, metadata };
 }
@@ -37,7 +37,7 @@ test('a registry release verifies offline and the same version cannot hide stale
 test('local archives, floating versions and mismatched installed releases cannot satisfy registry pins', t => {
   const { root, name, installed, product, metadata } = installation(t);
   for (const spec of ['file:vendor/native/old.tgz', '^0.0.3', 'latest', '0.0.2']) {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { [name]: spec } }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ devDependencies: { [name]: spec } }));
     assert.throws(() => verifyNativePackageTree(root, [name]), /registry version is not pinned/);
   }
   writeFileSync(join(root, 'package.json'), JSON.stringify(product));

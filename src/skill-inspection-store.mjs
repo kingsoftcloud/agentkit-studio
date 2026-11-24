@@ -3,8 +3,9 @@
 import { createHash } from 'node:crypto';
 import { constants, closeSync, fstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, openPrivate, privateDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant } from './contracts/native-values.mjs';
+import { parseNativeJson } from './contracts/native-json.mjs';
+import { atomicPrivate, openPrivate, privateDirectory } from './host/private-state.mjs';
 import { parseFrontmatter, skillSlug } from './skill-discovery.mjs';
 import { skillCandidateExcluded, skillCandidateRisk } from './skill-candidate-metadata.mjs';
 

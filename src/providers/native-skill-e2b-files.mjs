@@ -4,7 +4,7 @@
  * No discovery, command execution, fallback target or unbounded byte reads. */
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 
 export const NATIVE_SKILL_E2B_FILES = 'agentkit.native-skill-e2b-files/v1';
 

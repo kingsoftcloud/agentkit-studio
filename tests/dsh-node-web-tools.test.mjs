@@ -40,6 +40,25 @@ test('default SSRF policy admits a public literal and denies private addresses b
   assert.equal(blocked.content.error_type, 'blocked_by_ssrf_policy'); assert.equal(f.calls.length, 1);
 });
 
+test('redirect targets are checked before dispatch and URL credentials stay out of the error', async t => {
+  const urls = [];
+  const f = fixture(t, { fetchImpl: async url => {
+    urls.push(url);
+    return new Response('', { status: 302, headers: { location: 'http://127.0.0.1/private' } });
+  } });
+  assert.equal((await f.run()).content.error_type, 'blocked_by_ssrf_policy');
+  assert.deepEqual(urls, ['https://8.8.8.8/page']);
+  const credentialedUrl = new URL('https://8.8.8.8/page');
+  credentialedUrl.username = 'user';
+  credentialedUrl.password = 'fixture-password';
+  credentialedUrl.searchParams.set('token', 'private-token');
+  f.args.url = credentialedUrl.href;
+  const denied = await f.run();
+  assert.equal(denied.content.error_type, 'invalid_url');
+  assert.doesNotMatch(JSON.stringify(denied), /fixture-password|private-token/);
+  assert.equal(urls.length, 1);
+});
+
 test('real local HTTP preserves DOM extraction, Unicode budget, redirect and complete persistence context', async t => {
   const server = createServer((req, res) => {
     if (req.url === '/redirect') { res.writeHead(302, { location: '/page' }); return res.end(); }
@@ -147,4 +166,17 @@ test('trusted search endpoint uses the shared provider protocol; absent provider
   assert.equal(found.status, 'ok'); assert.equal(found.content.results[0].title, '真实结果');
   assert.equal(new URL(seen[0].url).searchParams.get('q'), 'actual query');
   assert.equal(seen[0].init.headers.Authorization, 'Bearer SECRET'); assert.equal(JSON.stringify(found).includes('SECRET'), false);
+});
+
+test('the Ksyun search request preserves scope, size and result dates', async t => {
+  const other = fixture(t, { providerConfig: { provider: 'ksyun', baseUrl: 'https://example.com/search', apiKey: 'fixture-key', scope: 'WEBPAGE' },
+    searchFetch: async (_url, init) => {
+      assert.equal(init.method, 'POST');
+      assert.deepEqual(JSON.parse(init.body), { q: 'request', scope: 'webpage', size: 200 });
+      return Response.json({ webpages: [{ title: 'result', link: 'https://example.com', published_at: '2026-04-02' }] });
+    } });
+  const args = { query: ' request ', max_results: 500 };
+  const outcome = await other.port.execute('web_search', args, { ...other.exec, name: 'web_search', arguments: args });
+  assert.equal(outcome.status, 'ok');
+  assert.deepEqual(outcome.content.results, [{ title: 'result', url: 'https://example.com', snippet: '', date: '2026-04-02', rank: 1, provider: 'ksyun' }]);
 });

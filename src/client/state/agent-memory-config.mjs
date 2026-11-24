@@ -3,7 +3,7 @@
 // The browser bundle (scripts/build-client.mjs) forbids imports from
 // src/host and src/providers, so this module is
 // deliberately dependency-free: it only mirrors the policy defaults documented
-// in src/providers/native-memory.mjs (studioNativeMemoryPolicy) and
+// in the agent binding policy and
 // docs/native-memory.md, and shapes the form state <-> Agent spec mapping.
 //
 // Semantics summary (see docs/native-memory.md):

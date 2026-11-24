@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createStudioNativeBackgroundAdmission } from '../src/host/services/native-background-admission.mjs';
+import { createStudioNativeBackgroundAdmission } from './fixtures/retired-native/host/services/native-background-admission.mjs';
 
 test('background completion cannot open a turn during cleanup or after a cut awaiting its first rebased Run', async () => {
   let head = { conversationBranch: { generation: 0 } }, pending = true, reads = 0;

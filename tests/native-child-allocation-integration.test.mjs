@@ -4,7 +4,7 @@ import { NativeKernel, MemoryRunStore, emptyUsage, admittedToolBudget } from '@k
 import { nativeChildToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/child-tools';
 import { workspaceToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
-import { createStudioNativeChildren, nativeChildRoles } from '../src/providers/native-subagents.mjs';
+import { createStudioNativeChildren, nativeChildRoles } from './fixtures/retired-native/providers/native-subagents.mjs';
 
 test('two actual Studio child admissions share the parent ledger, reserve finalization and freeze child-owned model facts', { timeout: 10000 }, async t => {
   const policy = 'parent-shared/v1', store = new MemoryRunStore();

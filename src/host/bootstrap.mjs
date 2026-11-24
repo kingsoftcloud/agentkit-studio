@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module';
 import { hostFetch } from '../http-fetch.mjs';
 /** Trusted Host startup and scoped dependency composition. Domain services
  * own their stores; route modules own RPC and HTTP transport adapters.
@@ -33,6 +32,9 @@ import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-binding
 import { createPromptPredictionHost } from '../prompt-prediction/host.mjs';
 import { createWorkspaceRoutedBuiltins } from '../providers/workspace-routed-builtins.mjs';
 import { requestNativeHostApproval } from '../providers/native-host-approval.mjs';
+import { nativeCommandBackend } from '../providers/native-command-backend.mjs';
+import { sandboxRegistryName } from '../providers/sandbox-code-name.mjs';
+import { DSH_NODE_A2A_NAMES } from '../providers/dsh-node-builtin-catalog.mjs';
 
 /**
  * Report the composed Agent preset once the registry resolves it.
@@ -296,7 +298,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       profile: id => models.profile(id), settings: () => models.settings(),
       modelProfiles: (await models.settings()).modelProfiles,
       workspaceRegistry: () => ctx.get('workspaceRegistry'),
-      bundledVersion: createRequire(import.meta.url)('../../package.json').dependencies['@kingsoftcloud/agentkit-harness-node'],
     })) : undefined;
   if (starHarness) {
     ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
@@ -439,13 +440,14 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       ...(managedRuntime?.harnessModelSelection ? [managedRuntime.harnessModelSelection.model] : []),
     ];
     llmCtx.effect(() => llmCtx.llm.registerAdapter([HARNESS_SERVICE_MODEL_PROVIDER], createHarnessServiceModelAdapter(LlmAdapter, serviceModels,
-      model => nativeEngineRuntime.serviceModelInfo(model))), 'agentkit-studio: Harness model route');
+      model => nativeEngineRuntime.serviceModelInfo(model),
+      () => Boolean(starHarness?.routes.length))), 'agentkit-studio: Harness model route');
   });
   // Cordis exposes injected services through `get`; property access is only
   // available on typed service contexts and is absent in the plain plugin
   // apply context used by the DSH loader.
   const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
-  const { createNativeSkillConnection } = await import('../providers/native-skill-host.mjs');
+  const { createNativeSkillConnection } = await import('../providers/native-skill-connection.mjs');
   const skillConnection = await createNativeSkillConnection({ configuration: await configurationPromise, env: runtimeEnv, ...cloudEndpointOptions });
   const [{ createStudioSkillManagement }, { createGithubArchiveSkillSource }, skillDiscovery, skillAgents] = await Promise.all([
     import('../skill-management.mjs'), import('../skill-github-archive-source.mjs'), skillDiscoveryPromise, agentStorePromise,
@@ -465,9 +467,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     root: join(realpathSync(studioStoreDir), 'legacy-memory'), workspaceRoot: realpathSync(root),
     bindings: config.legacyMemoryBindings, connection: memoryConnection, env: runtimeEnv });
   {
-    const { createDshNodeBuiltins } = await import('../providers/dsh-node-builtins.mjs');
-    ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed, signal }) => {
-      const create = root => createDshNodeBuiltins({
+    let builtinsModule;
+    const { createStudioDshBuiltins, onlyStudioDshTools } = await import('../providers/studio-dsh-builtins.mjs');
+    ctx.effect(() => bridge.setBuiltinToolsFactory(async ({ ctx: toolsCtx, config, isClosed, signal }) => {
+      const options = root => ({
         ctx: toolsCtx, workspaceRoot: root, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
         isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
         a2aSessionEvents: a2aSessionSink.forPreset(config),
@@ -478,6 +481,18 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
         skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [], a2aBindings: config.a2aBindings ?? [],
       });
+      const names = new Set([...(config.a2aBindings?.length ? DSH_NODE_A2A_NAMES : []), ...(config.toolBindings ?? []), ...(config.toolContracts ?? [])
+        .filter(tool => tool.executor === 'builtin' && tool.enabled !== false).map(tool => tool.name)].map(sandboxRegistryName));
+      let create;
+      const backend = nativeCommandBackend(runtimeEnv);
+      if (names.size && onlyStudioDshTools(names, backend, runtimeEnv)) {
+        signal.throwIfAborted();
+        create = root => createStudioDshBuiltins(options(root), names, backend);
+      } else {
+        const { createDshNodeBuiltins } = await (builtinsModule ??= import('../providers/dsh-node-builtins.mjs'));
+        signal.throwIfAborted();
+        create = root => createDshNodeBuiltins(options(root));
+      }
       if (config.runtime !== 'native-engine') return create(workspaceRoot);
       return createWorkspaceRoutedBuiltins({ create, defaultRoot: nativeEngineRuntime.serviceCatalogWorkspace ?? workspaceRoot,
         resolveHarnessWorkspace: cwd => resolveHarnessWorkspace(cwd)
@@ -599,7 +614,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       const mcpBindings = Array.isArray(bindings.mcpServers) ? bindings.mcpServers : [];
       if (!bindingRefs.length && !mcpBindings.length) return [];
       const native = agent?.metadata?.local === true && agent?.spec?.runtime?.type === 'native-engine';
-      const builtinContracts = native ? bindingRefs.map(nativeLocalToolContract).filter(Boolean) : [];
+      const catalog = native ? starHarness?.toolCatalog ?? undefined : undefined;
+      const builtinContracts = native ? bindingRefs.map(name => nativeLocalToolContract(name, { catalog })).filter(Boolean) : [];
       const localNames = new Set(builtinContracts.map(tool => tool.resourceId));
       const refs = bindingRefs.filter(ref => !localNames.has(ref));
       if (refs.length) {

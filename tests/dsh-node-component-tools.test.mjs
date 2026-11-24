@@ -13,7 +13,7 @@ function execution(args = {}) {
 }
 const status = () => ({ summary: { model: 'initial', knowledge_base_bound: true }, workspace: { root: '/workspace', tools: ['read_workspace_file'] } });
 
-test('public component snapshot shares Native validation and follows the actual selected DSH model', async () => {
+test('public component snapshot follows the actual selected DSH model', async () => {
   const input = status(), port = createDshNodeComponentTools({ agentId: 'agent', status: input });
   input.summary.knowledge_base_bound = false; input.workspace.tools.push('forged');
   const exec = execution();
@@ -31,7 +31,7 @@ test('public component snapshot shares Native validation and follows the actual 
   port.close(); assert.equal((await port.execute(exec.name, {}, exec)).content.error_type, 'dsh_node_component_closed');
 });
 
-test('rejects unknown fields, secrets and bounded-output overflow using the shared snapshot contract', () => {
+test('rejects unknown fields, secrets and bounded-output overflow', () => {
   for (const value of [{ secret: 'credential' }, { summary: { apiKey: 'credential' } }, { skill_runtime: { isolated: true } },
     { workspace: { tools: Array.from({ length: 4096 }, () => 'x'.repeat(100)) } }]) {
     assert.throws(() => createDshNodeComponentTools({ agentId: 'agent', status: value }), /component_status_/);

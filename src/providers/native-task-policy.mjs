@@ -1,4 +1,4 @@
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../contracts/native-values.mjs';
 
 export const STUDIO_NATIVE_TASK_POLICY_CONTRACT = 'agentkit.studio-native-task-policy/v1';
 const WEB_SUFFIXES = ['.html', '.htm', '.js', '.jsx', '.css', '.ts', '.tsx'];

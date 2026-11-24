@@ -1,7 +1,8 @@
 /** Human controls for existing DSH/Codex calls. Their original ledger supplies
  * ownership; a Native Run/fence is neither accepted nor synthesized. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../../contracts/native-values.mjs';
+import { parseNativeJson } from '../../contracts/native-json.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 import { requestStudioA2aApproval } from './a2a-control-approval.mjs';
 import { a2aDecisionDigest } from '../../providers/native-a2a-decision.mjs';

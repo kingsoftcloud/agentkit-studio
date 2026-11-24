@@ -7,7 +7,7 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node';
 import { nativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
 import { nativeDshRunId } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
 import { fixture } from './fixtures/native-core.mjs';
-import { createStudioNativeRecovery } from '../src/host/services/native-recovery.mjs';
+import { createStudioNativeRecovery } from './fixtures/retired-native/host/services/native-recovery.mjs';
 
 for (const openOwner of [false, true]) test(`status uses a read model and control inspection keeps original authority, open=${openOwner}`, async t => {
   const root = await mkdtemp(join(tmpdir(), 'recovery-observation-')), store = new SqliteRunStore(join(root, 'runs.sqlite'));

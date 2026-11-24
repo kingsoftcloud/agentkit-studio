@@ -2,7 +2,7 @@
  * observation, canonical log and outbox in one original-call publication.
  * Only a real GetTask observation closes provisional artifacts. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { a2aIdentity, a2aEventJournal, enqueueA2AEvents } from './native-a2a-events.mjs';
 import { a2aState, a2aTerminal } from './native-a2a-protocol.mjs';
 import { convertA2AContent, a2aMetadataString } from './native-a2a-content.mjs';

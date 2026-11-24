@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { canonical, invariant } from '@kingsoftcloud/agentkit-harness-core';
-import { admitModelCapabilities, validateModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
+import { canonical, invariant } from '../contracts/native-values.mjs';
+import { admitModelCapabilities, validateModelCapabilities } from '../model-capabilities.mjs';
 import { modelInput } from '../model-service.mjs';
 import { requestHeaders } from '../model-profile-contract.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');

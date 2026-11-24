@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { bindNativeLocalExecution, nativeLocalExecutionMethods } from '../src/providers/native-local-execution.mjs';
+import { bindNativeLocalExecution, nativeLocalExecutionMethods } from './fixtures/retired-native/providers/native-local-execution.mjs';
 import { createLocalCommandTransport } from '@kingsoftcloud/agentkit-harness-node/native/local-command-tools';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 

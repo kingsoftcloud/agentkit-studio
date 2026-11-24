@@ -1,4 +1,4 @@
-import { canonical, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant } from '../contracts/native-values.mjs';
 
 export const NATIVE_DSH_OUTPUT_SCHEMA = { type: 'object', properties: {
   result: { type: 'string' }, images: { type: 'array', items: { type: 'object', properties: {

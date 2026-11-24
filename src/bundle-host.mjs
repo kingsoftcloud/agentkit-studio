@@ -2,8 +2,6 @@
 import { link, lstat, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import { importPortableBundle, loadPortableRuntime, verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256, validatePortableCredentialNames } from './portable-resources.mjs';
 import { privateRuntimeDirectory as directory, inspectRuntimeInstallation, prepareRuntimeProfile, runtimeProfileArgs } from './runtime-host-installation.mjs';
@@ -194,14 +192,9 @@ export async function startBundleHarness(plan, { env = process.env, signal } = {
   if (definition.spec.runtime.type !== 'harness') return null;
   const profile = manifest.resources.profiles.find(item => item.default);
   if (!profile) fail('PORTABLE_MODEL_MISSING', 'Star Harness 需要已冻结的默认模型');
-  const { startStarHarness, STAR_HARNESS_PACKAGE } = await import('./host/services/star-harness-release.mjs');
-  const { verifyNativePackageTree } = await import('../scripts/native-package-integrity.mjs');
-  const studioRoot = fileURLToPath(new URL('..', import.meta.url));
-  verifyNativePackageTree(studioRoot);
-  const require = createRequire(import.meta.url);
-  const engineDirectory = dirname(dirname(dirname(require.resolve(STAR_HARNESS_PACKAGE + '/native/engine-server'))));
-  const version = require('../package.json').dependencies[STAR_HARNESS_PACKAGE];
-  const worker = await startStarHarness({ packageDirectory: engineDirectory, version, workspaceRoot: plan.cwd,
+  const { startInstalledStarHarness } = await import('./installed-star-harness.mjs');
+  const worker = await startInstalledStarHarness({ releaseVersion: env.AGENTKIT_STAR_HARNESS_VERSION,
+    installerEnv: { ...plan.env, PATH: env.PATH ?? plan.env.PATH }, workspaceRoot: plan.cwd,
     stateDir: join(dirname(plan.cwd), 'star-harness-state'), agentId: manifest.agentId, signal, env: plan.env,
     profile: { ...profile, apiKey: plan.env[profile.credentialName], images: Array.isArray(profile.input) && profile.input.includes('image') } });
   Object.assign(plan.env, { AGENTKIT_ENGINE_SERVICE_URL: worker.endpoint, AGENTKIT_ENGINE_SERVICE_TOKEN: worker.token,

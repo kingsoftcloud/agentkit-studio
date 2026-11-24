@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
-import { nativeKernelFactId, projectNativeKernelEvent } from '../src/providers/native-kernel-events.mjs';
+import { createManagedNativeKernel } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel';
+import { nativeKernelFactId, projectNativeKernelEvent } from './fixtures/retired-native/providers/native-kernel-events.mjs';
 import { permitIssuer, command, target, binding, response, tool } from './fixtures/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 

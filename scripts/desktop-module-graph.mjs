@@ -10,9 +10,14 @@ export const STUDIO_DESKTOP_ENTRIES = ['src/index.mjs', 'src/host-remote.mjs'].m
   `dsh/node_modules/@kingsoftcloud/agentkit-studio/${path}`);
 
 /** Validate names returned by the native ASAR reader before reporting package hygiene. */
-export function verifyDesktopArchiveEntries(paths) {
+export function verifyDesktopArchiveEntries(paths, { studio = false } = {}) {
   if (paths.some(path => /(?:^|[\\/])\.coveralls\.ya?ml$/i.test(path))) {
     throw new Error('Desktop archive includes non-runtime Coveralls CI configuration');
+  }
+  if (studio) {
+    const implementation = paths.find(path => /(?:^|[\\/])@kingsoftcloud[\\/]agentkit-harness(?:-[^\\/]+)?(?:[\\/]|$)/u.test(path));
+    if (implementation) throw new Error('Studio desktop archive includes a Harness implementation: ' + implementation);
+    return { nonRuntimeCiMetadataAbsent: true, embeddedHarnessAbsent: true };
   }
   return { nonRuntimeCiMetadataAbsent: true };
 }

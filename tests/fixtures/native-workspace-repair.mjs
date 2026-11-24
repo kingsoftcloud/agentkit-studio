@@ -7,7 +7,7 @@ import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from './native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { sessionKeyFor } from '@kingsoftcloud/agentkit-harness-node/native/workspace-state';
-import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './retired-native/providers/native-dsh-tools.mjs';
 import { nativeDshBatchPeer } from './native-dsh-batch-peer.mjs';
 
 const [root, phase, policy, expiredLeaseAt] = process.argv.slice(2);

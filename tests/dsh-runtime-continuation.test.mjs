@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createDshRuntimeAdapter, unbindDshAgentRoutes, routeDshRuntime, setDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
+import { createNativeEngineRuntime } from '../src/providers/native-engine-runtime.mjs';
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { createManagedApprovalRegistry } from '../src/managed-runtime-approval.mjs';
 import { HARNESS_SERVICE_MODEL_PROVIDER } from '../src/model-route.mjs';
@@ -9,6 +10,37 @@ import { HARNESS_SERVICE_MODEL_PROVIDER } from '../src/model-route.mjs';
 const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
 const completed = `data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`;
 const prompt = { model: 'gateway-model', messages: [{ role: 'user', content: '运行冻结版本' }] };
+
+test('an existing Harness Session records the current workspace model before DSH captures the step', t => {
+  const bridge = createRuntimeBridge();
+  t.after(() => bridge.close());
+  const cwd = process.cwd();
+  const first = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'first' };
+  const second = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'second' };
+  let bound = first;
+  const runtime = createNativeEngineRuntime({ externalRoutes: new Map(), stateRoot: cwd,
+    starHarness: { route: workspace => workspace === cwd ? { managed: true, modelSelection: bound } : undefined } });
+  bridge.setAdapter(createDshRuntimeAdapter({ bridge, nativeEngineRuntime: runtime }));
+  const listeners = new Map();
+  applyDshRuntimePlugin({ get: () => bridge, tools: {}, on: (event, handler) => listeners.set(event, handler) },
+    { agentId: 'harness-agent', runtime: 'native-engine', local: true, agentRevision: 1 });
+  let selected = first;
+  const writes = [];
+  const agent = { session: { header: { cwd }, requestHeader: () => ({ config: first }) },
+    model: { current: () => selected, select: value => { writes.push(value); selected = value; } } };
+  listeners.get('agent/created')({ agent });
+  assert.deepEqual(writes, []);
+  bound = second;
+  listeners.get('agent/inbox/claimed')({ agent });
+  listeners.get('agent/inbox/claimed')({ agent });
+  assert.deepEqual(writes, [second]);
+  assert.deepEqual(agent.session.requestHeader().config, first);
+  selected = first;
+  listeners.get('agent/created')({ agent });
+  assert.deepEqual(writes, [second, second]);
+  listeners.get('agent/inbox/claimed')({ agent: { ...agent, session: { header: { cwd: '/unbound-workspace' } } } });
+  assert.deepEqual(writes, [second, second]);
+});
 
 for (const runtime of ['dsh-native', 'harness', 'codex']) {
   test(`${runtime} Host routing never sends same-session auxiliary or copied requests through resource consumers`, async t => {

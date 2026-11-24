@@ -11,7 +11,7 @@ import { committedWorkspaceCheckpoint } from '@kingsoftcloud/agentkit-harness-no
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { NativeKernel, emptyUsage, planModeToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from '../../../tests/fixtures/native-core.mjs';
-import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from '../../../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from '../../fixtures/retired-native/providers/native-tool-authority.mjs';
 
 function setup(t, authorize = async () => 'allow') {
   const root = mkdtempSync(join(tmpdir(), 'native-rewind-')), workspace = join(root, 'workspace'), stateDir = join(root, 'state');

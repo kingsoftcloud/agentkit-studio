@@ -13,7 +13,7 @@ import { createNativeRecoveryState } from '../src/client/state/native-recovery.m
 import { createStudioHostRemote } from '../src/host-remote.mjs';
 import { nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { readNativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
-import { nativeLocalExecutionMethods } from '../src/providers/native-local-execution.mjs';
+import { nativeLocalExecutionMethods } from './fixtures/retired-native/providers/native-local-execution.mjs';
 
 const gate = () => Promise.withResolvers();
 const tick = () => new Promise(resolve => setImmediate(resolve));

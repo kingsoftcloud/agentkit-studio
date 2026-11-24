@@ -3,7 +3,7 @@
  * dispatch and artifact publication. This module never imports a Skill module. */
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { constants, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, opendirSync, readSync } from 'node:fs';
-import { SKILL_EVENT_FILE } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
+import { SKILL_EVENT_FILE } from '../contracts/native-dsh.mjs';
 
 export const NATIVE_SKILL_WORKFLOW = 'agentkit.native-skill-workflow/v1';
 const TEXT_SUFFIXES = new Set(['csv', 'json', 'jsonl', 'log', 'md', 'rst', 'tsv', 'txt', 'xml', 'yaml', 'yml']);

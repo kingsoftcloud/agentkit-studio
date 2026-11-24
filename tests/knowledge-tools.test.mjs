@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createKnowledgeConnection, createStudioKnowledgeTools, knowledgeBindings } from '../src/knowledge-tools.mjs';
 import { createDshNodeKnowledgeTools } from '../src/providers/dsh-node-knowledge-tools.mjs';
+import { createStudioDshBuiltins, onlyStudioDshTools } from '../src/providers/studio-dsh-builtins.mjs';
 
 const formal = 'search_knowledge_base', signal = () => new AbortController().signal;
 const plugin = (id, enabled = true) => ({ enabled, config: { binding: { resource: { kind: 'knowledge-base', id, secretKey: 'never-copy' } } } });
@@ -114,6 +115,24 @@ test('DSH persists original intent before dispatch; duplicate receipts and immut
   assert.equal(first.status, 'ok'); assert.deepEqual(await h.create().execute(formal, args, exec), first); assert.equal(calls, 1);
   for (const extra of [{ agentRevision: 2 }, { buildId: 'changed-build' }, { knowledge: service(async () => assert.fail('binding drift'), { bindings: bindings('other') }) }])
     assert.equal((await h.create(extra).execute(formal, args, exec)).content.error_type, 'dsh_node_command_call_identity_conflict');
+  assert.equal(calls, 1);
+});
+
+test('an independent Harness workspace can use Studio knowledge without mounting unrelated tool owners', async t => {
+  let calls = 0;
+  const h = setup(t, () => assert.fail('The selected Studio service owns lookup'));
+  const selected = new Set([formal]);
+  assert.equal(onlyStudioDshTools(selected), true);
+  assert.equal(onlyStudioDshTools(new Set([formal, 'run_command'])), false);
+  const port = createStudioDshBuiltins({ agentId: 'agent', agentRevision: 1, buildId: 'build', workspaceRoot: h.workspaceRoot,
+    stateDir: h.stateDir, getKnowledgeTools: () => service(async () => { calls++; return reply(); }),
+    getSkillManagement: () => assert.fail('Unbound Skill service must stay inactive') }, selected, 'local_process');
+  t.after(() => port.close());
+  assert.deepEqual(port.definitions.map(tool => tool.name), [formal]);
+  assert.equal(port.supports('browser_inspect_workspace'), false);
+  const args = { query: 'workspace evidence' }, exec = h.exec(args);
+  assert.deepEqual(await port.execute(formal, args, exec), { status: 'ok', content: '[1] (来源: 文档) 检索正文\n    答案: 回答' });
+  assert.equal((await port.execute(formal, args, exec)).status, 'ok');
   assert.equal(calls, 1);
 });
 

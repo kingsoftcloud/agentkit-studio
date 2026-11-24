@@ -1,4 +1,4 @@
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../../contracts/native-values.mjs';
 
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256 && !value.includes('\0');
 

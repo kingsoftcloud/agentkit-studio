@@ -1,4 +1,5 @@
-import { compileToolInput, NATIVE_JSON_CODEC, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { compileToolInput } from '../contracts/tool-input.mjs';
+import { NATIVE_JSON_CODEC, parseNativeJson } from '../contracts/native-json.mjs';
 
 // This mode is Host-owned. Remote payloads cannot negotiate it or create
 // integer wrappers: only numeric JSON tokens become exact integer values.

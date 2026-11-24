@@ -1,4 +1,5 @@
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { commandStateRoot } from './dsh-node-command-ledger.mjs';
 import { getDshInvocationContext } from './dsh-invocation-context.mjs';
 import { LEGACY_MEMORY_TOOLS } from '../legacy-memory-tools.mjs';

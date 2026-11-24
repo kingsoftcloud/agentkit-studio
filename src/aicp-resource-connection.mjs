@@ -2,7 +2,7 @@
  * Reference: ksadk/common/aicp_env.py; no Python runtime is used. */
 import { createHash } from 'node:crypto';
 import { createConnection } from 'node:net';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from './contracts/native-values.mjs';
 import { createAicpResourceClient } from './server-client.mjs';
 import { hostFetch } from './http-fetch.mjs';
 

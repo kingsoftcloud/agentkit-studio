@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeDshA2aTools, NATIVE_A2A_TOOLS_CONTRACT } from '../src/providers/native-dsh-a2a.mjs';
+import { createNativeDshA2aTools, NATIVE_A2A_TOOLS_CONTRACT } from './fixtures/retired-native/providers/native-dsh-a2a.mjs';
 
 const allowAuthorize = async () => 'allow';
 const assertCurrentTrue = () => true;

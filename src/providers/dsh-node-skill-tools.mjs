@@ -1,7 +1,9 @@
 /** DSH Skill discovery/loading under real Session and call identities. */
 import { join } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { createSkillReadTransport, nativeSkillReadToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/skill-tools';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { studioSkillReadDefinitions } from './studio-skill-tool-contracts.mjs';
+import { createStudioSkillReads } from './studio-skill-reads.mjs';
 import { createNativeSkillService } from './native-skill-service.mjs';
 import { createNativeSkillLoader } from './native-skill-loader.mjs';
 import { nativeSkillSessionCache, nativeSkillSpaceSettings } from './native-skill-host.mjs';
@@ -18,7 +20,7 @@ export function createDshNodeSkillTools({ agentId, workspaceRoot, stateDir, conn
   invariant(connection?.client && /^[a-f0-9]{64}$/u.test(connection.bindingDigest ?? ''), 'dsh_node_skill_connection_invalid');
   invariant(hostSignal === undefined || hostSignal instanceof AbortSignal, 'dsh_node_skill_host_signal_invalid');
   const settings = nativeSkillSpaceSettings({ skillSpaceIds: copy(skillSpaceIds) }, { ...env });
-  const definitions = nativeSkillReadToolDefinitions(), formal = new Map(definitions.map(definition => [definition.name, definition]));
+  const definitions = studioSkillReadDefinitions(), formal = new Map(definitions.map(definition => [definition.name, definition]));
   const serviceClient = createNativeSkillService(connection.client), sessions = new Map(), lifetime = new AbortController();
   const ownerSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
   const assertOpen = () => {
@@ -33,8 +35,8 @@ export function createDshNodeSkillTools({ agentId, workspaceRoot, stateDir, conn
       const cache = nativeSkillSessionCache({ stateRoot: join(stateDir, 'skills'), workspaceRoot,
         owner: { contract: DSH_NODE_SKILL_READ, agentId, sessionId } });
       const loadSkillFn = createNativeSkillLoader({ serviceClient, cacheDir: cache.cacheDir, ...(fetchImpl ? { fetchImpl } : {}) });
-      sessions.set(sessionId, { ...cache, transport: createSkillReadTransport({ serviceClient, loadSkillFn,
-        skillSpaceIds: settings.userSpaces, publicSpaceIds: settings.publicSpaces, publicAllowlist: settings.publicAllowlist }) });
+      sessions.set(sessionId, { ...cache, transport: createStudioSkillReads({ serviceClient, loadSkill: loadSkillFn,
+        ...settings }) });
     }
     return sessions.get(sessionId);
   }

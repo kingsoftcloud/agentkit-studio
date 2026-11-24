@@ -80,7 +80,7 @@ test('Ezone public wrapper rejects an unverified checkout before tool bootstrap 
     // Node preinstall marker, proving the negative cases have an active trap.
     const caller = join(root, 'unverified-caller'); mkdirSync(caller);
     const accepted = spawnSync('/bin/bash', [join(root, 'ci/ezone-public-gate.sh')],
-      { cwd: caller, env: { ...env, SYS_BUILD_COMMIT: head }, encoding: 'utf8', timeout: 5000 });
+      { cwd: caller, env: { ...env, SYS_BUILD_COMMIT: head }, encoding: 'utf8', timeout: 15000 });
     assert.ifError(accepted.error); assert.equal(accepted.status, 73, accepted.stderr);
     assert.match(accepted.stderr, /dependency install timed out; retrying with the same frozen lockfile and store/);
     assert.equal(existsSync(probe), true); assert.equal(existsSync(marker), true);

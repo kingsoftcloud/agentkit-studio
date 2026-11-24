@@ -10,7 +10,7 @@ import {
 import { fixture, scope, digest } from '../../../tests/fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
-import { createNativeToolAuthority } from '../../../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority } from '../../fixtures/retired-native/providers/native-tool-authority.mjs';
 import { createNativeVisionBrowser, NATIVE_VISION_BROWSER_CONTRACT, VisionObservationContext } from '@kingsoftcloud/agentkit-harness-node/native/browser-vision';
 
 const sha256Hex = v => createHash('sha256').update(v).digest('hex');

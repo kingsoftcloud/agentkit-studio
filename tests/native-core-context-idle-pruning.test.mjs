@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { canonical, emptyUsage, NativeKernel, planNativeContext, reduceModel, validateContextMessages } from '@kingsoftcloud/agentkit-harness-core';
 import { toolPruningIdleElapsed } from '@kingsoftcloud/agentkit-harness-core/context-microcompact';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 import { digest, fixture, scope, tool } from './fixtures/native-core.mjs';
 
 const policy = { tokenizerId: 'fixture', tokenizerDigest: 'fixture/v1', enabled: true, triggerRatio: .72, targetRatio: .45,

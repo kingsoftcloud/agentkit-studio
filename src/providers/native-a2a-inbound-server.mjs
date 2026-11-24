@@ -2,7 +2,8 @@
  * A socket disconnect stops observation, never cancels the original Run.
  * The host must supply a real Server command receiver and durable fact source. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
 import { buildA2aAgentCard, JSONRPC_PATH, REST_PATH_PREFIX } from './native-a2a-agent-card.mjs';
 import { createA2aInboundAdmission } from './native-a2a-inbound-admission.mjs';
 import { createA2aInboundTaskStore } from './native-a2a-inbound-task-store.mjs';

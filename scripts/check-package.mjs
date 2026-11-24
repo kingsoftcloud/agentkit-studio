@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { NATIVE_PACKAGES } from './native-package-integrity.mjs';
+import { verifyLocalProcessLaunchers } from './check-local-process-launchers.mjs';
 import { dshPin } from './dsh-pin.mjs';
 const forbiddenPath = /\/Users\/|\/home\/[^/]+\/|file:\/\/\/Users\//;
 // Assembled so this guard does not match its own text.
@@ -32,13 +32,15 @@ try {
     if (typeof target !== 'string' || !target.startsWith('./') || !files.has(target.slice(2))) throw Error('Missing Studio export: ' + target);
   for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'third-party/ZCode-LICENSE', 'dist/client.js',
     'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
-    'scripts/native-package-pins.json', 'scripts/native-package-integrity.mjs', 'scripts/verify-native-dependencies.mjs',
     'scripts/start-agent-bundle.mjs', 'scripts/start-agent-manifest.mjs', 'scripts/verify-agent-manifest.mjs'])
     if (!files.has(file)) throw Error('Missing runtime entry: ' + file);
-  for (const name of NATIVE_PACKAGES)
-    if (!/^\d+\.\d+\.\d+$/.test(metadata.dependencies?.[name]) || metadata.bundledDependencies?.includes(name))
-      throw Error('Native library dependency must be installed from a pinned registry version: ' + name);
-  if (files.has('src/host/services/native-harness.mjs') || list.some(path => path.startsWith('package/node_modules/')))
+  const harnessPackage = /^@kingsoftcloud\/agentkit-harness(?:-|$)/u;
+  for (const name of [...Object.keys(metadata.dependencies ?? {}), ...Object.keys(metadata.optionalDependencies ?? {}),
+    ...Object.keys(metadata.peerDependencies ?? {}), ...metadata.bundledDependencies ?? [], ...metadata.bundleDependencies ?? []])
+    if (harnessPackage.test(name)) throw Error('Studio declares a Harness runtime dependency: ' + name);
+  verifyLocalProcessLaunchers(join(root, 'src/providers/studio-local-command'));
+  if (files.has('src/host/services/native-harness.mjs') || files.has('scripts/native-package-pins.json')
+    || list.some(path => path.startsWith('package/node_modules/')))
     throw Error('Studio archive contains the retired Harness entry or bundled dependencies');
   for (const path of list) {
     if (path.endsWith('/')) continue;

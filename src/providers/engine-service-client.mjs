@@ -12,6 +12,9 @@ const RETRYABLE_SOCKET_ERRORS = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 
 export const ENGINE_TOOL_RECEIPT = 'agentkit.tool-receipt-observation/v1';
 export const ENGINE_VERIFICATION = 'agentkit.engine-verification/v1';
 export const ENGINE_COMMAND_VERIFIER = 'engine.workspace-command-receipt';
+export const ENGINE_CONTEXT = 'agentkit.engine-context/v1';
+export const ENGINE_HOOKS = 'agentkit.engine-hooks/v1';
+export const ENGINE_EXECUTION_POLICY = 'agentkit.engine-execution-policy/v1';
 
 export function engineServiceEndpoint(endpoint, token) {
   const url = new URL(endpoint);
@@ -57,6 +60,7 @@ export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl 
 
 /** Host-side network transport for agentkit.engine/v1. */
 export function connectEngineService({ endpoint, token, sessionId, runId, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal,
+  onReadContext, onInvokeHook,
   requiredToolPolicy, requiredToolEffects, observeOnly = false, runSignal, fetchImpl = fetch }) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('engine_service_binding_invalid');
   const root = engineServiceEndpoint(endpoint, token) + '/v1/sessions/' + sessionId + '/';
@@ -67,6 +71,8 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool),
       ...(requiredToolEffects ? { toolEffects: 'agentkit.engine-host-tool-effect/v1' } : {}),
       ...(onReadToolReceipt ? { toolReceipts: ENGINE_TOOL_RECEIPT } : {}),
+      ...(onReadContext ? { context: ENGINE_CONTEXT } : {}),
+      ...(onInvokeHook ? { hooks: ENGINE_HOOKS } : {}),
       ...(onVerifyGoal ? { verification: ENGINE_VERIFICATION } : {}) } };
   const requestPath = runId ? 'host-requests?' + new URLSearchParams({ runId, receiver: randomUUID() }) : 'host-requests';
   // One callback execution per frame for this attached Run. A transport
@@ -141,7 +147,12 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
         || result.capabilities?.workspaceCommandVerification !== ENGINE_COMMAND_VERIFIER))
         throw Object.assign(new Error('当前 Harness 服务不支持正式验收回执。'),
           { code: 'NATIVE_ENGINE_VERIFICATION_UNAVAILABLE' });
-      if ((onCallTool || onReadToolReceipt || onVerifyGoal || onApproveTool && result.capabilities?.approvals !== 'durable') && !poll)
+      if (onReadContext && result.capabilities?.hostContext !== ENGINE_CONTEXT)
+        throw Object.assign(new Error('当前 Harness 服务不支持已绑定的宿主上下文。'), { code: 'NATIVE_ENGINE_CONTEXT_UNAVAILABLE' });
+      if (onInvokeHook && result.capabilities?.hostHooks !== ENGINE_HOOKS)
+        throw Object.assign(new Error('当前 Harness 服务不支持已配置的宿主 Hooks。'), { code: 'NATIVE_ENGINE_HOOKS_UNAVAILABLE' });
+      if ((onCallTool || onReadToolReceipt || onVerifyGoal || onReadContext || onInvokeHook
+        || onApproveTool && result.capabilities?.approvals !== 'durable') && !poll)
         poll = pollHost().catch(() => { poll = undefined; });
       return result;
     }).finally(() => { initializing = null; });
@@ -186,14 +197,18 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     } else if (frame.method === 'host/verifyGoal' && onVerifyGoal) {
       try { envelope.result = await onVerifyGoal(frame.params); }
       catch { envelope.error = { code: -32603, message: 'Host verification unavailable' }; }
-    } else if (frame.method === 'host/readToolReceipt' && onReadToolReceipt) {
+    } else {
+      const callback = frame.method === 'host/readToolReceipt' ? onReadToolReceipt
+        : frame.method === 'host/readContext' ? onReadContext : frame.method === 'host/invokeHook' ? onInvokeHook : null;
+      if (!callback) return { ...envelope, error: { code: -32601, message: 'Unsupported host method' } };
       try {
         const expiresIn = frame.expiresAt - Date.now();
         if (!Number.isSafeInteger(expiresIn) || expiresIn <= 0) return;
-        const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(expiresIn)]);
-        envelope.result = await onReadToolReceipt(frame.params, signal);
-      } catch { envelope.error = { code: -32603, message: 'Host receipt unavailable' }; }
-    } else envelope.error = { code: -32601, message: 'Unsupported host method' };
+        const signal = AbortSignal.any([attachment, AbortSignal.timeout(expiresIn)]);
+        signal.throwIfAborted();
+        envelope.result = await callback(frame.params, signal);
+      } catch { envelope.error = { code: -32603, message: 'Host callback unavailable' }; }
+    }
     return envelope;
   }
 

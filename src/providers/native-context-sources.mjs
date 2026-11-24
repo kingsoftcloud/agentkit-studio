@@ -11,7 +11,8 @@
  * bind({scope, sessionId, record, buildId, store, expectedRuntimeBuildId}) → null | {sources, readSource, close}
  */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, configure, effectiveRunConfiguration, CONTEXT_SOURCE_CONTRACT } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { CONTEXT_SOURCE_CONTRACT } from '../contracts/native-dsh.mjs';
 
 export const STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT = 'agentkit.studio-native-context-sources/v1';
 
@@ -133,16 +134,14 @@ export function createStudioNativeContextSourceRegistry() {
       const identityKeys = ['runId', 'turnId', 'parentRunId', 'taskChainId'];
       invariant(identityKeys.every(key => snapshot[key] === request[key]), 'studio_native_context_identity_unbound');
       invariant(['preparing_context', 'compacting'].includes(snapshot.phase), 'studio_native_context_phase_unbound');
-      // Verify the EFFECTIVE configuration (steered task contract) matches the request.
-      // The Kernel passes effectiveRunConfiguration(snapshot, loaded.configuration, digest) to readSource.
-      // We recompute it from the ledger and compare to the request.
-      const effective = effectiveRunConfiguration(snapshot, loaded.configuration, rawDigest);
-      invariant(canonical(effective) === canonical(request.configuration), 'studio_native_context_config_unbound');
-      // Verify config digest (base frozen config hasn't been swapped).
+      // Both inputs were normalized when admitted to the trusted store.
+      // Verify the immutable activation and the currently steered task contract.
       invariant(rawDigest(loaded.configuration) === snapshot.configDigest, 'studio_native_context_base_config_unbound');
-      // Verify task contract digest if present.
-      if (snapshot.taskContractDigest !== null && snapshot.taskContractDigest !== undefined)
-        invariant(snapshot.taskContractDigest === rawDigest(snapshot.taskContract), 'studio_native_context_task_contract_unbound');
+      invariant(snapshot.taskContract
+        ? snapshot.taskContractDigest === rawDigest(snapshot.taskContract) : snapshot.taskContractDigest == null,
+      'studio_native_context_task_contract_unbound');
+      const effective = snapshot.taskContract ? { ...loaded.configuration, contract: snapshot.taskContract } : loaded.configuration;
+      invariant(canonical(effective) === canonical(request.configuration), 'studio_native_context_config_unbound');
       // Verify the source is the exact bound definition AND in the effective config.
       const sourceEntry = sourceMap.get(request.source.sourceId);
       invariant(sourceEntry && canonical(sourceEntry.def) === canonical(request.source), 'studio_native_context_source_unbound');

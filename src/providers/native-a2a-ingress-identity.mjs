@@ -2,7 +2,7 @@
  * @355059d. Verification grants no local execution permit. Pure Node crypto;
  * token/body contents and crypto/parser failures never become diagnostics. */
 import { constants, createHash, createPublicKey, verify as verifySignature } from 'node:crypto';
-import { parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { parseNativeJson } from '../contracts/native-json.mjs';
 
 const code = 'A2A_INGRESS_IDENTITY_INVALID';
 const fail = () => { const error = new Error(code); error.code = code; throw error; };

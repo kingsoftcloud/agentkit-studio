@@ -1,9 +1,10 @@
 /** The legacy snippet tool always requires isolation. Local selection still
  * owns the formal tool and rejects execution, so it cannot enter Python. */
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { e2bCodeToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/e2b-command-tools';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { e2bCodeToolDefinitions } from './studio-e2b-command-transport.mjs';
 import { createDshNodeE2BCodeTools } from './dsh-node-e2b-command-tools.mjs';
-import { nativeCommandBackend } from './native-e2b-host.mjs';
+import { nativeCommandBackend } from './native-command-backend.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
 import { SANDBOX_CODE_NAME } from './sandbox-code-name.mjs';
 

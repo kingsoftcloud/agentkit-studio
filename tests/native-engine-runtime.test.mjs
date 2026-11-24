@@ -12,13 +12,12 @@ import { createNativeEngineRuntime, HARNESS_SERVICE_MODEL_PROVIDER, resolveEngin
 import { startStarHarness } from '../src/host/services/star-harness-release.mjs';
 import { nativeEngineVerification } from '../src/providers/native-engine-verification.mjs';
 
-const installedEngine = fileURLToPath(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
+const testEngine = process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER
+  ? pathToFileURL(process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER)
+  : new URL(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
 const engineCommand = process.env.AGENTKIT_ENGINE_COMMAND ?? process.execPath;
-const engineArgs = process.env.AGENTKIT_ENGINE_COMMAND ? process.env.AGENTKIT_ENGINE_ARGS : JSON.stringify([installedEngine]);
-const createTestService = async () => (await import(new URL('engine-service.mjs',
-  process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER
-    ? pathToFileURL(process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER)
-    : import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')))).createEngineService;
+const engineArgs = process.env.AGENTKIT_ENGINE_COMMAND ? process.env.AGENTKIT_ENGINE_ARGS : JSON.stringify([fileURLToPath(testEngine)]);
+const createTestService = async () => (await import(new URL('engine-service.mjs', testEngine))).createEngineService;
 
 const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
 const toolCall = (id, name, args) => [
@@ -73,7 +72,7 @@ test('the spawned engine uses the saved Anthropic Messages protocol', async t =>
 test('the managed worker receives the normalized DeepSeek Anthropic endpoint', async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-managed-deepseek-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const engine = pathToFileURL(installedEngine);
+  const engine = testEngine;
   const release = join(root, 'release');
   const native = join(release, 'src', 'native');
   const workspaceRoot = join(root, 'workspace');
@@ -480,7 +479,7 @@ test('Studio verifies only an explicit acceptance command on the delivered works
   }
 });
 
-test('acceptance ignores unrelated success and rejects failed or stale matching receipts', () => {
+test('the newest matching acceptance receipt records failure and blocks on stale or unrelated evidence', () => {
   const objective = 'Create out.txt.\nAcceptance command: `node test.mjs`';
   const verifier = nativeEngineVerification({ objective, runId: 'fixture' });
   assert.equal(nativeEngineVerification({ objective: 'Run node test.mjs', runId: 'fixture' }), null);
@@ -491,8 +490,185 @@ test('acceptance ignores unrelated success and rejects failed or stale matching 
     runId: 'fixture', goal: objective, workspaceRevision: 'current', operationKey: 'verify', inputDigest: 'input', evidence: { calls } });
   assert.equal(check([receipt]).status, 'passed');
   assert.equal(check([{ ...receipt, content: { ...receipt.content, exit_code: 1 } }, receipt]).status, 'failed');
+  const failed = { ...receipt, eventId: 'failed', content: { ...receipt.content, status: 'failed', exit_code: 7 } };
+  assert.equal(check([failed, receipt]).status, 'failed');
+  assert.deepEqual(check([failed, receipt]).evidenceRefs, ['failed']);
+  assert.match(check([failed]).safeSummary, /7/);
+  assert.equal(check([{ ...failed, content: { ...failed.content, exit_code: 0 } }]).status, 'blocked');
   assert.equal(check([{ ...receipt, workspaceChangeObservation: { status: 'captured', revision: 'previous' } }]).status, 'blocked');
   assert.equal(check([{ ...receipt, call: { ...receipt.call, arguments: { command: 'true' } } }]).status, 'blocked');
+});
+
+test('verification requires current evidence for every explicitly declared acceptance command', () => {
+  const first = 'test -f first.txt', second = 'test -f second.txt';
+  const receipt = (command, eventId, exitCode = 0, revision = 'current') => ({ eventId, status: 'ok',
+    call: { name: 'run_command', arguments: { command } }, content: { exit_code: exitCode,
+      status: exitCode === 0 ? 'completed' : 'failed', evidence_incomplete: false },
+    workspaceChangeObservation: { status: 'captured', revision } });
+  const verify = (declarations, calls) => {
+    const objective = ['Deliver both files.', ...declarations].join('\n');
+    const verifier = nativeEngineVerification({ objective, runId: 'fixture' });
+    return verifier.verify({ contract: verifier.definition.contract, definition: verifier.definition,
+      runId: 'fixture', goal: objective, workspaceRevision: 'current', operationKey: 'verify', inputDigest: 'input', evidence: { calls } });
+  };
+  const declarations = [`验收命令：\`${first}\``, `Acceptance command: \`${second}\``];
+  const justSecond = receipt(second, 'second-current');
+  const failed = verify(declarations, [justSecond, receipt(first, 'first-current', 1), receipt(first, 'older-passing')]);
+  assert.equal(failed.status, 'failed');
+  assert.deepEqual(failed.evidenceRefs, ['first-current']);
+  assert.match(failed.safeSummary, /第 1 项/);
+  assert.equal(verify(declarations, [justSecond]).status, 'blocked');
+  assert.equal(verify(declarations, [justSecond, receipt(first, 'first-old', 0, 'previous')]).status, 'blocked');
+  const passing = verify([...declarations, declarations[1]], [justSecond, receipt(first, 'first-current')]);
+  assert.equal(passing.status, 'passed');
+  assert.deepEqual(passing.evidenceRefs, ['first-current', 'second-current']);
+  assert.equal(verify(['验收命令：', declarations[1]], [justSecond]).reason, 'acceptance_command_invalid');
+  assert.equal(verify(Array.from({ length: 17 }, (_, index) => `验收命令：\`test -f ${index}.txt\``), []).reason,
+    'acceptance_command_count_exceeded');
+});
+
+test('an earlier required failure repairs in the same Run even when the last command passed', async t => {
+  const first = 'test -f out.txt', second = 'test -d .';
+  const f = await setup(t, [
+    toolCall('initial-first', 'run_command', { command: first }),
+    toolCall('initial-second', 'run_command', { command: second }),
+    final('Initial draft.'),
+    toolCall('repair', 'write_workspace_file', { path: 'out.txt', content: 'accepted' }),
+    toolCall('final-first', 'run_command', { command: first }),
+    toolCall('final-second', 'run_command', { command: second }),
+    final('Both checks now pass.'),
+  ]);
+  const runtime = await serviceRuntime(t, f);
+  const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write', requestPolicyApproval: async () => 'allowed-once',
+    input: `Create out.txt.\nAcceptance command: \`${first}\`\nAcceptance command: \`${second}\`` }));
+  const frames = chunks.filter(chunk => chunk.type === 'engine-event');
+  assert.equal(new Set(frames.map(chunk => chunk.runId)).size, 1);
+  assert.equal(frames.find(chunk => chunk.event.kind === 'run.terminal')?.event.status, 'verified');
+  assert.match(JSON.stringify(f.model.requests[3]?.messages), /第 1 项验收命令执行失败/);
+  assert.equal(readFileSync(join(f.cwd, 'out.txt'), 'utf8'), 'accepted');
+});
+
+for (const transport of ['http', 'stdio']) test(`an unsuccessful acceptance command repairs the same Run over ${transport}`, {
+  skip: transport === 'stdio' && !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER,
+}, async t => {
+  const command = 'test -f out.txt';
+  const f = await setup(t, [
+    toolCall('failed-check', 'run_command', { command }),
+    final('Initial draft.'),
+    toolCall('repair', 'write_workspace_file', { path: 'out.txt', content: 'fixture' }),
+    toolCall('passing-check', 'run_command', { command }),
+    final('Repaired and checked.'),
+  ]);
+  const runtime = transport === 'http' ? await serviceRuntime(t, f) : f.runtime;
+  const chunks = await collect(runtime.stream({ ...f.options, sandbox: transport === 'http' ? 'workspace-write' : 'danger-full-access',
+    requestPolicyApproval: async () => 'allowed-once', input: 'Create out.txt.\nAcceptance command: `test -f out.txt`' }));
+  const frames = chunks.filter(chunk => chunk.type === 'engine-event');
+  assert.equal(new Set(frames.map(chunk => chunk.runId)).size, 1);
+  assert.equal(frames.find(chunk => chunk.event.kind === 'run.terminal')?.event.status, 'verified');
+  assert.match(JSON.stringify(f.model.requests[2]?.messages), /acceptance_command_failed|退出码为 1/);
+  assert.equal(readFileSync(join(f.cwd, 'out.txt'), 'utf8'), 'fixture');
+});
+
+for (const transport of ['http', 'stdio']) test(`the independent engine uses run-bound context and Hooks over ${transport}`, {
+  skip: transport === 'stdio' && !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER,
+}, async t => {
+  const { ENGINE_CONTEXT, ENGINE_HOOKS } = await import('../src/providers/engine-service-client.mjs');
+  const f = await setup(t, [
+    toolCall('write', 'write_workspace_file', { path: 'out.txt', content: 'fixture' }),
+    final('Done.'),
+  ]);
+  const runtime = transport === 'http' ? await serviceRuntime(t, f) : f.runtime;
+  const source = { sourceId: 'fixture.context', bindingDigest: 'sha256:' + 'a'.repeat(64),
+    maxTokens: 1024, maxBytes: 8000, timeoutMs: 3000, failureMode: 'fail', allowInstructions: false };
+  const hook = { hookId: 'fixture.write', sourceRef: 'plugin://fixture@1', bindingDigest: 'sha256:' + 'b'.repeat(64),
+    executionPolicyDigest: 'sha256:' + 'c'.repeat(64), readOnly: true, events: ['PreToolUse'], timeoutMs: 3000,
+    maxInputBytes: 32768, maxOutputBytes: 4096, failureMode: 'block', toolNames: ['write_workspace_file'] };
+  const reads = [], invocations = [];
+  const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'danger-full-access', input: 'Write out.txt.',
+    hostContext: { definition: { contract: ENGINE_CONTEXT, sources: [source] }, read(request, signal) {
+      signal.throwIfAborted();
+      reads.push(request);
+      return { contract: ENGINE_CONTEXT, sourceId: source.sourceId, bindingDigest: source.bindingDigest,
+        items: [{ projection: 'data', fragment: { text: 'registered-source-value' } }] };
+    } },
+    hostHooks: { definition: { contract: ENGINE_HOOKS, hooks: [hook] }, invoke(request, signal) {
+      signal.throwIfAborted();
+      invocations.push(request);
+      return { contract: ENGINE_HOOKS, operationKey: request.operationKey, inputDigest: request.inputDigest,
+        status: 'ok', reason: null, output: { action: 'continue', additionalContext: [], updatedArguments: null } };
+    } },
+  }));
+  const terminal = chunks.find(chunk => chunk.event?.kind === 'run.terminal');
+  assert.equal(terminal?.event.title, 'completed');
+  assert.ok(reads.length >= 1);
+  assert.deepEqual(invocations.map(invocation => invocation.event), ['PreToolUse']);
+  assert.deepEqual(new Set([...reads, ...invocations].map(request => request.runId)), new Set([terminal.runId]));
+  assert.match(JSON.stringify(f.model.requests[0].messages), /registered-source-value/);
+  assert.equal(readFileSync(join(f.cwd, 'out.txt'), 'utf8'), 'fixture');
+});
+
+test('Studio closes an engine that cannot negotiate a required scoped callback before starting work', async t => {
+  const { ENGINE_HOOKS } = await import('../src/providers/engine-service-client.mjs');
+  const f = await setup(t, []);
+  let closed = false;
+  const runtime = createNativeEngineRuntime({ stateRoot: join(f.cwd, 'compat-state'), resolveCommand: () => ({ command: 'legacy', args: [] }),
+    spawnEngine: () => ({
+      initialize: async () => ({ capabilities: {} }),
+      close: async () => { closed = true; },
+      startRun: () => assert.fail('work started without a required capability'),
+    }) });
+  await assert.rejects(collect(runtime.stream({ ...f.options, hostHooks: {
+    definition: { contract: ENGINE_HOOKS, hooks: [] }, invoke: () => assert.fail('no callback is expected'),
+  } })), { code: 'NATIVE_ENGINE_HOOKS_UNAVAILABLE' });
+  assert.equal(closed, true);
+  assert.equal(f.model.requests.length, 0);
+});
+
+test('a Studio execution budget caps a durable provider backoff on the original Run', { timeout: 10000 }, async t => {
+  const { ENGINE_EXECUTION_POLICY } = await import('../src/providers/engine-service-client.mjs');
+  const response = { status: 429, headers: { 'retry-after': '60' }, body: { error: { code: 'rate_limit' } } };
+  const f = await setup(t, [response, final('A request beyond the wall budget must not run.')]);
+  const runtime = await serviceRuntime(t, f);
+  const chunks = [];
+  const stream = runtime.stream({ ...f.options, executionPolicy: {
+    contract: ENGINE_EXECUTION_POLICY, strategy: 'direct', maxWallMs: 2500, maxModelCalls: null, maxToolCalls: null,
+  } });
+  await assert.rejects(async () => {
+    for await (const chunk of stream) chunks.push(chunk);
+  }, { code: 'NATIVE_ENGINE_RUN_INCOMPLETE' });
+  assert.equal(f.model.requests.length, 1);
+  const retry = chunks.find(chunk => chunk.event?.kind === 'model.retry_scheduled');
+  const terminal = chunks.find(chunk => chunk.event?.kind === 'run.terminal');
+  assert.ok(retry);
+  assert.equal(terminal?.runId, retry.runId);
+  assert.match(terminal?.event.reason ?? '', /budget_exhausted|wall_time_hard_limit/);
+});
+
+test('redelivering the same Studio turn resumes a Run paused by continuous provider errors', {
+  timeout: 25000, skip: !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER,
+}, async t => {
+  const unavailable = { status: 502, headers: { 'retry-after': '0' }, body: { error: { code: 'server_error' } } };
+  const f = await setup(t, [
+    toolCall('checkpoint', 'run_command', { command: 'printf done >> checkpoint.txt' }),
+    unavailable, unavailable, unavailable, unavailable, final('Continued.'),
+  ]);
+  const runtime = await serviceRuntime(t, f);
+  const first = [];
+  const options = { ...f.options, sandbox: 'danger-full-access', input: 'Append a checkpoint, then report the result.' };
+  await assert.rejects(async () => {
+    for await (const chunk of runtime.stream(options)) first.push(chunk);
+  }, { code: 'NATIVE_ENGINE_RUN_INCOMPLETE', message: /模型服务暂不可用/ });
+  assert.equal(f.model.requests.length, 5);
+  assert.equal(readFileSync(join(f.cwd, 'checkpoint.txt'), 'utf8'), 'done');
+  const previousRun = first.find(chunk => chunk.event?.kind === 'run.started')?.runId;
+  assert.ok(previousRun);
+
+  const continued = await collect(runtime.stream(options));
+  const terminal = continued.find(chunk => chunk.event?.kind === 'run.terminal');
+  assert.equal(terminal?.runId, previousRun);
+  assert.equal(terminal?.event.title, 'completed');
+  assert.equal(f.model.requests.length, 6);
+  assert.equal(readFileSync(join(f.cwd, 'checkpoint.txt'), 'utf8'), 'done');
 });
 
 async function serviceRuntime(t, f, { images = false, contextWindow } = {}) {
@@ -932,10 +1108,10 @@ test('Studio-installed Star Harness routes registered workspaces to isolated wor
   const [alpha, beta] = projects;
   const unbound = await setup(t, [final('Unbound still works.')]);
   const root = join(alpha.cwd, '..', 'manager');
-  const release = fileURLToPath(new URL('../..', pathToFileURL(installedEngine)));
+  const release = fileURLToPath(new URL('../..', testEngine));
   const { version } = JSON.parse(readFileSync(join(release, 'package.json'), 'utf8'));
   const open = () => createStarHarnessManager({
-    root, env: { PATH: process.env.PATH }, externalRoutes: new Map(), bundledVersion: version,
+    root, env: { PATH: process.env.PATH }, externalRoutes: new Map(),
     releases: { entry: async () => release, install: async () => release, latest: async () => version },
     modelProfiles: [{ id: 'Beta', modelName: 'Beta', default: true }],
     workspaceRegistry: () => ({ list: () => [{ path: realpathSync(beta.cwd) }] }),
@@ -950,12 +1126,17 @@ test('Studio-installed Star Harness routes registered workspaces to isolated wor
   let manager = open();
   try {
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
+    assert.equal((await manager.status()).recommendedVersion, null);
+    assert.equal((await manager.status({ checkUpdates: true })).recommendedVersion, version);
     await manager.install(version);
     await manager.bind(alpha.cwd, alpha.label);
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
     await manager.setEnabled(true);
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: true });
     assert.deepEqual(runtime(manager).serviceModels, ['Alpha', 'Beta']);
+    assert.equal(runtime(manager).requiresServiceWorkspace, true);
+    await assert.rejects(collect(runtime(manager).stream(unbound.options)), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+    assert.equal(unbound.model.requests.length, 0);
     const mixedRuntime = createNativeEngineRuntime({ stateRoot: join(root, 'mixed'),
       env: { PATH: process.env.PATH, AGENTKIT_ENGINE_COMMAND: engineCommand, AGENTKIT_ENGINE_ARGS: engineArgs }, starHarness: manager });
     assert.equal(mixedRuntime.usesServiceFor(alpha.cwd), true);
