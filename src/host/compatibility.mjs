@@ -1,5 +1,7 @@
 /** Versioned Studio requirements evaluated against the current Host services. */
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 export const HOST_CONTRACT_VERSION = 1;
 const requirements = Object.freeze({
@@ -47,14 +49,53 @@ export function createHostCompatibility({ getService, dshVersion, requiredDsh, r
   } });
 }
 
+/** The installed Host entry that is serving this process.
+ *
+ * Studio may be loaded from a source checkout, and that checkout's dependency
+ * graph is not the Host's: nothing in Studio's own `package.json` depends on
+ * `@deepseek-ai/dsh-app-boot`, while `@deepseek-ai/dsh-llm` is hoisted there
+ * as a *second* copy. Resolving from Studio therefore reports the running Host
+ * as an unknown baseline and hands back a different `isAgentLoopRequest`
+ * WeakSet — both are facts about Studio's location, not about the Host.
+ *
+ * Anchor on the entry the Host is actually running so the public Host modules
+ * come from the same module graph the Host itself uses.
+ */
+export function hostModuleAnchor({ argv = process.argv, env = process.env } = {}) {
+  // Electron puts the app binary first and flags before the entry, so every
+  // argument is a candidate; a flag is not an absolute path and is skipped.
+  for (const candidate of [env.AGENTKIT_DSH_HOST_ENTRY, ...argv.slice(1)]) {
+    if (typeof candidate !== 'string' || !candidate) continue;
+    try {
+      createRequire(candidate).resolve('@deepseek-ai/dsh-app-boot');
+      return candidate;
+    } catch { /* not the running Host entry */ }
+  }
+  return undefined;
+}
+
+/** Import a public Host module from the running Host's module graph.
+ *
+ * The resolved URL is the one the Host itself imports, so Node's ESM cache
+ * returns the Host's instance rather than a copy. Falls back to Studio's own
+ * resolution when no Host anchor exists (tests, embedders).
+ */
+export async function importHostModule(specifier, anchor) {
+  if (anchor) {
+    try { return await import(pathToFileURL(createRequire(anchor).resolve(specifier)).href); }
+    catch { /* fall back to Studio's own resolution below */ }
+  }
+  return import(specifier);
+}
+
 /** Read the running DSH package through its public boot API. Display-version
  * environment overrides and Studio's own manifest never establish Host identity.
  */
-export async function loadHostCompatibility(ctx) {
+export async function loadHostCompatibility(ctx, { anchor = hostModuleAnchor() } = {}) {
   const manifest = JSON.parse(await readFile(new URL('../../studio.plugin.json', import.meta.url), 'utf8'));
   let dshVersion, requestIsAgentLoop;
   try {
-    const boot = await import('@deepseek-ai/dsh-app-boot');
+    const boot = await importHostModule('@deepseek-ai/dsh-app-boot', anchor);
     dshVersion = boot.getDshRuntimeVersion?.();
   } catch {
     // An unreadable or absent boot package cannot authorize native execution.
@@ -63,7 +104,7 @@ export async function loadHostCompatibility(ctx) {
   try {
     // Resolve the public helper from the running Host package graph. A copied
     // implementation would have a different WeakSet and reject real requests.
-    requestIsAgentLoop = (await import('@deepseek-ai/dsh-llm')).isAgentLoopRequest;
+    requestIsAgentLoop = (await importHostModule('@deepseek-ai/dsh-llm', anchor)).isAgentLoopRequest;
   } catch {
     // Diagnostics remain available; native features require this capability.
   }
