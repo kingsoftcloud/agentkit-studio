@@ -7,6 +7,7 @@ import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 import { requestHeaders } from './model-profile-contract.mjs';
+import { anthropicRequestHeaders, anthropicResponseToChat, chatToAnthropicRequest, createAnthropicStreamTransformer } from './anthropic-messages.mjs';
 import { applyReasoningFallback, dropCarrierlessReasoningTurns, dropOrphanToolReceipts, isReasoningEffortRejection, isReasoningReplayRejection, logReasoningFallback, normalizeEmptyAssistantTurns, normalizeReasoningContent, reasoningFallbackAllowed, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
 /**
@@ -51,7 +52,7 @@ export function upstreamRequestHeaders(profile) {
 }
 
 export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics, onReasoningFallback = logReasoningFallback, upstreamApi = 'chat-completions', idleTimeoutMs = 120000 }) {
-  if (!['chat-completions', 'responses'].includes(upstreamApi)) throw new TypeError('Unsupported model proxy API');
+  if (!['chat-completions', 'responses', 'anthropic-messages'].includes(upstreamApi)) throw new TypeError('Unsupported model proxy API');
   return async (request, response) => {
     const admission = admit(request);
     if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(); return; }
@@ -66,6 +67,7 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
       // bounds the idle deadline itself: a slow gateway must not outlive the
       // timeout the operator configured for this model.
       const profile = await models.profile(decodeURIComponent(match[1]));
+      const activeApi = profile.protocol === 'anthropic-messages' ? 'anthropic-messages' : upstreamApi;
       deadline = createModelIdleDeadline({ signal: controller.signal, timeoutMs: profile.requestTimeoutMs ?? idleTimeoutMs });
       const chunks = []; let size = 0;
       for await (const chunk of request) {
@@ -75,7 +77,8 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         deadline.touch();
       }
       const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      const nativeResponses = upstreamApi === 'responses';
+      const nativeResponses = activeApi === 'responses';
+      const nativeAnthropic = activeApi === 'anthropic-messages';
       const convert = match[2] === 'responses' && !nativeResponses;
       if (convert && input.previous_response_id) throw Object.assign(new Error('请传入完整对话历史；此兼容端点不保存远端 Response ID'), { status: 400, code: 'STATELESS_INPUT_REQUIRED' });
       const toolContext = convert && codexTools ? prepareCodexProxyRequest(input) : undefined;
@@ -120,19 +123,22 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         else body.max_tokens = profile.maxOutputTokens;
       }
       if (body.stream && !nativeResponses) body.stream_options = { ...body.stream_options, include_usage: true };
-      let serialized = JSON.stringify(body);
+      const serializeUpstream = value => JSON.stringify(nativeAnthropic
+        ? chatToAnthropicRequest(value, { model: profile.modelName, maxOutputTokens: profile.maxOutputTokens, parameters: profile.parameters, reasoningWire: value.reasoning_effort })
+        : value);
+      let serialized = serializeUpstream(body);
       if (onRequestMetrics) {
         const chars = value => JSON.stringify(value).length;
         const items = nativeResponses ? body.input : body.messages;
         const messages = Array.isArray(items) ? items : typeof items === 'string' ? [{ role: 'user', content: items }] : [];
-        onRequestMetrics({ requestId: randomUUID(), protocol: upstreamApi, model: body.model,
+        onRequestMetrics({ requestId: randomUUID(), protocol: activeApi, model: body.model,
           requestChars: serialized.length, requestBytes: Buffer.byteLength(serialized),
           toolCount: body.tools?.length || 0, toolsChars: body.tools ? chars(body.tools) : 0, messagesChars: chars(messages),
           instructionsChars: (body.instructions ? chars(body.instructions) : 0) + messages.filter(message => ['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0),
           conversationChars: messages.filter(message => !['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0) });
       }
-      const upstreamUrl = `${profile.baseUrl}/${nativeResponses ? 'responses' : 'chat/completions'}`;
-      const headers = upstreamRequestHeaders(profile);
+      const upstreamUrl = `${profile.baseUrl}/${nativeResponses ? 'responses' : nativeAnthropic ? 'messages' : 'chat/completions'}`;
+      const headers = nativeAnthropic ? anthropicRequestHeaders(profile) : upstreamRequestHeaders(profile);
       const requestUpstream = serializedBody => fetchImpl(upstreamUrl, {
         method: 'POST', headers,
         body: serializedBody, signal: deadline.signal, redirect: 'error',
@@ -158,7 +164,7 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
             onReasoningFallback({ provider: String(profile.provider || ''), model: String(profile.modelName || body.model || ''),
               from: replaced, to: fallback, status: upstream.status });
           } catch { /* logging is best-effort */ }
-          serialized = JSON.stringify(body);
+          serialized = serializeUpstream(body);
           upstream = await requestUpstream(serialized);
           deadline.touch();
           upstreamBodyConsumed = false;
@@ -172,7 +178,7 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
           // a turn that carries text or a call keeps them, minus the optional
           // `content` field when the provider rejects that field.
           if (normalizeReasoningContent(body) + dropCarrierlessReasoningTurns(body) > 0) {
-            serialized = JSON.stringify(body);
+            serialized = serializeUpstream(body);
             upstream = await requestUpstream(serialized);
             deadline.touch();
             upstreamBodyConsumed = false;
@@ -193,23 +199,34 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
       }
       if (!body.stream) {
         const value = await upstream.json();
+        const chat = nativeAnthropic ? anthropicResponseToChat(value) : value;
         response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        response.end(JSON.stringify(convert ? chatToResponses(value, { toolContext }) : value));
+        response.end(JSON.stringify(convert ? chatToResponses(chat, { toolContext }) : chat));
         return;
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
       const write = async data => { if (data && !response.write(data)) await once(response, 'drain', { signal: deadline.signal }); };
-      if (!convert) { for await (const bytes of upstream.body) { deadline.touch(); await write(bytes); } }
+      if (!convert && !nativeAnthropic) { for await (const bytes of upstream.body) { deadline.touch(); await write(bytes); } }
       else {
-        const transformer = createResponsesStreamTransformer({ model: profile.modelName, toolContext });
+        const transformer = convert ? createResponsesStreamTransformer({ model: profile.modelName, toolContext }) : null;
+        const anthropicStream = nativeAnthropic ? createAnthropicStreamTransformer() : null;
         let done = false;
-        for await (const chunk of readSse(upstream.body, { onChunk: deadline.touch, onDone: () => { done = true; } })) await write(transformer.handle(chunk));
-        // Some compatible gateways omit `choices[*].finish_reason` on the
-        // final usage-only chunk and signal completion with [DONE]. The SSE
-        // parser already consumed that sentinel, so the transformer closes
-        // the response with the safe default `stop` in that case.
-        if (!done && !transformer.state.finishReason) throw Object.assign(new Error('模型流未返回完成标记，连接已断开'), { code: 'UPSTREAM_STREAM_TRUNCATED' });
-        await write(transformer.finish());
+        let finishReason = false;
+        for await (const chunk of readSse(upstream.body, { onChunk: deadline.touch, onDone: () => { done = true; } })) {
+          const chatChunk = anthropicStream ? anthropicStream.handle(chunk) : chunk;
+          if (!chatChunk) continue;
+          finishReason ||= Boolean(chatChunk.choices?.[0]?.finish_reason);
+          await write(transformer ? transformer.handle(chatChunk) : `data: ${JSON.stringify(chatChunk)}\n\n`);
+        }
+        // Some compatible gateways omit the final finish reason and signal
+        // completion with [DONE]. The parser consumed that sentinel, so the
+        // transformer closes with its safe default only when needed.
+        if (!done || !finishReason) {
+          if (transformer && !transformer.state.finishReason) throw Object.assign(new Error('模型流未返回完成标记，连接已断开'), { code: 'UPSTREAM_STREAM_TRUNCATED' });
+          if (nativeAnthropic && !finishReason) throw Object.assign(new Error('模型流未返回完成标记，连接已断开'), { code: 'UPSTREAM_STREAM_TRUNCATED' });
+        }
+        if (transformer) await write(transformer.finish());
+        else await write('data: [DONE]\n\n');
       }
       response.end();
     } catch (error) {

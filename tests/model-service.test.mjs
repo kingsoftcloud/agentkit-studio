@@ -146,7 +146,7 @@ test('wire checks bind saved credentials to their connection and leave uncertain
     credentials: { resolve: async () => ({ value: 'fixture-key' }) },
     fetchImpl: async (url, options) => {
       const { model } = JSON.parse(options.body);
-      requests.push({ url: url.href, auth: options.headers.get('authorization'), project: options.headers.get('x-project') });
+      requests.push({ url: url.href, auth: options.headers.get('authorization'), apiKey: options.headers.get('x-api-key'), project: options.headers.get('x-project') });
       if (model === 'responses') return Response.json({ output: [] });
       return Response.json({ error: {} }, { status: model === 'chat' ? 404 : 429 });
     },
@@ -157,8 +157,15 @@ test('wire checks bind saved credentials to their connection and leave uncertain
   const report = await service.probeEfforts({ ...identity, modelName: 'limited', detectWire: true });
   assert.equal(report.wire, 'unknown');
   assert.ok(report.outcomes.every(item => item.outcome === 'untested'));
-  assert.equal(requests.length, 4);
-  assert.ok(requests.every(({ url, auth, project }) => url === 'https://gateway.test/v1/responses' && auth === 'Bearer fixture-key' && project === 'research'));
+  // A Chat-only gateway is asked twice: the Responses route 404s, then the
+  // Anthropic Messages route 404s, and only then is the wire Chat Completions.
+  const responses = requests.filter(({ url }) => url === 'https://gateway.test/v1/responses');
+  const messages = requests.filter(({ url }) => url === 'https://gateway.test/v1/messages');
+  assert.equal(requests.length, 5);
+  assert.equal(responses.length, 4);
+  assert.equal(messages.length, 1);
+  assert.ok(responses.every(({ auth, project }) => auth === 'Bearer fixture-key' && project === 'research'));
+  assert.ok(messages.every(({ apiKey, project }) => apiKey === 'fixture-key' && project === 'research'));
 });
 
 test('model service returns typed errors for missing credentials and unknown profiles', async () => {

@@ -11,7 +11,8 @@ import { boundSkillResources, loadBoundSkills } from './skill-bindings.mjs';
 import { dshModelRoute } from './model-route.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, reasoningFallbackAllowed, studioReasoningFallbackWire } from './model-reasoning.mjs';
-import { hasConfiguredAuthentication, requestHeaders } from './model-profile-contract.mjs';
+import { hasConfiguredAuthentication, providerWireApi, requestHeaders } from './model-profile-contract.mjs';
+import { anthropicRequestHeaders, chatToAnthropicRequest, createAnthropicStreamTransformer } from './anthropic-messages.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -288,16 +289,21 @@ function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signa
       const deadline = createModelIdleDeadline({ signal, timeoutMs: profile.requestTimeoutMs ?? modelIdleTimeoutMs });
       const requestSignal = deadline.signal;
       try {
+      const upstreamWire = providerWireApi(profile);
       const requestModel = async wire => {
         try {
           const configuredHeaders = requestHeaders(profile.headers);
-          const headers = { ...configuredHeaders, 'Content-Type': 'application/json' };
-          if (profile.apiKey && !Object.keys(configuredHeaders).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${profile.apiKey}`;
+          const anthropic = upstreamWire === 'anthropic-messages';
+          const headers = anthropic ? anthropicRequestHeaders(profile) : { ...configuredHeaders, 'Content-Type': 'application/json' };
+          if (!anthropic && profile.apiKey && !Object.keys(configuredHeaders).some(name => name.toLowerCase() === 'authorization')) headers.Authorization = `Bearer ${profile.apiKey}`;
           const parameters = profile.parameters && typeof profile.parameters === 'object' && !Array.isArray(profile.parameters) ? profile.parameters : {};
-          return await fetchImpl(`${profile.baseUrl}/chat/completions`, {
+          const body = anthropic
+            ? chatToAnthropicRequest({ model: profile.modelName || profile.id, messages, tools, ...(tools.length ? { tool_choice: 'auto' } : {}), stream: true, ...parameters }, { parameters, reasoningWire: wire, maxOutputTokens: profile.maxOutputTokens })
+            : { model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...parameters, ...(profile.maxOutputTokens ? { max_tokens: profile.maxOutputTokens } : {}), ...(wire ? { reasoning_effort: wire } : {}) };
+          return await fetchImpl(`${profile.baseUrl}/${anthropic ? 'messages' : 'chat/completions'}`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...parameters, ...(profile.maxOutputTokens ? { max_tokens: profile.maxOutputTokens } : {}), ...(wire ? { reasoning_effort: wire } : {}) }),
+            body: JSON.stringify(body),
             signal: requestSignal,
           });
         } catch {
@@ -331,16 +337,19 @@ function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signa
       if (!response.body) throw new LocalRuntimeError('MODEL_EMPTY_RESPONSE', '模型未返回响应内容');
       deadline.touch();
       const toolCalls = new Map();
+      const anthropicStream = providerWireApi(profile) === 'anthropic-messages' ? createAnthropicStreamTransformer() : null;
       let finishReason = '';
       let hasContent = false;
       let usage;
       try {
         for await (const parsed of readSse(response.body, { onChunk: deadline.touch })) {
         if (signal?.aborted) throw runtimeCancelledError();
-        if (parsed?.error) {
-          throw new LocalRuntimeError('MODEL_STREAM_FAILED', '模型流返回错误', modelFailureDetails({ error: parsed.error, headers: response.headers }));
+        const frame = anthropicStream?.handle(parsed) || parsed;
+        if (!frame) continue;
+        if (frame?.error) {
+          throw new LocalRuntimeError('MODEL_STREAM_FAILED', '模型流返回错误', modelFailureDetails({ error: frame.error, headers: response.headers }));
         }
-        const delta = parsed?.choices?.[0]?.delta;
+        const delta = frame?.choices?.[0]?.delta;
         if (delta?.content) yield { type: 'text', text: delta.content };
         const reasoning = delta?.reasoning_content || delta?.reasoning;
         if (delta?.content || reasoning) hasContent = true;
@@ -353,8 +362,8 @@ function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signa
           current.arguments += call.function?.arguments || '';
           toolCalls.set(index, current);
         }
-        finishReason = parsed?.choices?.[0]?.finish_reason || finishReason;
-        usage = chatCompletionUsage(parsed?.usage) || usage;
+        finishReason = frame?.choices?.[0]?.finish_reason || finishReason;
+        usage = chatCompletionUsage(frame?.usage) || usage;
       }
       } catch (error) {
         if (signal?.aborted) throw runtimeCancelledError();
