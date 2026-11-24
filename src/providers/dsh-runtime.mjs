@@ -13,7 +13,6 @@ import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
-
 /** Runtimes that run in their own process behind the stream seam. */
 import { dshModelFailure } from '../model-failure.mjs';
 import { startDesktopRun } from '../telemetry/host-run.mjs';
@@ -23,7 +22,6 @@ import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType }
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
-
 const ROUTE = 'agentkit-studio';
 
 /**
@@ -56,11 +54,9 @@ export function bindDshAgentRoute(sessionId, binding = {}, owner, scope) {
   };
   return resolveRuntimeBridge(owner).bindRoute(id, route, scope);
 }
-
 export function unbindDshAgentRoutes(agentId, owner) {
   resolveRuntimeBridge(owner).unbindAgentRoutes(agentId);
 }
-
 /**
  * Publish the Host-owned bridge to preset-scoped DSH plugins. The plugin uses
  * the `llm/stream` waterfall, so the durable DSH request keeps its original
@@ -70,7 +66,6 @@ export function unbindDshAgentRoutes(agentId, owner) {
 export function setDshRuntimeAdapter(adapter, owner) {
   return resolveRuntimeBridge(owner).setAdapter(adapter);
 }
-
 /**
  * Install the Host-owned executor used by the public DSH ToolRegistry bridge.
  * The registry lives in the DSH loop, while MCP credentials and transports
@@ -79,7 +74,6 @@ export function setDshRuntimeAdapter(adapter, owner) {
 export function setDshResourceToolExecutor(executor, owner) {
   return resolveRuntimeBridge(owner).setResourceToolExecutor(executor);
 }
-
 export async function executeDshResourceTool(input = {}, owner) {
   return resolveRuntimeBridge(owner).executeResourceTool(input);
 }
