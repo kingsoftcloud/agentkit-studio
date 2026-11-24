@@ -1,5 +1,5 @@
 import { isCredentialRefName } from '../../credential-ref.mjs';
-import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { harnessModelEndpoint, normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { studioReasoning } from '../../model-reasoning.mjs';
 import { providerWireApi } from '../../model-profile-contract.mjs';
@@ -63,8 +63,14 @@ export function createModelBridge({ hostRemote }) {
         const route = routes[index];
         const modelName = String(profile.modelName).trim();
         const provider = String(profile.provider || 'ksyun').trim() || 'ksyun';
+        const wire = providerWireApi(profile);
         const baseUrl = normalizeModelEndpoint(profile.baseUrl, provider);
         if (!baseUrl) throw new Error(`模型 ${modelName} 需要填写 API 地址`);
+        // DSH appends `/messages` to an Anthropic route's base URL, so the
+        // route has to carry the same version segment the engine process is
+        // given. Without it a summary request to the official DeepSeek
+        // endpoint 404s while the engine's own turns keep working.
+        const routedBaseUrl = harnessModelEndpoint(baseUrl, wire);
         const credentialName = modelCredentialName(profile, index);
         const reasoning = studioReasoning(profile);
         const reasoningEfforts = reasoning?.efforts ?? (profile.reasoningLevels?.length === 0 ? false : undefined);
@@ -87,10 +93,9 @@ export function createModelBridge({ hostRemote }) {
               ...(configured && reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
               ...(configured && reasoning && supportsModelDefaults && !dedicated ? { defaultReasoningEffort: reasoning.defaultEffort } : {}) };
           });
-        const wire = providerWireApi(profile);
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
           displayName: `${provider} · ${modelName}`, api: wire, apiKeyEnv: credentialName,
-          baseURL: baseUrl,
+          baseURL: routedBaseUrl,
           // Kspmas validates message roles and answers
           // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends
           // the system prompt as `developer` to every reasoning model on a route
