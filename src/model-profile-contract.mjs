@@ -36,6 +36,16 @@ export function requestHeaders(headers) {
     .map(([name, value]) => [name, value.trim()]));
 }
 
+/** Headers that can carry the model credential without the API-key field. */
+export function hasConfiguredAuthentication(headers) {
+  return Object.keys(requestHeaders(headers)).some(name => /^(?:authorization|x-api-key|api-key|x-api-key-token)$/i.test(name));
+}
+
+/** Header values that must not be written into a portable resource manifest. */
+export function isSensitiveRequestHeader(name) {
+  return /^(?:authorization|proxy-authorization|x-api-key|api-key|x-api-key-token)$/i.test(String(name || '').trim());
+}
+
 export function modelRuntimeOptions(profile) {
   return Object.fromEntries(MODEL_RUNTIME_OPTION_KEYS.filter(key => profile[key] !== undefined)
     .map(key => [key, structuredClone(profile[key])]));

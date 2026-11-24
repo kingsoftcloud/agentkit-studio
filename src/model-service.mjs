@@ -5,7 +5,8 @@ import { STUDIO_REASONING_LEVELS, studioReasoning } from './model-reasoning.mjs'
 import { catalogReasoningMetadata } from './model-catalog-reasoning.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
-import { providerWireApi, requestHeaders } from './model-profile-contract.mjs';
+import { hasConfiguredAuthentication, providerWireApi, requestHeaders } from './model-profile-contract.mjs';
+import { normalizeModelEndpoint } from './model-endpoint.mjs';
 import { diagnoseModelEfforts, untestedEfforts } from './model-effort-probe.mjs';
 import { probeModelWire, probeModelWires } from './model-wire-probe.mjs';
 
@@ -39,7 +40,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       let url;
       try { url = new URL(resource.spec?.endpointUrl); } catch { /* validated below */ }
       if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw Object.assign(new Error('模型 API 地址无效'), {code:'MODEL_URL_INVALID'});
-      const baseUrl = url.href.replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
+      const baseUrl = normalizeModelEndpoint(url.href, 'openai-compatible');
       const current = await settings();
       const profiles = current.modelProfiles || [];
       if (profiles.some(item => item.id === id)) throw Object.assign(new Error('模型资源名称已存在，请使用其他名称'), {code:'MODEL_PROFILE_EXISTS'});
@@ -70,10 +71,12 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       if (!admitted && !(await gatewayModels(gateway)).some(item => item.id === effectiveId)) throw missing();
       return { ...gateway, modelName: effectiveId };
     }
-    const resolved = await credentials.resolve(selected.credentialName || 'AGENTKIT_MODEL_API_KEY');
+    let resolved;
+    try { resolved = await credentials.resolve(selected.credentialName || 'AGENTKIT_MODEL_API_KEY'); }
+    catch { resolved = undefined; }
     const key = resolved?.value || selected.apiKey;
-    if (!key) throw Object.assign(new Error('请先在模型与凭证中配置 API Key'), { code: 'MODEL_CREDENTIAL_MISSING', status: 409 });
-    const baseUrl = selected.baseUrl || (selected.provider === 'ksyun' ? 'http://kspmas.ksyun.com/v1' : '');
+    if (!key && !hasConfiguredAuthentication(selected.headers)) throw Object.assign(new Error('请先在模型与凭证中配置 API Key，或配置 Authorization/X-API-Key 请求头'), { code: 'MODEL_CREDENTIAL_MISSING', status: 409 });
+    const baseUrl = normalizeModelEndpoint(selected.baseUrl || '', selected.provider);
     const url = new URL(baseUrl);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw Object.assign(new Error('模型 API 地址无效'), { code: 'MODEL_URL_INVALID', status: 400 });
     // Configuration stores `reasoningEfforts: true` as the opt-in marker; the
@@ -81,7 +84,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const reasoning = studioReasoning(selected);
     return { ...selected,
       ...(reasoning ? { reasoningEfforts: reasoning.efforts, defaultReasoningEffort: reasoning.defaultEffort } : {}),
-      baseUrl: baseUrl.replace(/\/$/, ''), apiKey: key };
+      baseUrl: url.href.replace(/\/$/, ''), apiKey: key || '' };
   }
   async function gatewayModels(selected, refresh = false) {
     // A gateway can gate `/models` behind its own header, so the profile's
@@ -93,12 +96,13 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const configured = requestHeaders(selected.headers);
     const fingerprint = Object.keys(configured).length
       ? '\0' + JSON.stringify(Object.entries(configured).sort(([left], [right]) => left.localeCompare(right))) : '';
-    const key = createHash('sha256').update(selected.baseUrl + '\0' + selected.apiKey + fingerprint).digest('hex');
+    const key = createHash('sha256').update(selected.baseUrl + '\0' + (selected.apiKey || '') + fingerprint).digest('hex');
     const cached = catalogs.get(key);
     if (!refresh && cached && cached.expires > Date.now()) return cached.items;
     if (pendingCatalogs.has(key)) return pendingCatalogs.get(key);
     const operation = (async () => {
-    const response = await fetchImpl(`${selected.baseUrl}/models`, { headers: { Authorization: `Bearer ${selected.apiKey}`, ...configured }, signal: AbortSignal.timeout(15000), redirect: 'error' });
+    const headers = { ...configured, ...(selected.apiKey && !Object.keys(configured).some(name => name.toLowerCase() === 'authorization') ? { Authorization: `Bearer ${selected.apiKey}` } : {}) };
+    const response = await fetchImpl(`${selected.baseUrl}/models`, { headers, signal: AbortSignal.timeout(15000), redirect: 'error' });
     if (!response.ok) throw Object.assign(new Error(`读取模型目录失败（${response.status}）`), { code: 'MODEL_CATALOG_FAILED' });
     const data = await response.json();
     const items = (data.data || data.models || []).filter(item => typeof item.id === 'string').map(item => ({ id: item.id, name: item.name || item.id, input: modelInput(item),
@@ -129,20 +133,23 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
             provider: values.modelProvider, baseUrl: values.modelBaseUrl, apiKey: values.modelApiKey, credentialName: 'AGENTKIT_MODEL_API_KEY',
           });
       if (!saved) throw Object.assign(new Error('找不到已保存的模型或提供商'), { code: 'MODEL_CONNECTION_NOT_FOUND', status: 404 });
-      const resolved = await credentials.resolve(saved.credentialName || 'AGENTKIT_MODEL_API_KEY');
+      let resolved;
+      try { resolved = await credentials.resolve(saved.credentialName || 'AGENTKIT_MODEL_API_KEY'); }
+      catch { resolved = undefined; }
       // A saved credential can only be sent to the saved endpoint and headers.
       const envKey = ['env', 'user-env', 'project-env'].includes(resolved?.source) && resolved.value;
       candidate = { ...saved, apiKey: envKey || saved.apiKey || resolved?.value };
     }
     const provider = String(candidate.provider || 'custom').trim() || 'custom';
-    const baseUrl = String(candidate.baseUrl || (provider === 'ksyun' ? 'http://kspmas.ksyun.com/v1' : '')).replace(/\/$/, '');
+    const baseUrl = normalizeModelEndpoint(candidate.baseUrl || '', provider);
     const apiKey = String(candidate.apiKey || '').trim();
-    if (!apiKey) throw Object.assign(new Error('请先填写模型 API Key'), { code: 'MODEL_CREDENTIAL_MISSING', status: 409 });
+    const headers = requestHeaders(candidate.headers);
+    if (!apiKey && !hasConfiguredAuthentication(headers)) throw Object.assign(new Error('请先填写模型 API Key，或配置 Authorization/X-API-Key 请求头'), { code: 'MODEL_CREDENTIAL_MISSING', status: 409 });
     let url;
     try { url = new URL(baseUrl); } catch { /* validated below */ }
     if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
       throw Object.assign(new Error('模型 API 地址无效'), { code: 'MODEL_URL_INVALID', status: 400 });
-    return { provider, baseUrl: url.href.replace(/\/$/, ''), apiKey, headers: requestHeaders(candidate.headers),
+    return { provider, baseUrl: normalizeModelEndpoint(url.href, provider), apiKey, headers,
       modelName: candidate.modelName, protocol: candidate.protocol };
   }
   async function probe(candidate = {}) {
@@ -194,7 +201,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       return { baseUrl: target.baseUrl, modelName, wire };
     }
     // Keep the original direct-address operation available to existing callers.
-    const baseUrl = String(candidate.baseUrl || '').trim().replace(/\/+$/, '');
+    const baseUrl = normalizeModelEndpoint(candidate.baseUrl || '', candidate.provider || 'custom');
     if (!baseUrl || !modelName)
       throw Object.assign(new Error('探测需要模型地址与模型名'), { code: 'MODEL_PROBE_INPUT_INVALID', status: 400 });
     let apiKey;
@@ -223,7 +230,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       try { apiKey = (await credentials.resolve(candidate?.credentialName || 'AGENTKIT_MODEL_API_KEY'))?.value; }
       catch { signal?.throwIfAborted(); apiKey = null; }
     }
-    if (!apiKey || !baseUrl) return admitModelCapabilities(candidate);
+    if ((!apiKey && !hasConfiguredAuthentication(candidate?.headers)) || !baseUrl) return admitModelCapabilities(candidate);
     return capabilities({ ...candidate, baseUrl, apiKey }, signal);
   }
   return { settings, save, create, sync, profile, catalog, probe, probeEfforts, probeWire, capabilities, capabilitiesOf };

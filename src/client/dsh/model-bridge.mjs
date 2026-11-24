@@ -3,6 +3,7 @@ import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { studioReasoning } from '../../model-reasoning.mjs';
 import { providerWireApi } from '../../model-profile-contract.mjs';
+import { dshModelRoute } from '../../model-route.mjs';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
 
 export const DEFAULT_KSYUN_BASE_URL = 'http://kspmas.ksyun.com/v1';
@@ -55,8 +56,11 @@ export function createModelBridge({ hostRemote }) {
       if (!valid.length) throw new Error('至少保留一个模型配置');
       const catalogs = await Promise.all(valid.map(profile => hostRemote.modelCatalog(modelProfileId(profile)).catch(() => null)));
       checkActive();
+      const routes = valid.map((profile, index) => dshModelRoute(profile, index));
+      const duplicateRoute = routes.find((route, index) => routes.indexOf(route) !== index);
+      if (duplicateRoute) throw Object.assign(new Error(`模型路由冲突：${duplicateRoute}。请缩短或修改模型配置 ID`), { code: 'MODEL_ROUTE_COLLISION' });
       const operations = valid.map((profile, index) => {
-        const route = `agentkit-studio-${modelProfileId(profile, index).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 64);
+        const route = routes[index];
         const modelName = String(profile.modelName).trim();
         const provider = String(profile.provider || 'ksyun').trim() || 'ksyun';
         const baseUrl = normalizeModelEndpoint(profile.baseUrl, provider);
@@ -109,10 +113,31 @@ export function createModelBridge({ hostRemote }) {
           models,
         } } };
       });
-      const response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, [
+      const providerOperations = [
         ...Object.keys(namespace?.value?.providers || {}).filter(route => route.startsWith('agentkit-studio-') && !operations.some(item => item.route === route)).map(route => ({ op: 'unset', path: ['providers', route] })),
         ...operations.map(item => item.operation),
-      ], namespace?.revision);
+      ];
+      const previousProviders = namespace?.value?.providers || {};
+      const restoreProviders = Object.keys(previousProviders).filter(route => route.startsWith('agentkit-studio-'))
+        .map(route => ({ op: 'set', path: ['providers', route], value: previousProviders[route] }))
+        .concat(operations.map(item => item.route).filter(route => !Object.hasOwn(previousProviders, route))
+          .map(route => ({ op: 'unset', path: ['providers', route] })));
+      const rollback = async (defaultNamespace, providerRevision = namespace?.revision) => {
+        try {
+          if (restoreProviders.length) await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, restoreProviders, providerRevision);
+          if (defaultNamespace?.value) {
+            const old = defaultNamespace.value;
+            await ctx.remote.settings.mutate(DSH_DEFAULT_MODEL_SETTINGS_NS, [
+              Object.hasOwn(old, 'provider') ? { op: 'set', path: ['provider'], value: old.provider } : { op: 'unset', path: ['provider'] },
+              Object.hasOwn(old, 'model') ? { op: 'set', path: ['model'], value: old.model } : { op: 'unset', path: ['model'] },
+              Object.hasOwn(old, 'reasoningEffort') ? { op: 'set', path: ['reasoningEffort'], value: old.reasoningEffort } : { op: 'unset', path: ['reasoningEffort'] },
+            ], defaultNamespace.revision);
+          }
+        } catch { /* best-effort compensation, original failure remains authoritative */ }
+      };
+      let response;
+      try { response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, providerOperations, namespace?.revision); }
+      catch (error) { throw error; }
       checkActive();
       if (!response?.ok) throw new Error(response?.error?.message || 'DSH 模型配置保存失败');
       const defaultNamespace = (await describe()).namespaces?.find(item => item.ns === DSH_DEFAULT_MODEL_SETTINGS_NS);
@@ -123,14 +148,15 @@ export function createModelBridge({ hostRemote }) {
       // `UNSUPPORTED_REASONING_EFFORT` for a level this model never declared,
       // so a profile without a reasoning declaration must clear the field.
       const defaultEffort = studioReasoning(valid[0])?.defaultEffort;
-      const defaultResponse = await ctx.remote.settings.mutate(DSH_DEFAULT_MODEL_SETTINGS_NS, [
-        { op: 'set', path: ['provider'], value: first.route }, { op: 'set', path: ['model'], value: first.modelName },
-        defaultEffort
-          ? { op: 'set', path: ['reasoningEffort'], value: defaultEffort }
-          : { op: 'unset', path: ['reasoningEffort'] },
-      ], defaultNamespace.revision);
+      let defaultResponse;
+      try {
+        defaultResponse = await ctx.remote.settings.mutate(DSH_DEFAULT_MODEL_SETTINGS_NS, [
+          { op: 'set', path: ['provider'], value: first.route }, { op: 'set', path: ['model'], value: first.modelName },
+          defaultEffort ? { op: 'set', path: ['reasoningEffort'], value: defaultEffort } : { op: 'unset', path: ['reasoningEffort'] },
+        ], defaultNamespace.revision);
+      } catch (error) { await rollback(defaultNamespace); throw error; }
       checkActive();
-      if (!defaultResponse?.ok) throw new Error(defaultResponse?.error?.message || 'DSH 默认模型保存失败');
+      if (!defaultResponse?.ok) { await rollback(defaultNamespace); throw new Error(defaultResponse?.error?.message || 'DSH 默认模型保存失败'); }
       for (const item of operations) {
         const key = String(keys[item.credentialName] || '').trim();
         if (!key) continue;
@@ -139,9 +165,11 @@ export function createModelBridge({ hostRemote }) {
         // persisting a reference the Host cannot load on the next boot.
         if (!isCredentialRefName(item.credentialName)) throw new Error(`模型 ${item.modelName} 的凭证引用不合法（只允许字母、数字和下划线，且不能以数字开头）：${item.credentialName}`);
         checkActive();
-        const stored = await ctx.remote.credentials.set(item.credentialName, key);
+        let stored;
+        try { stored = await ctx.remote.credentials.set(item.credentialName, key); }
+        catch (error) { await rollback(defaultNamespace); throw error; }
         checkActive();
-        if (!stored?.ok) throw new Error(stored?.error?.message || `模型 ${item.modelName} 凭证保存失败`);
+        if (!stored?.ok) { await rollback(defaultNamespace); throw new Error(stored?.error?.message || `模型 ${item.modelName} 凭证保存失败`); }
       }
       return { provider: first.provider, route: first.route, model: first.modelName, profiles: operations.map(({ operation, ...item }) => item) };
     };

@@ -2,9 +2,12 @@
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, validatePortableCredentialNames } from './portable-resources.mjs';
 import { resolveMcpConnection } from './local-resource-adapters.mjs';
+import { modelRuntimeOptions, requestHeaders } from './model-profile-contract.mjs';
 
 const normalizeUrl = value => new URL(value).href.replace(/\/$/, '');
 const changed = () => { throw portableError('DEPLOYMENT_RESOURCE_CHANGED', '资源配置在准备部署后发生变化，请重新检查运行包'); };
+const stable = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 const idOf = value => String(value?.resourceId || value?.id || value || '');
 export const PLATFORM_CREDENTIAL_NAMES = new Set(['KSYUN_ACCESS_KEY', 'KSYUN_SECRET_KEY', 'KSYUN_SESSION_TOKEN']);
 
@@ -19,7 +22,9 @@ export async function resolveDeploymentCredentials({ zip, models, adapters, cred
   };
   for (const profile of manifest.resources.profiles) {
     const current = await models.profile(profile.id);
-    if (['provider', 'modelName'].some(key => current[key] !== profile[key]) || normalizeUrl(current.baseUrl) !== profile.baseUrl || (current.codexApi || '') !== (profile.codexApi || '')) changed();
+    const fields = ['provider', 'modelName', 'codexApi', 'protocol', 'contextWindow', 'maxOutputTokens', 'requestTimeoutMs', 'parameters', 'input'];
+    if (fields.some(key => stable(current[key]) !== stable(profile[key])) || normalizeUrl(current.baseUrl) !== profile.baseUrl
+      || stable(requestHeaders(current.headers)) !== stable(requestHeaders(profile.headers))) changed();
     put(profile.credentialName, current.apiKey);
   }
   for (const mcp of manifest.resources.mcps) {

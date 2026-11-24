@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonical, invariant } from '@kingsoftcloud/agentkit-harness-core';
 import { admitModelCapabilities, validateModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { modelInput } from '../model-service.mjs';
+import { requestHeaders } from '../model-profile-contract.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const key = profile => canonical([profile.id ?? '', profile.modelName]);
 
@@ -12,6 +13,7 @@ export const profileDescription = (profile, capabilities, legacyCapacityBudget =
   maxOutputTokens: capabilities?.maxOutputTokens ?? profile.maxOutputTokens ?? 8192,
   ...(capabilities && !legacyCapacityBudget ? { requestOutputTokens: Math.min(profile.maxOutputTokens ?? 8192, capabilities.maxOutputTokens) } : {}),
   parameters: profile.parameters ?? {}, requestTimeoutMs: profile.requestTimeoutMs ?? 110000,
+  ...(Object.keys(requestHeaders(profile.headers)).length ? { headers: requestHeaders(profile.headers) } : {}),
   input: capabilities?.input ?? modelInput(profile), ...(capabilities ? { capabilities } : {}) });
 
 export function validateNativeModelBindings(manifest) {

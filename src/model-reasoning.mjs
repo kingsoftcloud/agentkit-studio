@@ -185,6 +185,22 @@ export function studioReasoningFallbackWire(profile) {
   return capability.wire[level] ?? level;
 }
 
+/** Return false when a proposed fallback would increase the declared effort. */
+export function reasoningFallbackAllowed(profile, fromWire, toWire) {
+  const reasoning = studioReasoning(profile);
+  const capability = reasoningProfileFor(profile?.provider);
+  if (!fromWire || !toWire || fromWire === toWire) return false;
+  const order = reasoning ? Object.values(reasoning.efforts) : capability.levels.map(level => capability.wire[level] ?? level);
+  const rank = value => {
+    const direct = order.indexOf(value);
+    if (direct >= 0) return direct;
+    const canonical = STUDIO_REASONING_LEVELS.indexOf(value);
+    return canonical >= 0 ? canonical : -1;
+  };
+  const from = rank(fromWire), to = rank(toWire);
+  return from >= 0 && to >= 0 && to < from;
+}
+
 /**
  * Whether an upstream failure is a rejection of the reasoning effort value.
  * @param {number} status - the upstream HTTP status.

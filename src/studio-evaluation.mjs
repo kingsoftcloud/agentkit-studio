@@ -30,10 +30,21 @@ const ASSERTION_TYPES = new Set([
   'runtime.maxLatencyMs', 'runtime.maxInputTokens', 'runtime.maxOutputTokens',
   'tool.called', 'tool.notCalled', 'tool.sequence',
 ]);
+const STORAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_EVALSET_BYTES = 4 * 1024 * 1024;
+const MAX_EVALSET_CASES = 1000;
+const MAX_CASE_INPUT_CHARS = 1_000_000;
+
+function storageId(value, code, label) {
+  const id = String(value || '').trim();
+  if (!STORAGE_ID_RE.test(id)) throw new EvaluationError(code, `${label} 标识无效`);
+  return id;
+}
 
 function parseEvalsetSource(raw, fileName = '') {
   let value;
   const text = String(raw || '');
+  if (Buffer.byteLength(text, 'utf8') > MAX_EVALSET_BYTES) throw new EvaluationError('EVALSET_TOO_LARGE', '评测集超过 4 MiB 大小上限');
   if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
     try { value = JSON.parse(text); } catch { throw new EvaluationError('EVALSET_PARSE_FAILED', '评测集 JSON 解析失败'); }
   } else {
@@ -54,6 +65,7 @@ function normalizeNativeCase(raw, index) {
   const id = String(item.id || `case-${index + 1}`);
   const input = String(item.input || item.prompt || '');
   if (!input) throw new EvaluationError('EVALSET_CASE_INVALID', `用例 ${id} 缺少 input`, { caseId: id });
+  if (input.length > MAX_CASE_INPUT_CHARS) throw new EvaluationError('EVALSET_CASE_TOO_LARGE', `用例 ${id} 的 input 过大`, { caseId: id });
   return { id, input, expectedOutput: item.expectedOutput ?? item.expected_output ?? null, assertions: normalizeAssertions(item.assertions || []), metadata: item.metadata || {} };
 }
 
@@ -63,6 +75,7 @@ function normalizeStudioCase(raw, index) {
   const turns = Array.isArray(item.turns) ? item.turns : [{ input: String(item.input || '') }];
   const input = turns.map(turn => String(turn.input || turn?.input || '')).join('\n') || String(item.input || '');
   if (!input) throw new EvaluationError('EVALSET_CASE_INVALID', `用例 ${id} 缺少 input`, { caseId: id });
+  if (input.length > MAX_CASE_INPUT_CHARS) throw new EvaluationError('EVALSET_CASE_TOO_LARGE', `用例 ${id} 的 input 过大`, { caseId: id });
   return { id, input, expectedOutput: turns[turns.length - 1]?.expectedOutput || turns[turns.length - 1]?.expected_output || null, assertions: normalizeAssertions(item.assertions || []), metadata: item.metadata || {} };
 }
 
@@ -124,7 +137,8 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
   async function importEvalset({ content, fileName }) {
     await ensureDirs();
     const parsed = parseEvalsetSource(content, fileName);
-    const id = parsed.evalsetId;
+    const id = storageId(parsed.evalsetId, 'EVALSET_ID_INVALID', '评测集');
+    if (parsed.cases.length > MAX_EVALSET_CASES) throw new EvaluationError('EVALSET_TOO_LARGE', `评测集最多支持 ${MAX_EVALSET_CASES} 个用例`);
     const record = { ...parsed, id, caseCount: parsed.cases.length, updatedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
     await publish(join(evalsetsDir, `${id}.json`), record);
     return record;
@@ -161,7 +175,7 @@ export function createStudioEvaluation({ storeDir, runner, resolveTarget } = {})
   }
 
   async function getRun(runId) {
-    try { return publicRun(JSON.parse(await readFile(join(runsDir, `${runId}.json`), 'utf8'))); } catch { return null; }
+    try { return publicRun(JSON.parse(await readFile(join(runsDir, `${storageId(runId, 'EVALUATION_ID_INVALID', '评测运行')}.json`), 'utf8'))); } catch { return null; }
   }
 
   async function createEvaluation({ evalsetId, evalsetFile, target, agentId, config = {} }) {
