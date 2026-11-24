@@ -1,6 +1,6 @@
 ---
 title: "云端 Agent HTTP API"
-description: "调用已部署 Agent 的 AgentEngine HTTP 接口：41 个 Action、两条调用路径、SSE 帧、错误信封与超时重试。"
+description: "调用已部署 Agent 的 AgentEngine HTTP 接口：48 个 Action、两条调用路径、SSE 帧、错误信封与超时重试。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
@@ -10,7 +10,7 @@ description: "调用已部署 Agent 的 AgentEngine HTTP 接口：41 个 Action�
 | | Studio RPC | AgentEngine Action（本页） |
 | --- | --- | --- |
 | 谁和谁说话 | 浏览器 ↔ 本地 Host | 本地 Host ↔ 云控制面 |
-| 规模 | `143` 个 operation | `41` 个 Action + `5` 个 Skill 服务 Action |
+| 规模 | `143` 个 operation | `43` 个 Action + `5` 个 Skill 服务 Action |
 | 通道 | `/agentkit` | `POST /agentengine/api/v1/{Action}` 或 KOP `/?Action=…&Version=v1` |
 | 信封 | `{ ok, value }` / `{ ok, error }` | `{ Code, RequestId, Error, Data }` |
 | 认证 | 本地 Host 会话 | `Authorization: Bearer` 或 AWS SigV4 |
@@ -22,7 +22,7 @@ description: "调用已部署 Agent 的 AgentEngine HTTP 接口：41 个 Action�
 | 层 | 地址形状 | 用途 | 形状校验 |
 | --- | --- | --- | --- |
 | Studio RPC | 本地 Host 端口 | 浏览器驱动本地 Host | — |
-| 控制面 KOP | `https://aicp.api.ksyun.com` （公网）<br />`<inner-kop-host>` （内网，通常是 `http://`） | Host 调云侧 `41` 个 Action | 必须是干净的 origin：带端口、userinfo、query 或非根 path 一律 `SERVER_URL_INVALID` (`src/server-client.mjs:507`) |
+| 控制面 KOP | `https://aicp.api.ksyun.com` （公网）<br />`<inner-kop-host>` （内网，通常是 `http://`） | Host 调云侧 `43` 个 Action | 必须是干净的 origin：带端口、userinfo、query 或非根 path 一律 `SERVER_URL_INVALID` (`src/server-client.mjs:507`) |
 | 运行时端点 | `https://<AgentId>.agent.kspmas.ksyun.com` | 调**已部署 Agent** 的 `/v1/responses`、`/health`、`/v1/agentkit/runtime` | 只校验公网形状 (`src/studio-deployments.mjs:47-49`) |
 
 <Callout type="warn" title="内网地址没有形状校验">
@@ -192,7 +192,7 @@ for (;;) {
 
 ## Action 总表
 
-`46` 个 Action 全部从 `src/server-client.mjs` 的两处 `new Set([...])` 派生（`41` 个 AgentEngine Action + `5` 个 Skill 服务 Action）。**新增 Action 必须补 `ACTION_DOCS`，否则 `--check` 失败。**
+`48` 个 Action 全部从 `src/server-client.mjs` 的两处 `new Set([...])` 派生（`43` 个 AgentEngine Action + `5` 个 Skill 服务 Action）。**新增 Action 必须补 `ACTION_DOCS`，否则 `--check` 失败。**
 
 | 域 | Action | 路由 | 说明 | 已知请求字段 | 调用点 |
 | --- | --- | --- | --- | --- | --- |
@@ -208,6 +208,8 @@ for (;;) {
 | 记忆 | `ListMemoryInstances` | AgentEngine Action（POST） | 列出记忆库实例 | — | `src/server-client.mjs` |
 | MCP | `ListMCPs` | AgentEngine Action（POST） | 列出 MCP Server | — | `src/server-client.mjs` |
 | MCP | `GetMCP` | AgentEngine Action（POST） | 读取单个 MCP Server | — | `src/server-client.mjs` |
+| MCP | `CreateMCP` | AgentEngine Action（POST） | 创建 MCP Server | — | `src/server-client.mjs` |
+| MCP | `UpdateMCP` | AgentEngine Action（POST） | 更新 MCP Server | — | `src/server-client.mjs` |
 | MCP | `DeleteMCP` | AgentEngine Action（POST） | 删除 MCP Server 并清理云端资源 | — | `src/server-client.mjs` |
 | 知识库 | `RetrieveKnowledge` | AgentEngine Action（POST） | 按查询检索知识片段 | — | `src/server-client.mjs` |
 | 记忆 | `QueryMemorySdk` | AgentEngine Action（POST） | 按查询读记忆 | — | `src/server-client.mjs` |
@@ -252,7 +254,7 @@ for (;;) {
 | 会话 | 5 | `CreateSession` · `ListSessions` · `GetSession` · `ListSessionMessages` · `ListSessionEvents` |
 | 知识库 | 2 | `ListKnowledgeBases` · `RetrieveKnowledge` |
 | 记忆 | 6 | `ListMemoryInstances` · `QueryMemorySdk` · `CreateMemorySdk` · `ListMemories` · `UpdateMemory` · `DeleteMemory` |
-| MCP | 3 | `ListMCPs` · `GetMCP` · `DeleteMCP` |
+| MCP | 5 | `ListMCPs` · `GetMCP` · `CreateMCP` · `UpdateMCP` · `DeleteMCP` |
 | Skill | 6 | `ListSkillWorkspaces` · `ListSkillSpaces` · `ListAvailablePremadeSkills` · `ListSkillsBySpaceId` · `GetSkillDownloadUrl` · `GetPremadeSkillDownloadUrl` |
 | 调度 | 3 | `ListAgentSchedules` · `GetAgentSchedule` · `ListAgentScheduleOccurrences` |
 | 观测 | 2 | `GetObservabilityOverview` · `ListAgentRuntimeStats` |

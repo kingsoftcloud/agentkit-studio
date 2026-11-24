@@ -1327,6 +1327,8 @@ const ACTION_DOCS = {
   DeleteMemory: { domain: "memory", zh: "删除一条记忆", en: "Delete one memory record" },
   ListMCPs: { domain: "mcp", zh: "列出 MCP Server", en: "List MCP servers" },
   GetMCP: { domain: "mcp", zh: "读取单个 MCP Server", en: "Read one MCP server" },
+  CreateMCP: { domain: "mcp", zh: "创建 MCP Server", en: "Create an MCP server" },
+  UpdateMCP: { domain: "mcp", zh: "更新 MCP Server", en: "Update an MCP server" },
   DeleteMCP: { domain: "mcp", zh: "删除 MCP Server 并清理云端资源", en: "Delete an MCP server and its cloud resources" },
   ListSkillWorkspaces: { domain: "skill", zh: "列出 Skill 工作空间", en: "List skill workspaces" },
   ListSkillSpaces: { domain: "skill", zh: "列出 Skill Space（AICP）", en: "List skill spaces (AICP)" },
