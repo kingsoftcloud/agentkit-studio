@@ -45,6 +45,33 @@ test('a DSH Team template role runs from its frozen runtime record without an Ag
   assert.match(response.chunks.join(''), /team reply/);
 });
 
+test('a DeepSeek Anthropic profile uses the versioned Messages endpoint', async () => {
+  const requests = [];
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => ({ spec: { instructions: {} } }) }),
+    modelService: { profile: async () => ({ modelName: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/anthropic', protocol: 'anthropic-messages', apiKey: 'secret' }) },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, headers: init.headers, body: JSON.parse(init.body) });
+      return new Response([
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+        'data: {"type":"message_stop"}',
+        'data: [DONE]', '',
+      ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+  const response = responseSink();
+  await handler(Readable.from([JSON.stringify({ agentId: 'anthropic', input: 'hello' })]), response);
+  assert.equal(response.status, 200);
+  assert.equal(requests[0].url, 'https://api.deepseek.com/anthropic/v1/messages');
+  assert.equal(requests[0].headers['x-api-key'], 'secret');
+  assert.equal(requests[0].headers['anthropic-version'], '2023-06-01');
+  assert.equal(requests[0].body.messages[0].content[0].text, 'hello');
+  assert.match(response.chunks.join(''), /ok/);
+});
+
 test('single-model Host bridge retains DSH tool-mode and deliverable guidance in the assembled system prompt', async () => {
   let messages;
   const handler = createLocalConversationHandler({

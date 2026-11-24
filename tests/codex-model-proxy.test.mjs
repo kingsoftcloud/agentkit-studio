@@ -102,6 +102,28 @@ test('loopback proxy authenticates, pins model and credential, and closes after 
   await assert.rejects(fetch(url));
 });
 
+test('loopback proxy sends Anthropic Messages to the versioned DeepSeek endpoint', async () => {
+  const calls = [];
+  const proxy = await createCodexModelProxy({ profile: {
+    ...profile, api: 'responses', protocol: 'anthropic-messages', baseUrl: 'https://api.deepseek.com/anthropic',
+  }, fetchImpl: async (url, options) => {
+    calls.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+    return Response.json({ id: 'msg_1', type: 'message', model: 'bound-model', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
+  } });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, {
+      method: 'POST', headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'other', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }] }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).output[0].content[0].text, 'ok');
+    assert.equal(calls[0].url, 'https://api.deepseek.com/anthropic/v1/messages');
+    assert.equal(calls[0].headers['x-api-key'], 'upstream-secret');
+    assert.equal(calls[0].headers['anthropic-version'], '2023-06-01');
+    assert.equal(calls[0].body.messages[0].content[0].text, 'hello');
+  } finally { await proxy.close(); }
+});
+
 test('Responses proxy forwards the first SSE bytes before completion and preserves the wire', async () => {
   const first = 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"first"}\n\n';
   const last = 'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_kept"}}\n\n';
