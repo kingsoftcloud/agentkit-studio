@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHostCompatibility } from '../src/host/compatibility.mjs';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { hostModuleAnchor, importHostModule, createHostCompatibility, loadHostCompatibility } from '../src/host/compatibility.mjs';
 import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
 import { createNativeAutomationRunner } from '../src/native-automation-runner.mjs';
 import { createStudioRoutes } from '../src/host/routes/index.mjs';
@@ -121,4 +124,60 @@ test('frozen runtime lifecycle tracks the same permission service required by co
   const { services, compatibility } = host();
   delete services.commands;
   assert.doesNotThrow(() => compatibility.require('frozen-runtime'));
+});
+
+/** A disposable installed Host whose public modules are the only copies. */
+async function installedHost(t) {
+  const root = await mkdtemp(join(tmpdir(), 'studio-host-anchor-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const entry = join(root, 'host', 'lib', 'index.js');
+  await mkdir(join(root, 'host', 'lib'), { recursive: true });
+  await writeFile(entry, 'export {};\n');
+  const modules = {
+    'dsh-app-boot': 'export function getDshRuntimeVersion() { return "0.2.2-rc.1"; }\n',
+    'dsh-llm': 'const owned = new WeakSet();\nexport const isAgentLoopRequest = value => owned.has(value);\nexport const own = value => { owned.add(value); return value; };\n',
+  };
+  for (const [name, source] of Object.entries(modules)) {
+    const directory = join(root, 'host', 'node_modules', '@deepseek-ai', name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@deepseek-ai/${name}`, version: '0.2.2-rc.1', type: 'module', main: 'index.js' }));
+    await writeFile(join(directory, 'index.js'), source);
+  }
+  return { root, entry };
+}
+
+test('the Host anchor is the running entry, not the first Electron argument', async t => {
+  const { entry } = await installedHost(t);
+  // Electron puts the app binary first and its own flags before the entry.
+  assert.equal(hostModuleAnchor({ argv: ['/Applications/AgentKit Studio', '--expose-internals', entry], env: {} }), entry);
+  assert.equal(hostModuleAnchor({ argv: ['/usr/bin/node', '/tmp/unrelated.mjs'], env: { AGENTKIT_DSH_HOST_ENTRY: entry } }), entry);
+  assert.equal(hostModuleAnchor({ argv: ['/usr/bin/node', '--expose-internals'], env: {} }), undefined);
+});
+
+test('public Host modules come from the running Host module graph', async t => {
+  const { entry } = await installedHost(t);
+  const boot = await importHostModule('@deepseek-ai/dsh-app-boot', entry);
+  assert.equal(boot.getDshRuntimeVersion(), '0.2.2-rc.1');
+  // Identity, not just resolution: the Host's own marker must accept a request
+  // the Host created, which a second copy of the module would reject.
+  const llm = await importHostModule('@deepseek-ai/dsh-llm', entry);
+  assert.equal(llm.isAgentLoopRequest(llm.own({})), true);
+  assert.equal(llm.isAgentLoopRequest({}), false);
+});
+
+test('compatibility reads the running Host version through the anchor', async t => {
+  const { entry } = await installedHost(t);
+  const compatibility = await loadHostCompatibility({ get: () => undefined }, { anchor: entry });
+  const report = compatibility.inspect();
+  assert.equal(report.baseline.actual, '0.2.2-rc.1');
+  assert.equal(report.baseline.compatible, true);
+  assert.equal(report.capabilities['agent-loop-origin'], 1);
+});
+
+test('a Studio checkout without the Host packages still loads and reports the baseline', async () => {
+  const compatibility = await loadHostCompatibility({ get: () => undefined }, { anchor: undefined });
+  const report = compatibility.inspect();
+  // Whatever this checkout can resolve, the diagnostic must not throw.
+  assert.equal(report.contract.compatible, true);
+  assert.ok(['string', 'object'].includes(typeof report.baseline.actual));
 });

@@ -26,7 +26,7 @@ import { registerPluginMarketIndexRoute } from './routes/plugin-market-index.mjs
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
-import { loadHostCompatibility } from './compatibility.mjs';
+import { hostModuleAnchor, importHostModule, loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-bindings.mjs';
@@ -140,7 +140,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const strictResources = /^(?:1|true|yes|on)$/i.test(String(runtimeEnv.AGENTKIT_STRICT_RESOURCES || '').trim());
   const configuredLocalSkillDirectory = runtimeEnv.KSADK_LOCAL_SKILLS_DIR?.trim();
   const localSkillDirectory = configuredLocalSkillDirectory ? resolve(configuredLocalSkillDirectory) : undefined;
-  const hostCompatibility = await loadHostCompatibility(ctx);
+  // Resolve every public Host module from the entry that is actually running.
+  // A source checkout has no `@deepseek-ai/dsh-app-boot` and hoists a second
+  // `@deepseek-ai/dsh-llm`, so Studio's own resolution would report the Host as
+  // an unknown baseline and hand back a different `LlmAdapter` base class.
+  const hostAnchor = hostModuleAnchor();
+  const hostCompatibility = await loadHostCompatibility(ctx, { anchor: hostAnchor });
   ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
     innerKopUrl: runtimeEnv.AGENTENGINE_INNER_KOP_URL || '',
@@ -263,7 +268,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // The provider is selected by the preset-scoped listener and delegates the
   // assembled turn to the local Harness or AgentEngine cloud stream.
   const { createDshRuntimeAdapter, routeDshRuntime: routeRuntime } = await import('../providers/dsh-runtime.mjs');
-  const { LlmAdapter } = await import('@deepseek-ai/dsh-llm');
+  const { LlmAdapter } = await importHostModule('@deepseek-ai/dsh-llm', hostAnchor);
   // Codex is a native App Server runtime, not another gateway model. Keep its
   // optional child-process boundary lazy so Studio can still load on hosts
   // without a Codex binary and report CODEX_PROVIDER_UNAVAILABLE only when a
