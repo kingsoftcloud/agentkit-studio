@@ -10,7 +10,11 @@ import { sessionKeyFor } from '@kingsoftcloud/agentkit-harness-node/native/works
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
 import { nativeDshBatchPeer } from './native-dsh-batch-peer.mjs';
 
-const [root, phase, policy] = process.argv.slice(2), workspaceRoot = join(root, 'workspace'), stateDir = join(root, 'tool-state');
+const [root, phase, policy, expiredLeaseAt] = process.argv.slice(2);
+const workspaceRoot = join(root, 'workspace'), stateDir = join(root, 'tool-state');
+// Advance only the replacement worker's lease clock, after the parent has
+// confirmed that the original process was killed.
+const leaseClockOffset = expiredLeaseAt === undefined ? 0 : Math.max(0, Number(expiredLeaseAt) + 1 - Date.now());
 mkdirSync(workspaceRoot, { recursive: true });
 const readState = join(stateDir, sessionKeyFor('session'), 'read-state.json');
 if (phase === 'write') mkdirSync(readState, { recursive: true }); // Actual first publication then read-state failure.
@@ -41,7 +45,7 @@ const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ m
   },
 }) };
 const bound = createNativeDshTools({ ctx, config: { toolBindings: ['apply_workspace_patch'] }, workspaceRoot, stateDir });
-const admitted = phase === 'write' ? fixture({ tools: bound.definitions(agent, [...registry.values()]), limits: { leaseMs: 1000 } }) : null;
+const admitted = phase === 'write' ? fixture({ tools: bound.definitions(agent, [...registry.values()]) }) : null;
 const ports = bound.forAgent(agent, { scope, store });
 if (policy === 'lost' && phase === 'repair') {
   const repair = ports.tools.repairWorkspace;
@@ -50,7 +54,9 @@ if (policy === 'lost' && phase === 'repair') {
     return { ...result, result: null }; // Final product repair receipt persists before delivery loss.
   };
 }
-const kernel = new NativeKernel({ store, digest, owner: `repair-host-${process.pid}`, ports: { ...ports, model: {
+const kernel = new NativeKernel({ store, digest, owner: `repair-host-${process.pid}`,
+  ...(leaseClockOffset ? { now: () => Date.now() + leaseClockOffset, monotonicNow: () => performance.now() } : {}),
+  ports: { ...ports, model: {
   generate: async request => {
     models++;
     if (phase === 'write') return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ name: 'apply_workspace_patch', callId: 'partial-write', arguments: {

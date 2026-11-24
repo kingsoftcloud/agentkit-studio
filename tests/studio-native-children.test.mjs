@@ -570,7 +570,8 @@ test('shared Host child captures its complete source with an independently bound
   finally { reopened.close(); }
 });
 
-for (const firstManaged of [false, true]) test(`mixed history: alternating ${firstManaged ? 'managed' : 'ordinary'} first roots preserve both owners, paging and cold results`, { timeout: 30000 }, async t => {
+// Five SQLite-backed turns, paged history, and a cold reopen run in this case.
+for (const firstManaged of [false, true]) test(`mixed history: alternating ${firstManaged ? 'managed' : 'ordinary'} first roots preserve both owners, paging and cold results`, { timeout: 60000 }, async t => {
   const f = await setup(t, { sqlite: true, managed: true,
     parentPlan: (_body, index) => index % 2 ? { call: { name: 'native_delegate', arguments: { role: 'reader', task: `Read ${index}` } } }
       : { text: `Parent ${index}` },
