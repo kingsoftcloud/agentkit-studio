@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeToolStates } from '../src/providers/native-tool-states.mjs';
-import { nativeTaskState } from '../src/client/dsh/session-task-events.mjs';
+import { nativeToolStates } from './fixtures/retired-native/providers/native-tool-states.mjs';
+import { nativeTaskState } from '@kingsoftcloud/agentkit-harness-ui/host/session-task-events';
 const record = () => ({ snapshot: { scope: { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' }, runId: 'run' },
   intents: [{ kind: 'tool', operationKey: 'write', payload: { calls: [{ callId: 'write', name: 'write_workspace_file' }] } }],
   receipts: [{ operationKey: 'write', status: 'committed', result: { results: [{ status: 'uncertain', content: { code: 'tool_outcome_unknown' } }] } }] });

@@ -23,8 +23,8 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { constants, closeSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
-import { privateDirectory, openPrivate, tryLock } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant } from '../../contracts/native-values.mjs';
+import { privateDirectory, openPrivate, tryLock } from '../private-state.mjs';
 
 const SCHEMA_VERSION = 1;
 const TABLE = 'native_background_watches';

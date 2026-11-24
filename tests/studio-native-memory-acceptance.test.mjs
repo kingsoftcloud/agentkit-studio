@@ -9,9 +9,9 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
 import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
-import { createNativeVerification, nativeGoalContract } from '../src/providers/native-verification.mjs';
-import { createStudioNativeMemoryVerification, extendNativeMemoryGoal, MEMORY_VERIFIER_REF } from '../src/providers/native-memory-acceptance.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
+import { createNativeVerification, nativeGoalContract } from './fixtures/retired-native/providers/native-verification.mjs';
+import { createStudioNativeMemoryVerification, extendNativeMemoryGoal, MEMORY_VERIFIER_REF } from './fixtures/retired-native/providers/native-memory-acceptance.mjs';
 
 const final = text => ({ kind: 'final_candidate', text, toolCalls: [], usage: emptyUsage() });
 async function setup(t, { goal = '我喜欢用Emacs，不是Vim', write = true, behavior = 'correct', tamperReceipt = false, stale = false, recall = false, evidenceUnavailable = false } = {}) {

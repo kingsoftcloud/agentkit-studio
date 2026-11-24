@@ -1,12 +1,17 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
-import { verifyPackageFiles } from '@kingsoftcloud/agentkit-harness-node/package-integrity';
+import { verifyPackageFiles } from '../src/package-integrity.mjs';
 
-export const NATIVE_PACKAGES = ['core', 'node', 'ui'].map(part => `@kingsoftcloud/agentkit-harness-${part}`);
+export const NATIVE_CORE_PACKAGE = '@kingsoftcloud/agentkit-harness-core';
+export const NATIVE_NODE_PACKAGE = '@kingsoftcloud/agentkit-harness-node';
+export const NATIVE_PACKAGES = [NATIVE_CORE_PACKAGE, NATIVE_NODE_PACKAGE];
 
-/** Check the exact registry release consumed by the Host, including its bytes.
- * Reviewed pins ship with Studio so isolated/offline installations work too. */
+export function pinnedNativeVersion(product, name) {
+  return product.devDependencies?.[name];
+}
+
+/** Check the exact registry fixtures used by Studio's tests. */
 export function verifyNativePackageTree(root, names = NATIVE_PACKAGES) {
   const product = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const pins = JSON.parse(readFileSync(join(root, 'scripts/native-package-pins.json'), 'utf8'));
@@ -15,7 +20,7 @@ export function verifyNativePackageTree(root, names = NATIVE_PACKAGES) {
   let checked = 0;
   for (const name of names) {
     const pin = pins.packages?.[name];
-    if (!pin || !/^\d+\.\d+\.\d+$/.test(pin.version) || product.dependencies?.[name] !== pin.version)
+    if (!pin || !/^\d+\.\d+\.\d+$/.test(pin.version) || pinnedNativeVersion(product, name) !== pin.version)
       throw Error(`Native registry version is not pinned: ${name}`);
     if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(pin.integrity) || !pin.files || !Object.keys(pin.files).length)
       throw Error(`Native registry evidence is missing: ${name}`);

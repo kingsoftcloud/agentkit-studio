@@ -11,7 +11,8 @@ import { createDshNodeSkillTools, DSH_NODE_SKILL_READ } from '../src/providers/d
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createSkillReadTransport, nativeSkillReadToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/skill-tools';
+import { nativeSkillReadToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/skill-tools';
+import { createStudioSkillReads } from '../src/providers/studio-skill-reads.mjs';
 
 const body = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha 😀\nRead the JSON; never execute a script during loading.\n';
 const script = 'printf forbidden > marker';
@@ -61,7 +62,7 @@ async function setup(t, options = {}) {
 
 test('five formal DSH read tools use the real Node service and exact guarded ZIP loader without script execution', async t => {
   const h = await setup(t); assert.equal(h.port.contract, DSH_NODE_SKILL_READ);
-  assert.deepEqual(h.port.definitions.map(tool => tool.name), nativeSkillReadToolDefinitions().map(tool => tool.name));
+  assert.deepEqual(h.port.definitions, nativeSkillReadToolDefinitions());
   assert.equal(h.port.supports('execute_skills'), false);
   assert.equal((await h.run('list_skill_spaces')).content.spaces[0].space_name, 'My space');
   assert.equal((await h.run('list_skills')).content.skills[0].name, 'alpha');
@@ -199,7 +200,7 @@ test('a replaced cache directory is rejected before any later service access', a
 
 test('neutral transport requires strict original authority and has no workflow/Native identity escape', async () => {
   let calls = 0;
-  const transport = createSkillReadTransport({ serviceClient: { listSkillsBySpaceId: async () => { calls++; return { activeSkills: [] }; } }, skillSpaceIds: ['space'] });
+  const transport = createStudioSkillReads({ serviceClient: { listSkillsBySpaceId: async () => { calls++; return { activeSkills: [] }; } }, userSpaces: ['space'] });
   const make = () => ({ agentId: 'real-agent', sessionId: 'real-session', call: { callId: 'real-call', name: 'list_skills', arguments: {} },
     signal: new AbortController().signal, assertCurrent: () => true });
   for (const verdict of [false, 'true', Promise.reject(Error('observed'))]) {

@@ -12,7 +12,7 @@ import {
 } from '@kingsoftcloud/agentkit-harness-node/native/skill-disclosure';
 
 // Import the REAL createNativeToolAuthority from main-line code.
-import { createNativeToolAuthority } from '../../../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority } from '../../fixtures/retired-native/providers/native-tool-authority.mjs';
 
 for (const action of ['replace signal', 'close port']) {
   test(`actual final authority callback cannot ${action} and publish successful instructions`, async t => {

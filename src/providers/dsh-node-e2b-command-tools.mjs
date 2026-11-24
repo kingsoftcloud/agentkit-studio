@@ -2,9 +2,10 @@
  * fsynced DSH ledger surrounds SDK/lifecycle entry; supervisors own commands
  * after the requesting turn ends. No Native Run or execution fence is invented. */
 import { join } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { createDshE2BCommandTools, createDshE2BCodeTools, e2bCommandToolDefinitions, e2bCodeToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/e2b-command-tools';
-import { E2BCommandStore, e2bCommandId, e2bCommandOwner } from '@kingsoftcloud/agentkit-harness-node/native/e2b-background';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { createDshE2BCommandTools, createDshE2BCodeTools, e2bCommandToolDefinitions, e2bCodeToolDefinitions } from './studio-e2b-command-transport.mjs';
+import { E2BCommandStore, e2bCommandId, e2bCommandOwner } from './studio-e2b-command-store.mjs';
 import { DshNodeCommandLedger, commandDigest, commandStateRoot } from './dsh-node-command-ledger.mjs';
 import { createDshNodeToolOutputStore } from './dsh-node-tool-output-store.mjs';
 import { prepareDshE2BHost } from './native-e2b-host.mjs';

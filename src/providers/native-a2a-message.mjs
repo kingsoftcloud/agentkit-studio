@@ -3,7 +3,7 @@
  * semantics. The permit hashes MessageToDict + Python sorted JSON, NOT raw
  * transport bytes. No protobuf/Python runtime dependency is needed. */
 import { createHash } from 'node:crypto';
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../contracts/native-values.mjs';
 const plain = value => value && typeof value === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const text = value => {
   invariant(typeof value === 'string', 'A2A_MESSAGE_PROTO_INVALID');

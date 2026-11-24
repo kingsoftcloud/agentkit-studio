@@ -10,6 +10,8 @@ import { prepareManagedRuntimeHost } from '../src/managed-runtime-host.mjs';
 import { loadManagedRuntimeDefinition, createManagedAgentStore } from '../src/managed-runtime-definition.mjs';
 import { createRuntimeResponsesContract } from '../src/runtime-responses-contract.mjs';
 import { startBuildRuntimeHttp } from '../src/build-runtime-http.mjs';
+import { startInstalledStarHarness } from '../src/installed-star-harness.mjs';
+import { connectEngineService } from '../src/providers/engine-service-client.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 async function fixture(t) {
@@ -107,12 +109,13 @@ test('bundled managed Harness starts for the declared Agent and keeps its model 
   const raw = stringify({ ...parse(f.raw), framework: 'harness', runtime: { name: 'harness', version: 'studio-test.1' } });
   await writeFile(f.manifest, raw);
   const env = { ...f.env, AGENTENGINE_MANAGED_RUNTIME_NAME: 'harness', AGENTENGINE_MANIFEST_SHA256: hash(raw),
-    AGENTKIT_MANAGED_STAR_HARNESS: '1' };
-  const companion = { endpoint: 'http://127.0.0.1:8787', token: 'fixture-harness-service-token', version: '0.0.25' };
+    AGENTKIT_MANAGED_STAR_HARNESS: '1', AGENTKIT_STAR_HARNESS_VERSION: '0.0.31' };
+  const companion = { endpoint: 'http://127.0.0.1:8787', token: 'fixture-harness-service-token', version: '0.0.31' };
   const plan = await prepareManagedRuntimeHost({ ...f, env, async startHarness(options) {
     assert.equal(options.workspaceRoot, join(env.AGENTKIT_USER_HOME, 'workspace'));
     assert.equal(options.stateDir, join(f.state, 'star-harness-state'));
     assert.equal(options.agentId, env.AGENTENGINE_AGENT_ID);
+    assert.equal(options.releaseVersion, env.AGENTKIT_STAR_HARNESS_VERSION);
     assert.equal(options.profile.modelName, 'fixture-model');
     assert.equal(options.profile.baseUrl, env.OPENAI_BASE_URL);
     assert.equal(options.profile.apiKey, env.AGENTKIT_MODEL_API_KEY);
@@ -123,12 +126,36 @@ test('bundled managed Harness starts for the declared Agent and keeps its model 
   assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_MODEL, 'fixture-model');
   assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_TOKEN, companion.token);
   assert.equal(plan.env.AGENTKIT_MANAGED_STAR_HARNESS, '1');
+  assert.equal(plan.env.AGENTKIT_STAR_HARNESS_VERSION, undefined);
   assert.equal(plan.env.OPENAI_BASE_URL, undefined);
   assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, undefined);
   await assert.rejects(readFile(join(plan.env.AGENTKIT_HOME, 'config.yaml')), { code: 'ENOENT' });
   const runtime = await loadManagedRuntimeDefinition({ manifest: f.manifest, env: plan.env });
   assert.equal(runtime.agent.spec.runtime.type, 'native-engine');
   assert.equal(runtime.harnessModelSelection.model, 'fixture-model');
+});
+
+const signedHarnessVersion = process.env.AGENTKIT_TEST_SIGNED_CLOUD_HARNESS_VERSION;
+test('managed Harness restarts the independently signed worker without an embedded package', { skip: !signedHarnessVersion }, async t => {
+  const f = await fixture(t);
+  const raw = stringify({ ...parse(f.raw), framework: 'harness', runtime: { name: 'harness', version: 'studio-test.1' } });
+  await writeFile(f.manifest, raw);
+  const env = { ...f.env, AGENTENGINE_MANAGED_RUNTIME_NAME: 'harness', AGENTENGINE_MANIFEST_SHA256: hash(raw),
+    AGENTKIT_MANAGED_STAR_HARNESS: '1' };
+  const prepare = overrides => prepareManagedRuntimeHost({ ...f, env: { ...env, ...overrides }, startHarness: startInstalledStarHarness });
+  const first = await prepare({ AGENTKIT_STAR_HARNESS_VERSION: signedHarnessVersion });
+  t.after(() => first.companion.stop());
+  assert.equal(first.companion.version, signedHarnessVersion);
+  await first.companion.stop();
+
+  const restored = await prepare({ PATH: join(f.state, 'unavailable-package-manager') });
+  t.after(() => restored.companion.stop());
+  assert.equal(restored.companion.version, signedHarnessVersion);
+  assert.equal(restored.env.AGENTKIT_ENGINE_SERVICE_WORKSPACE, restored.cwd);
+  assert.equal(restored.env.AGENTKIT_MODEL_API_KEY, undefined);
+  const engine = connectEngineService({ ...restored.companion, sessionId: 'managed-signed-fixture', observeOnly: true });
+  try { assert.equal((await engine.initialize()).engine.model.name, 'fixture-model'); }
+  finally { await engine.close(); }
 });
 
 test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or persisted model secrets', async t => {

@@ -44,6 +44,9 @@ export function harnessServiceHostBindings(bindings = {}) {
   }) };
 }
 export const DSH_NODE_BUILTIN_NAMES = Object.freeze([...families.keys()]);
+export const DSH_NODE_A2A_NAMES = Object.freeze([...groups.A2A]);
+export const DSH_NODE_COMMAND_NAMES = Object.freeze([...groups.COMMAND]);
+export const DSH_NODE_WORKSPACE_NAMES = Object.freeze([...groups.WORKSPACE]);
 const meta = new Set(['tool_search', 'tool_dispatcher', 'agentengine_tool_dispatcher']);
 
 export function assertConcreteBuiltin(name) {

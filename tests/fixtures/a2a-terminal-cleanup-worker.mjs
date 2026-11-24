@@ -6,8 +6,8 @@ import { NativeKernel } from '@kingsoftcloud/agentkit-harness-core';
 import { digest } from './native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { prepareNativeA2AHost } from '../../src/providers/native-a2a-host.mjs';
-import { createNativeA2aQuestionTerminator } from '../../src/providers/native-a2a-receipt.mjs';
-import { createStudioNativeRecovery } from '../../src/host/services/native-recovery.mjs';
+import { createNativeA2aQuestionTerminator } from './retired-native/providers/native-a2a-receipt.mjs';
+import { createStudioNativeRecovery } from './retired-native/host/services/native-recovery.mjs';
 
 process.once('message', async ({ root, workspaceRoot, env, bindings, scope, action, guard }) => {
   const store = new SqliteRunStore(join(root, 'runs.sqlite'));

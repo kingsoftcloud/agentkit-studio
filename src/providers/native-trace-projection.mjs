@@ -3,13 +3,12 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdir, realpath } from 'node:fs/promises';
-import { canonical, copy, invariant, scopeKey } from '@kingsoftcloud/agentkit-harness-core';
-import { lockUntil } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant, isTerminalRunPhase, scopeKey } from '../contracts/native-values.mjs';
+import { lockUntil } from '../host/private-state.mjs';
 
 export const NATIVE_TRACE_PROJECTION = 'agentkit.native-trace-projection/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const keyFor = (scope, runId) => hash([scopeKey(scope), runId]);
-const terminal = phase => ['completed', 'failed', 'canceled', 'interrupted'].includes(phase);
 function diagnosticJson(value) {
   return JSON.parse(canonical(value), (_key, item, context) => {
     if (typeof item !== 'number' || !context?.source) return item;
@@ -53,7 +52,7 @@ export function createNativeTraceProjection({ stateDir, observability, onError =
         invariant([inputTokens, outputTokens, inputTokens + outputTokens].every(value => Number.isSafeInteger(value) && value >= 0),
           'native_trace_usage_invalid');
         await observability.syncTrace({ traceId, sessionId, agentId: fixedScope.agentId, agentName,
-          status: terminal(snapshot.phase) || ['paused', 'awaiting_interaction'].includes(snapshot.phase) ? snapshot.phase : 'running',
+          status: isTerminalRunPhase(snapshot.phase) || ['paused', 'awaiting_interaction'].includes(snapshot.phase) ? snapshot.phase : 'running',
           startedAt: previous?.startedAt ?? at, completedAt: at, events,
           measuredTokenUsage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
           provenance: { nativeProjection: { contract: NATIVE_TRACE_PROJECTION, identity: key, runId,

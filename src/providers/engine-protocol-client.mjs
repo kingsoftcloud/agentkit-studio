@@ -13,11 +13,18 @@ import { spawn } from 'node:child_process';
 import * as readline from 'node:readline';
 
 export const ENGINE_PROTOCOL = 'agentkit.engine/v1';
+const ENGINE_CONTEXT = 'agentkit.engine-context/v1';
+const ENGINE_HOOKS = 'agentkit.engine-hooks/v1';
+const ENGINE_VERIFICATION = 'agentkit.engine-verification/v1';
 
 /** Connect to an engine over a pair of streams (a spawned process, a socket, or an in-memory pair in tests). */
-export function connectEngine({ input, output, onApproveTool, onCallTool, hostName = 'host' }) {
+export function connectEngine({ input, output, onApproveTool, onCallTool, onReadContext, onInvokeHook, onVerifyGoal, runSignal, hostName = 'host' }) {
   let next = 1, closed = false;
   const pending = new Map();
+  const lifetime = new AbortController();
+  const callbackSignal = runSignal ? AbortSignal.any([runSignal, lifetime.signal]) : lifetime.signal;
+  const scopedCallbacks = new Map([['host/readContext', onReadContext], ['host/invokeHook', onInvokeHook],
+    ['host/verifyGoal', onVerifyGoal]]);
   const send = frame => output.write(`${JSON.stringify(frame)}\n`);
   const frames = readline.createInterface({ input, crlfDelay: Infinity });
   const finished = (async () => {
@@ -35,6 +42,16 @@ export function connectEngine({ input, output, onApproveTool, onCallTool, hostNa
           Promise.resolve().then(() => onCallTool(frame.params ?? {}))
             .then(reply => send({ jsonrpc: '2.0', id: frame.id, result: { status: reply?.status === 'error' ? 'error' : 'ok', content: reply?.content ?? null } }),
               error => send({ jsonrpc: '2.0', id: frame.id, result: { status: 'error', content: { code: 'host_tool_failed', message: String(error?.message ?? error).slice(0, 2000) } } }));
+        } else if (typeof scopedCallbacks.get(frame.method) === 'function' && frame.id !== undefined) {
+          const remainingMs = frame.expiresAt - Date.now();
+          if (!Number.isSafeInteger(remainingMs) || remainingMs <= 0 || remainingMs > 66000 || callbackSignal.aborted) continue;
+          const signal = AbortSignal.any([callbackSignal, AbortSignal.timeout(remainingMs)]);
+          const callback = scopedCallbacks.get(frame.method);
+          Promise.resolve().then(() => callback(frame.params, signal)).then(result => {
+            if (!signal.aborted) send({ jsonrpc: '2.0', id: frame.id, result });
+          }).catch(() => {
+            if (!signal.aborted) send({ jsonrpc: '2.0', id: frame.id, error: { code: -32603, message: 'Host callback unavailable' } });
+          });
         } else if (frame.id !== undefined) send({ jsonrpc: '2.0', id: frame.id, error: { code: -32601, message: 'Method not found' } });
         continue;
       }
@@ -45,6 +62,7 @@ export function connectEngine({ input, output, onApproveTool, onCallTool, hostNa
       else waiter.resolve(frame.result);
     }
     closed = true;
+    lifetime.abort();
     for (const waiter of pending.values()) waiter.reject(new Error('engine connection closed'));
     pending.clear();
   })();
@@ -57,7 +75,10 @@ export function connectEngine({ input, output, onApproveTool, onCallTool, hostNa
   return {
     call, finished,
     initialize: () => call('initialize', { protocolVersions: [ENGINE_PROTOCOL], host: { name: hostName },
-      services: { approvals: typeof onApproveTool === 'function', tools: typeof onCallTool === 'function' } }),
+      services: { approvals: typeof onApproveTool === 'function', tools: typeof onCallTool === 'function',
+        ...(onReadContext ? { context: ENGINE_CONTEXT } : {}),
+        ...(onInvokeHook ? { hooks: ENGINE_HOOKS } : {}),
+        ...(onVerifyGoal ? { verification: ENGINE_VERIFICATION } : {}) } }),
     startRun: params => call('run/start', params),
     status: runId => call('run/status', { runId }),
     events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor, textCursor) =>
@@ -80,10 +101,11 @@ export function connectEngine({ input, output, onApproveTool, onCallTool, hostNa
 }
 
 /** Start an engine executable and connect to it. `command` is host configuration, not host code. */
-export function spawnEngine({ command, args = [], env, onApproveTool, onCallTool, hostName, onLog = () => {} }) {
+export function spawnEngine({ command, args = [], env, onApproveTool, onCallTool, onReadContext, onInvokeHook, onVerifyGoal, runSignal, hostName, onLog = () => {} }) {
   const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stderr.setEncoding('utf8').on('data', chunk => onLog(chunk));
-  const client = connectEngine({ input: child.stdout, output: child.stdin, onApproveTool, onCallTool, hostName });
+  const client = connectEngine({ input: child.stdout, output: child.stdin,
+    onApproveTool, onCallTool, onReadContext, onInvokeHook, onVerifyGoal, runSignal, hostName });
   const exited = new Promise(resolve => {
     child.once('exit', code => resolve({ code }));
     child.once('error', error => resolve({ error }));

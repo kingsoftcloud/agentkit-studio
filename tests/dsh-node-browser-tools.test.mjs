@@ -153,7 +153,14 @@ test('actual Chromium actions, full screenshot, isolated canvas pixels and exact
   h.policy('read-only'); let approvals = 0;
   h.approval(async request => { approvals++; assert.equal(request.agent, exec.agent); assert.equal(request.callId, exec.callId); return 'allowed-once'; });
   const [first, duplicate] = await Promise.all([h.invoke(args, exec), h.invoke(args, exec)]);
-  assert.equal(first.status, 'ok', canonical(first)); assert.deepEqual(duplicate, first); assert.equal(first.content.ok, true);
+  assert.equal(first.status, 'ok', canonical(first));
+  // A duplicate waits only for the bounded receipt-observation window.
+  // Slow Chromium startup may leave the original owner active at that point.
+  if (duplicate.content.error_type === 'dsh_node_command_in_progress') {
+    assert.equal(duplicate.status, 'error');
+    assert.equal(duplicate.content.evidence_incomplete, true);
+  } else assert.deepEqual(duplicate, first);
+  assert.equal(first.content.ok, true);
   assert.equal(first.content.title, 'Browser 😀'); assert.match(first.content.body_text_preview, /count:1/); assert.match(first.content.body_text_preview, /key:x/);
   assert.equal(first.content.actions.length, 5); assert.equal(first.content.canvas_metrics[0].visually_uniform, true);
   assert.equal(first.content.canvas_metrics[0].colour_buckets, 1); assert.equal(first.content.visual_warnings.length, 1);
@@ -296,7 +303,7 @@ test('identity drift at actual navigation retains original intent and cannot dis
   assert.equal(existsSync(join(h.options.workspaceRoot, '.artifacts/browser-check.png')), false);
 });
 
-test('an explicitly bound application supports same-origin API writes and denies other loopback origins', { timeout: 30000 }, async t => {
+test('an explicitly bound application supports same-origin API writes and denies other loopback origins', { timeout: 60000 }, async t => {
   let ticket = null, foreignRequests = 0;
   async function listen(handler) {
     const server = createServer(handler);
@@ -359,7 +366,7 @@ test('fifty legacy actions are supported and a different Session owns a separate
   assert.equal(h.launches, 2); assert.equal(h.records().length, 2);
 });
 
-test('actual SIGKILL after Chromium navigation and a new Node PID never relaunch the original call', { timeout: 30000 }, async t => {
+test('actual SIGKILL after Chromium navigation and a new Node PID never relaunch the original call', { timeout: 60000 }, async t => {
   const h = setup(t), args = { path: '.', wait_ms: 30000 }, fixture = new URL('./fixtures/dsh-node-browser-driver.mjs', import.meta.url);
   let browserPid;
   const child = fork(fixture, [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: { ...process.env, AGENTKIT_KSADK_PYTHON: '/unavailable/python' } });

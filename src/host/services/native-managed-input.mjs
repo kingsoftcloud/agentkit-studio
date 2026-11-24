@@ -1,4 +1,4 @@
-import { copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { copy, invariant } from '../../contracts/native-values.mjs';
 
 export const STUDIO_MANAGED_NATIVE_INPUT = 'agentkit.managed-studio-input/v1';
 const record = value => value && typeof value === 'object' && !Array.isArray(value);

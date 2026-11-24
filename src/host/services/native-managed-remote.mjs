@@ -1,8 +1,8 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { createNativeKernelPermitVerifier } from '@kingsoftcloud/agentkit-harness-node/native/kernel-permit';
-import { MANAGED_NATIVE_KERNEL_PATH as PATH } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel-http';
+import { parseNativeJson } from '../../contracts/native-json.mjs';
+import { MANAGED_NATIVE_KERNEL_PATH as PATH } from '../../contracts/native-managed-control.mjs';
+import { createNativeKernelPermitVerifier } from '../native-managed-control.mjs';
 import { engineServiceEndpoint, engineServiceFetch } from '../../providers/engine-service-client.mjs';
 
 const routes = new Map([

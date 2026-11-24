@@ -10,6 +10,17 @@ import { fileURLToPath } from 'node:url';
 export const NODE_HOST_ROOTS = Object.freeze(['@deepseek-ai/dsh', '@deepseek-ai/dsh-base',
   '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-sdk-client']);
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+const exactVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+export function matchesNodeHostVersion(name, version, dshVersion) {
+  return typeof version === 'string' && exactVersion.test(version)
+    && (!NODE_HOST_ROOTS.includes(name) || version === dshVersion);
+}
+
+export function assertNoInstalledHarnessPackages(lock) {
+  assert.ok(!Object.keys(lock.packages).some(path => /(?:^|\/)node_modules\/@kingsoftcloud\/agentkit-harness-(?:core|node|ui)$/.test(path)),
+    'Studio production dependency graph contains a Harness implementation package');
+}
 
 export async function readNodeHostPackages(path, studio = fileURLToPath(new URL('..', import.meta.url))) {
   const manifestPath = await realpath(path), root = dirname(manifestPath), bytes = await readFile(manifestPath);
@@ -24,7 +35,7 @@ export async function readNodeHostPackages(path, studio = fileURLToPath(new URL(
   for (const item of manifest.packages) {
     assert.match(item.name, /^@deepseek-ai\/[a-z0-9][a-z0-9-]*$/);
     assert.ok(!names.has(item.name), 'Duplicate Host package'); names.add(item.name);
-    assert.equal(item.version, plugin.requiredDsh);
+    assert.ok(matchesNodeHostVersion(item.name, item.version, plugin.requiredDsh), 'Host package version differs from its release family');
     assert.match(item.tarball, /^[a-zA-Z0-9][a-zA-Z0-9._-]*\.tgz$/);
     assert.ok(!archives.has(item.tarball), 'Duplicate Host archive'); archives.add(item.tarball);
     const file = join(root, item.tarball);
@@ -53,6 +64,7 @@ export async function readNodeHostInstallation(path, { archive, studio = fileURL
   assert.equal(proof.lockSha256, sha(lockBytes), 'Fresh dependency lock changed');
   const lock = JSON.parse(lockBytes);
   assert.ok(Object.keys(lock.packages).length > 10);
+  assertNoInstalledHarnessPackages(lock);
   assert.ok(Object.entries(lock.packages).filter(([path]) => path.startsWith('node_modules/')).every(([, entry]) => !entry.link));
   const plugin = JSON.parse(await readFile(join(studio, 'studio.plugin.json')));
   const pinned = JSON.parse(await readFile(join(studio, 'patches', `dsh-v${plugin.requiredDsh}`, 'source.json')));

@@ -1,6 +1,6 @@
 /** Public remote approval hints. These are presentation only: approval and
  * continuation authority remain with the original Host interaction ledger. */
-import { canonical, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant } from '../contracts/native-values.mjs';
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const exact = (value, keys) => object(value) && canonical(Object.keys(value).sort()) === canonical(keys.sort());
 const cut = (value, size) => Array.from(value).slice(0, size).join('');

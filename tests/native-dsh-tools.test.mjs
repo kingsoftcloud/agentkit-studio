@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
 import { NativeKernel, MemoryRunStore, configure, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '@kingsoftcloud/agentkit-harness-core';
 import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
@@ -22,8 +22,8 @@ import { createZip } from '../src/zip.mjs';
 import { createStudioKnowledgeTools, createKnowledgeConnection, knowledgeBindings } from '../src/knowledge-tools.mjs';
 import { createLegacyMemoryTools, createLegacyMemoryConnection } from '../src/legacy-memory-tools.mjs';
 import { createNativeContextPort } from '@kingsoftcloud/agentkit-harness-node/native/context-counter';
-import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
-import { createStudioNativeCommandProgress } from '../src/host/services/native-command-progress.mjs';
+import { createNativeToolAuthority } from './fixtures/retired-native/providers/native-tool-authority.mjs';
+import { createStudioNativeCommandProgress } from './fixtures/retired-native/host/services/native-command-progress.mjs';
 import { decodeCapturedSource, CAPTURED_SOURCE_MEDIA_TYPE } from '@kingsoftcloud/agentkit-harness-core';
 
 // Real signed Node HTTP transport and SQLite/Kernel; HTTP peer and model are
@@ -1174,8 +1174,8 @@ test('tool image observations use Host-owned bytes and retain their structured d
 // the real approval consent, and the child-scope leak rejection.
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
-import { bindStudioNativeMemoryHost } from '../src/providers/native-memory-host.mjs';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindStudioNativeMemoryHost } from './fixtures/retired-native/providers/native-memory-host.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 import { authorizeNativeBuiltin } from '../src/providers/native-tool-policy.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 

@@ -1,6 +1,6 @@
 /** Packed production Host/DSH registry acceptance for legacy-runtime Node tools. */
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -43,6 +43,9 @@ try {
   const skillDownloadUrl = `https://127.0.0.1:${download.address().port}/skill.zip`;
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
   await mkdir(graph); execFileSync('tar', ['-xzf', resolve(values.archive), '-C', graph]);
+  const fixture = join(installed, 'tests/fixtures/studio-node-builtins.mjs');
+  await mkdir(join(installed, 'tests/fixtures'), { recursive: true });
+  await copyFile(new URL('../tests/fixtures/studio-node-builtins.mjs', import.meta.url), fixture);
   if (installation) {
     const lock = JSON.parse(await readFile(join(installation, 'package-lock.json'), 'utf8'));
     assert.ok(Object.entries(lock.packages).filter(([path]) => path.startsWith('node_modules/')).every(([, value]) => !value.link));
@@ -71,7 +74,7 @@ try {
     '    - id: builtin-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
     '    - id: builtin-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'",
     '    - id: builtin-proof-presets', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:', '        default: standard',
-    '    - id: builtin-proof-fixture', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-node-builtins.mjs')).href)}`,
+    '    - id: builtin-proof-fixture', `      name: ${JSON.stringify(pathToFileURL(fixture).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`,
     `        skillDownloadUrl: ${JSON.stringify(skillDownloadUrl)}`, `        skillArchiveHash: ${JSON.stringify(sha256(skillArchive))}`,
     `        skillBody: ${JSON.stringify(skillBody)}`, `        skillScript: ${JSON.stringify(skillScript)}`, '',
@@ -92,14 +95,15 @@ try {
   harness = new DeepSeekHarness(harnessOptions);
   await harness.start();
   await writeFile(join(root, 'start-proof'), 'Execute the actual Host proof after initialization.');
-  // Two 1000-file installs fsync each private file before publication.
-  const deadline = Date.now() + 90000; let report;
+  // Two 1000-file installs fsync each private file before publication. Leave
+  // room for packaging and runtime regression jobs sharing the same disk.
+  const deadline = Date.now() + 180000; let report;
   while (Date.now() < deadline) {
     try { report = JSON.parse(await readFile(join(root, 'proof.json'), 'utf8')); break; }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.equal(report?.passed, true, report ? JSON.stringify(report) : 'Mounted proof did not finish within 90 seconds');
+  assert.equal(report?.passed, true, report ? JSON.stringify(report) : 'Mounted proof did not finish within 180 seconds');
   assert.equal(report.node, process.version); assert.equal(report.path, nodeBin);
   assert.deepEqual(report.runtimes.map(row => row.runtime), ['dsh-native', 'codex']);
   for (const row of report.runtimes) assert.deepEqual(row.builtinNames, [...DSH_NODE_BUILTIN_NAMES].sort());

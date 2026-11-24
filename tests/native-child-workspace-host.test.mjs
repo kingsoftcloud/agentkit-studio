@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createStudioNativeChildFile } from '../src/host/services/native-child-file-binding.mjs';
-import { createStudioNativeChildWorkspaces } from '../src/providers/native-child-workspace-host.mjs';
+import { createStudioNativeChildFile } from './fixtures/retired-native/host/services/native-child-file-binding.mjs';
+import { createStudioNativeChildWorkspaces } from './fixtures/retired-native/providers/native-child-workspace-host.mjs';
 
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'parent:child:writer' };
 const role = { name: 'writer', tools: ['write_workspace_file'], concurrentSafe: false };

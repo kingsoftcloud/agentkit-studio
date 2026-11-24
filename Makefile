@@ -99,6 +99,7 @@ secret-scan:
 # admission or racing client rebuilds against the audit.
 public-gate:
 	$(MAKE) public-surface-audit
+	node scripts/check-harness-host-imports.mjs
 	node scripts/public-history-audit.mjs
 	$(MAKE) secret-scan
 	$(MAKE) dsh-pin-check

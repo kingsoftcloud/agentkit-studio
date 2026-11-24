@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { readNodeHostPackages } from './node-host-packages.mjs';
+import { assertNoInstalledHarnessPackages, readNodeHostPackages } from './node-host-packages.mjs';
 
 const { values } = parseArgs({ options: { archive: { type: 'string' }, keep: { type: 'boolean', default: false },
   host: { type: 'boolean', default: false }, 'host-packages': { type: 'string' } } });
@@ -50,37 +50,34 @@ const env = { ...process.env, PATH: bin, NODE_PATH: '', NODE_OPTIONS: '',
 console.log(JSON.stringify({ stage: 'installing', directory, archive, node: process.version }));
 const child = spawn(process.execPath, [realpathSync(npm), 'install', '--foreground-scripts', '--ignore-scripts=false', '--omit=dev', '--no-audit', '--no-fund',
   '--workspaces=false', '--registry=https://registry.npmjs.org', '--cache=' + join(directory, 'empty-cache')],
-{ cwd: directory, env, stdio: 'inherit', timeout: 240000 });
-const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
-assert.equal(code, 0);
+{ cwd: directory, env, stdio: 'inherit', timeout: 10 * 60_000 });
+const install = await new Promise((resolve, reject) => {
+  child.once('error', reject);
+  child.once('exit', (code, signal) => resolve({ code, signal }));
+});
+assert.equal(install.code, 0, `Cold npm install failed in ${directory}${install.signal ? ` (${install.signal})` : ''}`);
 const lock = JSON.parse(await readFile(join(directory, 'package-lock.json'), 'utf8'));
 assert.ok(Object.keys(lock.packages).length > 10);
 assert.ok(Object.entries(lock.packages).filter(([path]) => path.startsWith('node_modules/')).every(([, entry]) => !entry.link));
+assertNoInstalledHarnessPackages(lock);
 const studio = join(directory, 'node_modules/@kingsoftcloud/agentkit-studio');
 assert.ok(realpathSync(studio).startsWith(realpathSync(directory) + '/'));
 const verify = `import assert from 'node:assert/strict';
 import Studio from '@kingsoftcloud/agentkit-studio';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 const fromStudio = createRequire(import.meta.resolve('@kingsoftcloud/agentkit-studio'));
-const loadNative = name => import(pathToFileURL(fromStudio.resolve('@kingsoftcloud/agentkit-harness-node/native/' + name)).href);
-const Harness = await loadNative('sqlite-store');
-const { SqliteNativeMemoryProvider } = await loadNative('memory-store');
-const { nativeUserMemoryCandidate, memoryDigest, nativeMemoryScopeBindings } = await loadNative('memory-candidate');
-const { checkPythonSyntax } = await loadNative('python-syntax');
+for (const name of ['core', 'node', 'ui']) {
+  assert.throws(() => fromStudio.resolve('@kingsoftcloud/agentkit-harness-' + name), { code: 'MODULE_NOT_FOUND' });
+}
+import { checkPythonSyntax } from './node_modules/@kingsoftcloud/agentkit-studio/src/providers/studio-workspace/python-syntax.mjs';
 import { existsSync } from 'node:fs';
 import { createNativeEngineRuntime } from './node_modules/@kingsoftcloud/agentkit-studio/src/providers/native-engine-runtime.mjs';
 assert.equal(typeof Studio.apply,'function');
 assert.equal(existsSync('./node_modules/@kingsoftcloud/agentkit-studio/src/host/services/native-harness.mjs'),false);
 assert.equal(typeof createNativeEngineRuntime({stateRoot:'./studio-state',env:{}}).stream,'function');
-const scope={tenantId:'local',workspaceId:'fresh',agentId:'agent',userId:'user'};
-const store=new Harness.SqliteRunStore('./runs.sqlite'); store.close();
-const memory=new SqliteNativeMemoryProvider('./memory.sqlite',{principal:scope});
-const candidate=nativeUserMemoryCandidate({text:'记住：我喜欢用Vim',sourceEventId:'original',...nativeMemoryScopeBindings(scope)[0]});
-const receipt=memory.applyCandidate({candidate,operationKey:'candidate',sourceSessionId:'session',sourceDigest:memoryDigest(candidate.content)});
-assert.equal(receipt.committed,true); assert.equal(memory.get(receipt.memoryId).content,'我喜欢用Vim'); memory.close();
 assert.deepEqual(await checkPythonSyntax('def answer():\\n    return 42\\n'),[]);
-console.log('PASS: full Studio package imports, Native SQLite/Memory and shipped source parser execute with fresh installed dependencies and Node-only PATH.');
+assert.ok((await checkPythonSyntax('def broken(:\\n')).length > 0);
+console.log('PASS: installed Studio imports and runs its source parser with no Harness implementation in npm dependencies or runtime resolution.');
 `;
 await writeFile(join(directory, 'verify.mjs'), verify);
 const proof = spawn(process.execPath, [join(directory, 'verify.mjs')], { cwd: directory, env, stdio: 'inherit', timeout: 30000 });
@@ -88,7 +85,7 @@ assert.equal(await new Promise((resolve, reject) => { proof.once('error', reject
 if (values.host) {
   for (const [script, flags] of [['verify-studio-node-builtins.mjs', []]]) {
     const host = spawn(process.execPath, [fileURLToPath(new URL(script, import.meta.url)),
-      '--installation', directory, '--archive', archive, '--keep', ...flags], { cwd: directory, env, stdio: 'inherit', timeout: 120000 });
+      '--installation', directory, '--archive', archive, '--keep', ...flags], { cwd: directory, env, stdio: 'inherit', timeout: 240000 });
     assert.equal(await new Promise((resolve, reject) => { host.once('error', reject); host.once('exit', resolve); }), 0);
   }
 }

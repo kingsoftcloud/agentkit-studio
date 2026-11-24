@@ -1,7 +1,7 @@
 // Pure projection of authorized directory receipts; no filesystem I/O or execution authority.
 // Behavior reference: KsADK 355059d native_directory_observation.py.
 import { createHash } from "node:crypto";
-import { canonical } from "@kingsoftcloud/agentkit-harness-core";
+import { canonical } from "../contracts/native-values.mjs";
 
 export const DIRECTORY_OBSERVATION_POLICY = "studio-directory-observation/v1";
 

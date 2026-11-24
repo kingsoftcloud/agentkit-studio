@@ -9,9 +9,9 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
 import { memoryDigest } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
 import { buildNativeMemoryTools, nativeMemoryRequestDigest } from '@kingsoftcloud/agentkit-harness-node/native/memory-tools';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 import { captureStudioNativeMemoryExtraction as capture, assertStudioNativeMemoryExtractionCurrent as assertCurrent }
-  from '../src/providers/native-memory-extraction-source.mjs';
+  from './fixtures/retired-native/providers/native-memory-extraction-source.mjs';
 
 const final = () => ({ kind: 'final_candidate', text: 'I saved that fact.', toolCalls: [], usage: emptyUsage() });
 function setup(t, backend = 'memory', ports = {}, toolDefinitions = []) {

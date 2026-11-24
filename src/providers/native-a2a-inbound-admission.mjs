@@ -4,8 +4,9 @@
  * the same platform task, message and remote address. */
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, privateDirectory, readAll, tryLock } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
+import { atomicPrivate, privateDirectory, readAll, tryLock } from '../host/private-state.mjs';
 import { parseA2aInboundSubmission, streamA2aInboundKernelFacts } from './native-a2a-inbound-kernel.mjs';
 import { awaitA2aControl } from './native-a2a-controls.mjs';
 

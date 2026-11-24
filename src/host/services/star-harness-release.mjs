@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { connectEngineService, ENGINE_COMMAND_VERIFIER, ENGINE_VERIFICATION } from '../../providers/engine-service-client.mjs';
 import { ENGINE_PROTOCOL } from '../../providers/engine-protocol-client.mjs';
-import { verifyPackageFiles } from '@kingsoftcloud/agentkit-harness-node/package-integrity';
+import { verifyPackageFiles } from '../../package-integrity.mjs';
+import { ENGINE_TOOL_CATALOG_FILE, readEngineToolCatalog } from '../../contracts/engine-tool-catalog.mjs';
 import { harnessModelEndpoint } from '../../model-endpoint.mjs';
 
 import { fetchStarHarnessProof, verifyStarHarnessProof, STAR_HARNESS_PACKAGE, STAR_HARNESS_CORE, STAR_HARNESS_UI,
@@ -19,16 +20,6 @@ export const STAR_HARNESS_REGISTRY = 'https://registry.npmjs.org';
 export const starHarnessError = (code, message, options) => Object.assign(new Error(message, options), { code });
 const run = promisify(execFile);
 const workerEntry = fileURLToPath(new URL('./star-harness-worker.mjs', import.meta.url));
-const pinsFile = new URL('../../../scripts/native-package-pins.json', import.meta.url);
-
-function pinnedRelease(pins, version) {
-  if (pins.schemaVersion !== 'agentkit.native-registry-pins/v2') throw new Error('Invalid Native registry pins');
-  const current = pins.packages[STAR_HARNESS_PACKAGE]?.version;
-  const release = current === version
-    ? { packages: pins.packages, dependencies: pins.runtimeDependencies }
-    : pins.previousRuntime?.version === version ? pins.previousRuntime : undefined;
-  return release?.dependencies ? { ...release, dependencyPackages: pins.dependencyPackages } : null;
-}
 
 function verifyReleaseTree(folder, version, release) {
   const root = realpathSync(folder);
@@ -90,7 +81,7 @@ function npmCommand(env) {
 }
 
 export function createStarHarnessReleases({ directory, env = process.env, packageManager, fetchImpl = fetch,
-  pins = JSON.parse(readFileSync(pinsFile, 'utf8')), verifySignature } = {}) {
+  verifySignature } = {}) {
   const trustCache = join(directory, '.release-trust');
   const proofFile = folder => join(folder, '.studio-release-proof.json');
   const verified = new Map();
@@ -105,8 +96,6 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
     return release;
   };
   const downloadRelease = async (version, signal) => {
-    const pinned = pinnedRelease(pins, version);
-    if (pinned) return { release: pinned };
     try {
       const proof = await fetchStarHarnessProof(version, { fetchImpl, signal });
       return { release: await validateProof(version, proof, false), proof };
@@ -116,8 +105,6 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
     }
   };
   const installedRelease = async (folder, version) => {
-    const pinned = pinnedRelease(pins, version);
-    if (pinned) return pinned;
     const evidence = await lstat(proofFile(folder));
     if (!evidence.isFile() || evidence.size > 20 * 1024 * 1024) throw Error('Invalid installed release evidence');
     return validateProof(version, JSON.parse(await readFile(proofFile(folder), 'utf8')), true);
@@ -135,17 +122,32 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
       throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 文件完整性校验失败，请重新安装。', { cause });
     }
   };
+  async function assets(version) {
+    const folder = revision(version);
+    const { release, entry } = await assertRelease(folder, version);
+    const bytes = await readFile(join(folder, 'node_modules', STAR_HARNESS_UI, STAR_HARNESS_CLIENT_FILE));
+    if (createHash('sha256').update(bytes).digest('hex') !== release.uiSha256)
+      throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 前端完整性校验失败。');
+    const client = { version, sha256: release.uiSha256, bytes };
+    let toolCatalog = null;
+    const catalogHash = release.packages[STAR_HARNESS_PACKAGE]?.files?.[ENGINE_TOOL_CATALOG_FILE];
+    if (catalogHash) {
+      try {
+        const path = join(entry, ENGINE_TOOL_CATALOG_FILE);
+        if ((await lstat(path)).size > 256 * 1024) throw Error('Star Harness tool catalog is too large');
+        const bytes = await readFile(path);
+        if (createHash('sha256').update(bytes).digest('hex') !== catalogHash) throw Error('Star Harness tool catalog digest mismatch');
+        toolCatalog = readEngineToolCatalog(JSON.parse(bytes.toString('utf8')), version);
+      } catch (cause) {
+        throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 工具目录完整性校验失败。', { cause });
+      }
+    }
+    return { client, toolCatalog };
+  }
   return {
     entry: async version => (await assertRelease(revision(version), version)).entry,
-    async client(version) {
-      if (pinnedRelease(pins, version)) return null;
-      const folder = revision(version);
-      const { release } = await assertRelease(folder, version);
-      const bytes = await readFile(join(folder, 'node_modules', STAR_HARNESS_UI, STAR_HARNESS_CLIENT_FILE));
-      if (createHash('sha256').update(bytes).digest('hex') !== release.uiSha256)
-        throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 前端完整性校验失败。');
-      return { version, sha256: release.uiSha256, bytes };
-    },
+    client: async version => (await assets(version)).client,
+    assets,
     async latest(signal) {
       const response = await fetchImpl(STAR_HARNESS_REGISTRY + '/' + encodeURIComponent(STAR_HARNESS_PACKAGE) + '/latest',
         { signal: AbortSignal.any([AbortSignal.timeout(6000), signal].filter(Boolean)), redirect: 'error' });
@@ -164,7 +166,7 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
       const { release, proof } = await downloadRelease(version, signal);
       const stage = await mkdtemp(join(directory, '.install-'));
       try {
-        if (proof) await writeFile(proofFile(stage), JSON.stringify(proof), { mode: 0o600 });
+        await writeFile(proofFile(stage), JSON.stringify(proof), { mode: 0o600 });
         const config = join(stage, '.npmrc');
         await writeFile(config, '', { mode: 0o600 });
         const overrides = release.dependencies;
@@ -180,7 +182,7 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
             : ['install', '--no-audit', '--no-fund'];
           await run(command, [...prefix, ...installArgs, '--save-exact', '--ignore-scripts',
             '--registry=' + STAR_HARNESS_REGISTRY, STAR_HARNESS_PACKAGE + '@' + version,
-            ...(proof ? [STAR_HARNESS_UI + '@' + version] : []),
+            STAR_HARNESS_UI + '@' + version,
           ], {
             cwd: stage, signal, timeout: 180000, windowsHide: true,
             env: { ...childEnvironment(env), ...packageManager?.env,

@@ -1,7 +1,20 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { constants } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+
+function darwinGroupHasExited(pid) {
+  // Darwin can return EPERM for a group containing only unreaped children.
+  // A live member still represents a real signaling failure.
+  try {
+    const output = execFileSync('/bin/ps', ['-axo', 'pgid=,stat='], {
+      encoding: 'utf8', timeout: 2000,
+    });
+    if (!output.trim()) return false;
+    const processes = output.trim().split('\n').map(row => /^\s*(\d+)\s+(\S+)\s*$/u.exec(row));
+    return processes.every(row => row && (Number(row[1]) !== pid || row[2].startsWith('Z')));
+  } catch { return false; }
+}
 
 /** Own the entire installer process group, including package-manager wrappers.
  * An attempt cannot finish or retry while its descendants keep running. */
@@ -17,7 +30,11 @@ export function runWithDeadline(command, args, { timeoutMs, graceMs = 15000, env
     let settled = false, terminationCode = null, grace;
     const killGroup = name => {
       if (!child.pid) return;
-      try { process.kill(-child.pid, name); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      try { process.kill(-child.pid, name); } catch (error) {
+        if (error.code === 'ESRCH'
+          || error.code === 'EPERM' && process.platform === 'darwin' && darwinGroupHasExited(child.pid)) return;
+        throw error;
+      }
     };
     const finish = (code, error) => {
       if (settled) return;

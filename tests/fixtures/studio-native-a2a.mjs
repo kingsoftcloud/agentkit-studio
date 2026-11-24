@@ -156,10 +156,10 @@ async function applyProof(ctx, options) {
         for (const row of proof.rows) if (row.seq > cursor) yield row;
       } } }), assertCurrent: () => ctx.fiber.uid !== null };
     if (proof.executeNative) {
-      const { createNativeKernelPermitVerifier } = await import('../../src/providers/native-kernel-permit.mjs');
+      const { createNativeKernelPermitVerifier } = await import('./retired-native/providers/native-kernel-permit.mjs');
       const { createNativeModelPort } = await import('@kingsoftcloud/agentkit-harness-node/native/model-port');
       const { configure } = await import('@kingsoftcloud/agentkit-harness-core');
-      const { createStudioManagedNativeExecution } = await import('../../src/host/services/native-managed-execution.mjs');
+      const { createStudioManagedNativeExecution } = await import('./retired-native/host/services/native-managed-execution.mjs');
       managedSessionId = proof.sessionId;
       if (!proof.formalBinding) {
         managedExecution = createStudioManagedNativeExecution({ ctx });

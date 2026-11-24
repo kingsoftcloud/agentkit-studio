@@ -1,17 +1,17 @@
 ---
 title: "控制协议"
-description: "143 个 operation id 的完整清单，按 26 个域分组，每条给出 Host 侧处理器位置。"
+description: "144 个 operation id 的完整清单，按 26 个域分组，每条给出 Host 侧处理器位置。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 传输约定
 
-控制通道固定为 `/agentkit`，共 143 个 operation id，分布在 26 个域。
+控制通道固定为 `/agentkit`，共 144 个 operation id，分布在 26 个域。
 
 | 约定 | 值 | 源码 |
 | --- | --- | --- |
-| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:152` |
+| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:153` |
 | 请求信封 | `{ operationId, payload }`，payload 必须是可序列化 JSON | `src/contracts/wire.mjs` |
 | 响应信封 | `{ ok: true, value }` 或 `{ ok: false, error }` | `src/contracts/wire.mjs` |
 | 取消 | 第四个参数 `AbortSignal`；取消后只回一个终态信封，不重试未知副作用 | `src/contracts/definitions.mjs:8` |
@@ -39,7 +39,7 @@ description: "143 个 operation id 的完整清单，按 26 个域分组，每�
 | `settings` | 2 | 全局设置的读取与更新。 |
 | `skills` | 5 | Skill 的发现、预览、提交与安装预览。 |
 | `plugins` | 4 | DSH 与 Codex 插件的安装、启用、禁用与移除。 |
-| `ksxc` | 9 |  |
+| `ksxc` | 10 |  |
 | `star-harness` | 5 | 本机 Star Harness 的安装、启用与工作区绑定。只有 Studio 宿主所有者可调用。 |
 | `builds` | 4 | 构建创建、列出、下载与可移植导出。 |
 | `operations` | 2 | 长操作的列出与取消。 |
@@ -146,14 +146,15 @@ description: "143 个 operation id 的完整清单，按 26 个域分组，每�
 | `plugins` | `plugins/codex-install` | 安装 Codex 插件 | `src/host/routes/plugins.mjs:10` |
 | `plugins` | `plugins/codex-remove` | 移除 Codex 插件 | `src/host/routes/plugins.mjs:10` |
 | `ksxc` | `ksxc/status` | 查询状态 | `src/host/routes/ksxc.mjs:7` |
-| `ksxc` | `ksxc/activate` | activate | `src/host/routes/ksxc.mjs:14` |
-| `ksxc` | `ksxc/enable` | 启用 | `src/host/routes/ksxc.mjs:15` |
-| `ksxc` | `ksxc/rollback` | rollback | `src/host/routes/ksxc.mjs:16` |
-| `ksxc` | `ksxc/login` | login | `src/host/routes/ksxc.mjs:17` |
-| `ksxc` | `ksxc/login-result` | login-result | `src/host/routes/ksxc.mjs:18` |
-| `ksxc` | `ksxc/login-cancel` | login-cancel | `src/host/routes/ksxc.mjs:19` |
-| `ksxc` | `ksxc/disconnect` | disconnect | `src/host/routes/ksxc.mjs:20` |
-| `ksxc` | `ksxc/models` | models | `src/host/routes/ksxc.mjs:21` |
+| `ksxc` | `ksxc/activate` | activate | `src/host/routes/ksxc.mjs:19` |
+| `ksxc` | `ksxc/enable` | 启用 | `src/host/routes/ksxc.mjs:20` |
+| `ksxc` | `ksxc/rollback` | rollback | `src/host/routes/ksxc.mjs:21` |
+| `ksxc` | `ksxc/login` | login | `src/host/routes/ksxc.mjs:22` |
+| `ksxc` | `ksxc/login-result` | login-result | `src/host/routes/ksxc.mjs:23` |
+| `ksxc` | `ksxc/login-cancel` | login-cancel | `src/host/routes/ksxc.mjs:24` |
+| `ksxc` | `ksxc/disconnect` | disconnect | `src/host/routes/ksxc.mjs:25` |
+| `ksxc` | `ksxc/cache-clear` | cache-clear | `src/host/routes/ksxc.mjs:12` |
+| `ksxc` | `ksxc/models` | models | `src/host/routes/ksxc.mjs:26` |
 | `star-harness` | `star-harness/status` | 查询状态 | `src/host/routes/star-harness.mjs:4` |
 | `star-harness` | `star-harness/install` | 安装 | `src/host/routes/star-harness.mjs:8` |
 | `star-harness` | `star-harness/enable` | 启用 | `src/host/routes/star-harness.mjs:9` |
@@ -214,7 +215,7 @@ description: "143 个 operation id 的完整清单，按 26 个域分组，每�
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| operation id 数 | `143` | 新增或删除都是破坏性变更 |
+| operation id 数 | `144` | 新增或删除都是破坏性变更 |
 | 域数 | `26` | 新增域需要同步本页与路由 |
 | 通道 | `/agentkit` | 客户端硬编码，不可配置 |
 

@@ -1,4 +1,3 @@
-import { installTaskTimeline as install } from '@kingsoftcloud/agentkit-harness-ui/host/task-timeline';
 import { agentFromSessionPreset, cloudAgentIdFromSessionPreset } from '../state/conversation-agent.mjs';
 import { HARNESS_SERVICE_PRESET_SUFFIX } from '../../harness-service-preset.mjs';
 
@@ -33,8 +32,9 @@ async function resolveWebDelivery(ctx, sessionId, delivery, signal) {
   } };
 }
 
-/** Native owns task interaction; Studio supplies its product preset identity. */
-export function installTaskTimeline(ctx, options, installRenderer = install) {
+/** The active plugin owns its timeline; the Host's transcript is available without it. */
+export function installTaskTimeline(ctx, options, installRenderer) {
+  if (!installRenderer) return;
   requireNativeConversationPresentation(ctx.slots);
   return installRenderer(ctx, { ...options, loadDeliveryEvidence, resolveWebDelivery: (...args) => resolveWebDelivery(ctx, ...args),
     isIndependentPreset: presetId => typeof presetId === 'string' && presetId.endsWith(HARNESS_SERVICE_PRESET_SUFFIX),

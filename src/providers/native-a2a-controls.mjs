@@ -3,7 +3,7 @@
  * Commands are committed before potential effects; a lost continuation/cancel
  * is inspected with GetTask, never implicitly sent again. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { a2aTerminal, a2aSubscriptionEventId, createA2AProjection } from './native-a2a-protocol.mjs';
 import { a2aPendingApproval, a2aPendingInput, normalizeA2aInputParts, validateA2aHostReceipt } from './native-a2a-decision.mjs';
 import { validateA2aScopeCancellation } from './native-a2a-scope-cancellation.mjs';

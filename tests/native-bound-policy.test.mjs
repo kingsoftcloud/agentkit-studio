@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { installNativeBoundPolicy, hasNativeBoundApproval } from '../src/providers/native-bound-policy.mjs';
 import { authorizeNativeBuiltin } from '../src/providers/native-tool-policy.mjs';
 import { NATIVE_AGENT_POLICY_CONTRACT, nativeAgentPolicyFromSpec, nativeAgentPolicyDecision } from '../src/native-agent-policy.mjs';
-import { nativeRecoveryBinding, assertNativeRecoveryPreset } from '../src/providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding, assertNativeRecoveryPreset } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 
 const policy = (mode, rules = {}) => ({ contract: NATIVE_AGENT_POLICY_CONTRACT, mode, rules });
 function setup(value, { mode = 'workspace-write', outcome = 'allowed-once' } = {}) {

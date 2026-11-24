@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { nativeWebToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/web-tools';
-import { createDshNodeToolOutputStore } from '../src/providers/dsh-node-tool-output-store.mjs';
+import { createDshNodeToolOutputStore as createStore } from '../src/providers/dsh-node-tool-output-store.mjs';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const text = '完整正文 😀 中文\n'.repeat(100);
@@ -15,6 +15,7 @@ const metadata = () => ({ toolName: 'web_fetch', mediaType: 'text/plain', fullBy
 const request = (agentId = 'agent', sessionId = 'session', callId = 'call') => ({ agentId, sessionId,
   call: { callId, name: 'web_fetch', arguments: { url: 'https://example.com/page' } },
   definition: nativeWebToolDefinitions().find(definition => definition.name === 'web_fetch'), signal: new AbortController().signal });
+const createDshNodeToolOutputStore = options => createStore({ ...options, toolDefinitions: [request().definition] });
 const moduleUrl = new URL('../src/providers/dsh-node-tool-output-store.mjs', import.meta.url).href;
 function setup(t, options = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'dsh-output-'));
@@ -145,7 +146,8 @@ if (job.boundary) {
   syncBuiltinESMExports();
 }
 const { createDshNodeToolOutputStore } = await import(job.moduleUrl);
-const store = createDshNodeToolOutputStore({ directory: job.directory, agentId: job.request.agentId });
+const store = createDshNodeToolOutputStore({ directory: job.directory, agentId: job.request.agentId,
+  toolDefinitions: [job.request.definition] });
 const run = () => {
   try { const result = store.persistOutput({ ...job.request, signal: new AbortController().signal }, job.text, job.metadata);
     process.stdout.write(JSON.stringify(result)); store.close(); }
@@ -167,15 +169,15 @@ function child(t, h, options = {}) {
   let stdout = '', stderr = '';
   process.stdout.on('data', bytes => { stdout += bytes; }); process.stderr.on('data', bytes => { stderr += bytes; });
   const done = new Promise((resolve, reject) => {
-    process.once('error', reject); process.once('exit', (code, signal) => resolve({ code, signal, stdout, stderr }));
+    process.once('error', reject); process.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
   });
   t.after(async () => { if (process.exitCode === null && process.signalCode === null) process.kill('SIGKILL'); await done; });
   return { process, done };
 }
-async function waitFor(predicate) {
-  const deadline = Date.now() + 10000;
+async function waitFor(predicate, timeoutMs = 10000) {
+  const deadline = performance.now() + timeoutMs;
   while (!predicate()) {
-    assert.ok(Date.now() < deadline, 'child process checkpoint timeout');
+    assert.ok(performance.now() < deadline, 'child process checkpoint timeout');
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
@@ -183,7 +185,12 @@ async function waitFor(predicate) {
 test('eight real processes publish the same complete identity concurrently without deleting each other', async t => {
   const h = setup(t), go = join(h.root, 'go');
   const children = Array.from({ length: 8 }, (_, index) => child(t, h, { ready: join(h.root, 'ready-' + index), go }));
-  await waitFor(() => children.every((_child, index) => existsSync(join(h.root, 'ready-' + index))));
+  await Promise.race([
+    waitFor(() => children.every((_child, index) => existsSync(join(h.root, 'ready-' + index))), 30000),
+    Promise.race(children.map(({ done }) => done)).then(({ code, signal, stderr }) => {
+      throw new Error(`Publisher exited before the readiness barrier (${code ?? signal}): ${stderr}`);
+    }),
+  ]);
   writeFileSync(go, 'start');
   const results = await Promise.all(children.map(child => child.done));
   for (const result of results) assert.equal(result.code, 0, result.stderr);

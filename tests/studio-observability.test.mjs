@@ -4,14 +4,21 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioObservability } from '../src/studio-observability.mjs';
-import { createNativeSkillEventJournal, nativeSkillEventEvidence } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
+import { createNativeSkillEventJournal, nativeSkillEventEvidence } from '../src/providers/studio-skill-event-journal.mjs';
+import { createNativeSkillEventJournal as createExistingJournal } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
 
 async function makeStore() { return mkdtemp(join(tmpdir(), 'agentkit-traces-')); }
 
 test('durable Skill tool facts project into Studio trace detail and OTLP without duplicate spans', async () => {
   const store = await makeStore(), obs = createStudioObservability({ storeDir: store }), events = [];
-  const journal = createNativeSkillEventJournal({ runtimeId: 'runtime', request: { runId: 'run' }, bindingDigest: 'binding', events });
-  journal.emit('skill.workflow.started', 'running'); journal.emit('skill.workflow.completed', 'completed');
+  const options = { runtimeId: 'runtime', request: { runId: 'run' }, bindingDigest: 'binding' };
+  const journal = createNativeSkillEventJournal({ ...options, events });
+  const existing = createExistingJournal(options);
+  for (const writer of [journal, existing]) {
+    writer.emit('skill.workflow.started', 'running', { startedAt: 20 });
+    writer.emit('skill.workflow.completed', 'completed', { startedAt: 21 });
+  }
+  assert.deepEqual(events, existing.snapshot());
   const at = new Date().toISOString(), content = JSON.stringify({ ok: true, ...nativeSkillEventEvidence(events) });
   try {
     const facts = [1, 2].map(seq => ({ seq, event_type: 'tool.completed', at, payload: { name: 'execute_skills', content } }));

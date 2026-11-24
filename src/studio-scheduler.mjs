@@ -10,7 +10,7 @@ import { mkdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync as Database } from 'node:sqlite';
 import { closeSync, constants } from 'node:fs';
-import { openPrivate, privateFile } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { openPrivate, privateFile } from './host/private-state.mjs';
 
 export class StudioSchedulerError extends Error {
   constructor(code, message, details = {}) {

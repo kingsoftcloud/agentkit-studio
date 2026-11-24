@@ -22,9 +22,9 @@ import { join, relative, resolve, sep, dirname, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { matchesNodeHostVersion, NODE_HOST_ROOTS } from './node-host-packages.mjs';
 
 export const HOST_PACKAGES_FORMAT = 'agentkit.node-host-packages/v1';
-const ROOT_NAMES = ['@deepseek-ai/dsh', '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-sdk-client'];
 
 function fail(code, message) {
   const error = new Error(message);
@@ -276,7 +276,7 @@ export async function packMaintainedNodeHost({ source, output, studio }) {
   const workspaceMap = buildWorkspaceMap(sourceReal);
 
   // Compute production workspace closure
-  const closure = computeClosure(workspaceMap, ROOT_NAMES);
+  const closure = computeClosure(workspaceMap, NODE_HOST_ROOTS);
 
   // Get changed files and determine affected packages
   const changedFiles = getChangedFiles(sourceReal, pins.baseCommit, pins.headCommit);
@@ -289,7 +289,7 @@ export async function packMaintainedNodeHost({ source, output, studio }) {
   // Packable: roots (always) ∪ affected packages, intersected with closure
   const packable = new Set();
   for (const name of closure) {
-    if (ROOT_NAMES.includes(name) || affectedPackages.has(name)) {
+    if (NODE_HOST_ROOTS.includes(name) || affectedPackages.has(name)) {
       packable.add(name);
     }
   }
@@ -301,7 +301,8 @@ export async function packMaintainedNodeHost({ source, output, studio }) {
     // Electron application packaging still has a separate build pipeline.
     if (/^@deepseek-ai\/dsh-desktop(?:-|$)/.test(name))
       throw fail('pack_desktop_closure', `Node Host requires Desktop application package ${name}; cannot silently omit it`);
-    if (workspaceMap.get(name).version !== dshVersion) throw fail('pack_version_mismatch', `Host version differs: ${name}`);
+    if (!matchesNodeHostVersion(name, workspaceMap.get(name).version, dshVersion))
+      throw fail('pack_version_mismatch', `Host version differs from its release family: ${name}`);
   }
   mkdirSync(outputAbs, { mode: 0o700 }); // Atomic exclusive ownership; never overwrite or clean another output.
 
@@ -342,7 +343,7 @@ export async function packMaintainedNodeHost({ source, output, studio }) {
       tree: pins.tree,
       dshVersion: pins.dshVersion,
     },
-    roots: ROOT_NAMES,
+    roots: NODE_HOST_ROOTS,
     packages,
   };
 

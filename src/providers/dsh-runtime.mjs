@@ -567,6 +567,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, nativeEngineRuntime, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
+    managedHarnessModel(cwd) { return nativeEngineRuntime?.managedModelSelection?.(cwd); },
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     async resolveModel(provider, model) {
       const resolved = typeof resolveModelMetadata === 'function' ? await resolveModelMetadata(provider, model).catch(() => null) : null;

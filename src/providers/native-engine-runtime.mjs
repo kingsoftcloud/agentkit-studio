@@ -20,7 +20,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
-import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGINE_TOOL_RECEIPT } from './engine-service-client.mjs';
+import { connectEngineService, engineServiceFetch, fetchEngineServiceView,
+  ENGINE_COMMAND_VERIFIER, ENGINE_CONTEXT, ENGINE_EXECUTION_POLICY, ENGINE_HOOKS,
+  ENGINE_TOOL_RECEIPT, ENGINE_VERIFICATION } from './engine-service-client.mjs';
 import { nativeEngineApprovalReply } from './native-host-approval.mjs';
 import { nativeEngineVerification } from './native-engine-verification.mjs';
 import { canonicalEngineWorkspace, engineServiceWorkspaces, HARNESS_SERVICE_MODEL_PROVIDER } from './engine-service-workspaces.mjs';
@@ -74,13 +76,19 @@ function sessionToolPolicy(policy, sandbox) {
 
 /** DSH selects a model route before invoking the agent loop. This adapter
  * supplies that route's metadata. The authenticated loop waterfall owns execution. */
-export function createHarnessServiceModelAdapter(AdapterBase, models, describeModel) {
+export function createHarnessServiceModelAdapter(AdapterBase, models, describeModel, canResolveSavedSelection) {
   const catalog = () => new Set(typeof models === 'function' ? models() : typeof models === 'string' ? [models] : models);
   return new class extends AdapterBase {
     providerInfo(provider) { return { id: provider, name: 'Harness' }; }
     async listModels(provider) { return Promise.all([...catalog()].map(model => this.resolveModel(provider, model))); }
     async resolveModel(provider, model) {
-      if (!catalog().has(model)) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
+      if (!catalog().has(model)) {
+        // Managed sessions written by old Studio releases can contain a stale
+        // display name. The runtime always selects a worker by workspace.
+        if (canResolveSavedSelection?.() && text(model) && model.length <= 256)
+          return { provider, id: model, name: 'Harness', modalities: ['text'] };
+        throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
+      }
       const capabilities = await describeModel?.(model);
       const contextWindow = capabilities?.contextWindow;
       return { provider, id: model, name: model, modalities: capabilities?.images ? ['text', 'image'] : ['text'],
@@ -134,6 +142,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
   const views = createEngineViewStore(stateRoot);
   const routes = externalRoutes ?? engineServiceWorkspaces(env);
   const serviceRoutes = () => [...routes.values(), ...(starHarness?.routes ?? [])];
+  const requiresServiceWorkspace = () => routes.size > 0 || starHarness?.enabled === true && !text(env.AGENTKIT_ENGINE_COMMAND);
   const routeFor = cwd => {
     const root = canonicalEngineWorkspace(cwd);
     return root && (routes.get(root) ?? starHarness?.route(root));
@@ -146,8 +155,12 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
   const modelCapabilities = new Map();
   return {
     get usesService() { return serviceRoutes().length > 0; },
-    get requiresServiceWorkspace() { return routes.size > 0; },
+    get requiresServiceWorkspace() { return requiresServiceWorkspace(); },
     usesServiceFor(cwd) { return Boolean(routeFor(cwd)); },
+    managedModelSelection(cwd) {
+      const route = routeFor(cwd);
+      return route?.managed ? route.modelSelection : undefined;
+    },
     get serviceCatalogWorkspace() { return serviceRoutes()[0]?.workspaceRoot; },
     applicationPreviewAvailable: [...routes.values()].some(route => route.preview),
     get serviceModels() { return [...new Set(serviceRoutes().map(route => route.modelSelection.model))]; },
@@ -166,7 +179,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         request.catch(() => modelCapabilities.delete(model));
       }
       const external = await modelCapabilities.get(model);
-      const managed = await starHarness?.modelInfo(model);
+      const managed = starHarness?.modelInfo?.(model);
       const images = managed?.images === true || external.some(({ inputImages }) =>
         Number.isSafeInteger(inputImages?.maxCount) && inputImages.maxCount > 0
         && Number.isSafeInteger(inputImages?.maxEncodedBytes) && inputImages.maxEncodedBytes > 0);
@@ -194,14 +207,24 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         finally { signal?.removeEventListener('abort', abort); await engine.close(); }
       } finally { lease?.release(); }
     },
-    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, expectedServiceModel, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance } = {}) {
+    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, expectedServiceModel, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance,
+      hostContext, hostHooks, executionPolicy } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
       const workspaceRoot = canonicalEngineWorkspace(cwd);
       const route = routeFor(workspaceRoot);
       const useService = Boolean(route);
-      if (!workspaceRoot || routes.size && !route)
-        throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '该会话的工作区没有绑定到配置的 Harness 服务。');
+      if (!workspaceRoot || requiresServiceWorkspace() && !route)
+        throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '该会话的工作区没有绑定到 Harness 服务，请选择已配置的工作区。');
+      if (hostContext && (hostContext.definition?.contract !== ENGINE_CONTEXT
+        || !Array.isArray(hostContext.definition.sources) || typeof hostContext.read !== 'function'))
+        throw failure('NATIVE_ENGINE_CONTEXT_UNAVAILABLE', '当前运行方式无法接入已绑定的宿主上下文。');
+      if (hostHooks && (hostHooks.definition?.contract !== ENGINE_HOOKS
+        || !Array.isArray(hostHooks.definition.hooks) || typeof hostHooks.invoke !== 'function'))
+        throw failure('NATIVE_ENGINE_HOOKS_UNAVAILABLE', '当前运行方式无法接入已配置的宿主 Hooks。');
+      const contextDefinition = hostContext && structuredClone(hostContext.definition);
+      const hookDefinition = hostHooks && structuredClone(hostHooks.definition);
+      const runExecutionPolicy = executionPolicy && structuredClone(executionPolicy);
       if (route?.managed && expectedServiceModel && route.modelSelection.model !== expectedServiceModel)
         throw failure('STAR_HARNESS_MODEL_CHANGED', `工作区当前使用 ${route.modelSelection.model}，请在会话中选择该模型后继续。`);
       if (!useService && (!text(model) || !text(modelProvider?.baseUrl))) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '所选模型缺少可用的接口地址，请检查模型设置。');
@@ -258,7 +281,19 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       };
       let diagnostics = '';
       const runId = `studio-${createHash('sha256').update(`${session}\n${text(turnId) ? turnId : randomUUID()}\n${objective}`).digest('hex').slice(0, 32)}`;
-      const verification = useService ? nativeEngineVerification({ objective, runId }) : null;
+      const verification = nativeEngineVerification({ objective, runId });
+      const onReadContext = hostContext && ((request, callbackSignal) => {
+        if (request?.runId !== runId || !contextDefinition.sources.some(source =>
+          request.sourceId === source.sourceId && request.bindingDigest === source.bindingDigest))
+          throw Error('engine_context_binding_mismatch');
+        return hostContext.read(request, callbackSignal);
+      });
+      const onInvokeHook = hostHooks && ((request, callbackSignal) => {
+        if (request?.runId !== runId || !hookDefinition.hooks.some(hook =>
+          request.definition?.hookId === hook.hookId && request.definition?.bindingDigest === hook.bindingDigest
+          && hook.events.includes(request.event))) throw Error('engine_hook_binding_mismatch');
+        return hostHooks.invoke(request, callbackSignal);
+      });
       const onReadToolReceipt = nativeHostReceiptHandler && ((request, receiptSignal) => {
         if (request?.runId !== runId) return {};
         return nativeHostReceiptHandler({ ...request, name: hostTools.originalName(request.name),
@@ -273,7 +308,8 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         signal?.throwIfAborted();
         engine = useService ? connectEngineService({ endpoint: service.endpoint,
           token: service.token, sessionId: createHash('sha256').update(session).digest('hex'),
-          runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify, requiredToolPolicy: policy?.contract,
+          runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify,
+          onReadContext, onInvokeHook, requiredToolPolicy: policy?.contract,
           requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: service.fetchImpl }) : spawnEngine({ command, args: [...args, '--workspace', workspaceRoot, '--state-dir', stateDir, '--session', session, '--approval', standing],
           env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: harnessModelEndpoint(modelProvider.baseUrl, modelProvider.protocol),
             AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
@@ -281,13 +317,25 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
             ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),
             ...(env.KSADK_MODEL_COMPAT_RULE ? { AGENTKIT_ENGINE_MODEL_COMPAT_RULE: env.KSADK_MODEL_COMPAT_RULE } : {}) },
-          onApproveTool, onCallTool, hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
+          onApproveTool, onCallTool, onReadContext, onInvokeHook, onVerifyGoal: verification?.verify, runSignal: signal,
+          hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
         let hello;
         try { hello = await engine.initialize(); }
         catch (error) {
-          if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE', 'NATIVE_ENGINE_VERIFICATION_UNAVAILABLE'].includes(error.code)) throw error;
+          if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE', 'NATIVE_ENGINE_VERIFICATION_UNAVAILABLE',
+            'NATIVE_ENGINE_CONTEXT_UNAVAILABLE', 'NATIVE_ENGINE_HOOKS_UNAVAILABLE'].includes(error.code)) throw error;
           throw failure('NATIVE_ENGINE_UNAVAILABLE', `Native 引擎启动失败：${error.message}`);
         }
+        if (hostContext && hello.capabilities?.hostContext !== ENGINE_CONTEXT)
+          throw failure('NATIVE_ENGINE_CONTEXT_UNAVAILABLE', '当前 Harness 无法读取已绑定的宿主上下文。');
+        if (hostHooks && hello.capabilities?.hostHooks !== ENGINE_HOOKS)
+          throw failure('NATIVE_ENGINE_HOOKS_UNAVAILABLE', '当前 Harness 无法执行已配置的宿主 Hooks。');
+        if (verification && (hello.capabilities?.hostVerification !== ENGINE_VERIFICATION
+          || hello.capabilities?.workspaceCommandVerification !== ENGINE_COMMAND_VERIFIER))
+          throw failure('NATIVE_ENGINE_VERIFICATION_UNAVAILABLE', '当前 Harness 无法核对已指定的验收命令。');
+        if (runExecutionPolicy && (runExecutionPolicy.contract !== ENGINE_EXECUTION_POLICY
+          || hello.capabilities?.executionPolicy !== ENGINE_EXECUTION_POLICY))
+          throw failure('NATIVE_ENGINE_EXECUTION_POLICY_UNAVAILABLE', '当前 Harness 无法执行已指定的任务预算。');
         const offeredTools = hello.capabilities?.hostToolReceipts === ENGINE_TOOL_RECEIPT ? dynamicTools
           : dynamicTools.map(({ receiptObservation: _receipt, ...tool }) => tool);
         if (onCallTool) hostTools = engineHostTools(offeredTools, { reserved: hello.engine?.reservedToolNames ?? [],
@@ -312,6 +360,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         const started = await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
           ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}),
           ...(verification ? { hostVerification: verification.definition } : {}),
+          ...(contextDefinition ? { hostContext: contextDefinition } : {}),
+          ...(hookDefinition ? { hostHooks: hookDefinition } : {}),
+          ...(runExecutionPolicy ? { executionPolicy: runExecutionPolicy } : {}),
           ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
         if (!useService) signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();
@@ -324,8 +375,8 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         }
         yield { type: 'engine', engine: { version: hello.engine?.version ?? null, preset: hello.engine?.preset ?? null, protocol: hello.protocolVersion }, view };
         let finalText = null, rest;
-        let resumedOutput = false;
-        const canResumeOutput = hello.capabilities?.methods?.includes('run/resume') && typeof engine.resume === 'function';
+        let resumedOutput = false, resumedProvider = false;
+        const canResume = hello.capabilities?.methods?.includes('run/resume') && typeof engine.resume === 'function';
         let thinkingCursor = hello.capabilities?.liveThinking === true ? '' : undefined;
         let toolDraftCursor = hello.capabilities?.liveToolDrafts === true ? '' : undefined;
         let textCursor = hello.capabilities?.liveText === true ? '' : undefined;
@@ -384,9 +435,12 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           if (!page.running && page.events.length === 0) {
             rest = await engine.status(runId);
             if (rest.running) continue;
-            if (canResumeOutput && !resumedOutput && rest.phase === 'paused' && rest.reason === 'output_budget_exhausted') {
+            const resumeOutput = !resumedOutput && rest.reason === 'output_budget_exhausted';
+            const resumeProvider = started.existing === true && !resumedProvider && rest.reason === 'provider_unavailable';
+            if (canResume && rest.phase === 'paused' && (resumeOutput || resumeProvider)) {
               signal?.throwIfAborted();
-              resumedOutput = true;
+              resumedOutput ||= resumeOutput;
+              resumedProvider ||= resumeProvider;
               await engine.resume(runId);
               continue;
             }
@@ -502,8 +556,9 @@ function approvalReason(request) {
   return `${request.tool ?? 'tool'}${subject ? `: ${subject.slice(0, 500)}` : ''}`;
 }
 function runFailureMessage(rest) {
-  if (text(rest.modelError)) return rest.modelError;
   const reason = rest.reason ?? rest.phase ?? 'unknown';
+  if (reason === 'provider_unavailable') return '模型服务暂不可用，原运行已暂停并保存进度。重试同一轮可继续原运行。';
+  if (text(rest.modelError)) return rest.modelError;
   if (reason === 'effect_outcome_unknown') return '工具执行结果未确认。请先核对实际结果，再发消息继续。';
   if (reason === 'output_budget_exhausted') return '模型多次达到输出上限，任务已暂停，已完成的结果已保存。请缩小接下来要做的步骤，再在当前会话继续。';
   if (rest.phase === 'paused') return `任务已暂停（${reason}），可稍后继续。`;

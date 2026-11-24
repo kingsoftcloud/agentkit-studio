@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { NativeKernel, canonical, configure, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeVerification, nativeGoalContract } from '../../src/providers/native-verification.mjs';
+import { createNativeVerification, nativeGoalContract } from './retired-native/providers/native-verification.mjs';
 
 const directory = process.argv[2];
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };

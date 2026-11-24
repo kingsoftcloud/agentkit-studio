@@ -5,8 +5,9 @@
 import { createHash } from 'node:crypto';
 import { constants, closeSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, lockUntil, openPrivate, privateDirectory, syncDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
+import { atomicPrivate, lockUntil, openPrivate, privateDirectory, syncDirectory } from '../host/private-state.mjs';
 
 export const DSH_NODE_COMMAND_LEDGER = 'agentkit.dsh-node-command-ledger/v1';
 export const commandDigest = value => createHash('sha256').update(canonical(value)).digest('hex');

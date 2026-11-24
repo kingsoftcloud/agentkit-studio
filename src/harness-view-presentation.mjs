@@ -1,5 +1,5 @@
 import { ENGINE_VIEW_CONTRACT, NATIVE_ENGINE_EVENT } from './providers/native-engine-runtime.mjs';
-import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
+import { redactDiagnosticText } from './diagnostic-text.mjs';
 
 export const HOSTED_HARNESS_VIEW_PATH = '/_ksadk/harness/v1/views';
 export const HOSTED_HARNESS_VIEW_EVENT = 'response.harness_view';

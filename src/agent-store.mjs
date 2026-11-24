@@ -12,7 +12,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { syncDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { syncDirectory } from './host/private-state.mjs';
 import { defaultNativeToolBindings } from './native-tool-catalog.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
 import { NATIVE_AGENT_POLICY_CONTRACT, nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';

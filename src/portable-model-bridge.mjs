@@ -2,7 +2,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { dshModelSelection } from './agent-preset-admission.mjs';
 import { portableError } from './portable-resources.mjs';
-import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
+import { admitModelCapabilities } from './model-capabilities.mjs';
 import { studioReasoning } from './model-reasoning.mjs';
 import { providerWireApi } from './model-profile-contract.mjs';
 

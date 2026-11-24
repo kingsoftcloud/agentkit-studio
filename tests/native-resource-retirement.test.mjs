@@ -9,11 +9,11 @@ import {createNativeDshTurnExecutor,NATIVE_DSH_TURN_CONTRACT} from '@kingsoftclo
 import {nativeDeliveryProjection} from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import {fixture,scope as baseScope,tool} from './fixtures/native-core.mjs';
 import {nativeOwnershipHost} from './fixtures/native-ownership-host.mjs';
-import {nativeRecoveryBinding} from '../src/providers/native-recovery-binding.mjs';
-import {createNativeResourceRetirement,validateNativeResourceRetirementRequest} from '../src/host/services/native-resource-retirement.mjs';
+import {nativeRecoveryBinding} from './fixtures/retired-native/providers/native-recovery-binding.mjs';
+import {createNativeResourceRetirement,validateNativeResourceRetirementRequest} from './fixtures/retired-native/host/services/native-resource-retirement.mjs';
 import {createSessionRoutes} from './fixtures/retired-session-routes.mjs';
 import {createNativeRecoveryState} from '../src/client/state/native-recovery.mjs';
-import {createNativeDshBrowserTools} from '../src/providers/native-dsh-browser.mjs';
+import {createNativeDshBrowserTools} from './fixtures/retired-native/providers/native-dsh-browser.mjs';
 import {createHash} from 'node:crypto';
 import {canonical} from '@kingsoftcloud/agentkit-harness-core';
 const scope={...baseScope,tenantId:'local',userId:'local-user'};

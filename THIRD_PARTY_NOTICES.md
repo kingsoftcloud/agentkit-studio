@@ -1,5 +1,12 @@
 # Third-party source notices
 
+Studio's local process launcher preserves the Apache-2.0 source and initial
+builds from `@kingsoftcloud/agentkit-harness-node@0.0.31`.
+The four binary identities and source digest are in
+`src/providers/studio-local-command/local-process-manifest.json`.
+The musl and GCC runtime notices ship in the adjacent
+`local-process-licenses` directory.
+
 `node_modules/@kingsoftcloud/agentkit-harness-core/src/patch-parser.mts` and `patch-apply.mts`
 preserve ZCode's structured patch parser and pure hunk application from commit
 `3c5b227649371507ddc4eb46ac5133afe6db1cab`, paths

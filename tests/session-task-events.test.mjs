@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSessionTaskProjector, nativeTaskState, nativeHistoricalToolState } from '../src/client/dsh/session-task-events.mjs';
+import { createSessionTaskProjector, nativeTaskState, nativeHistoricalToolState } from '@kingsoftcloud/agentkit-harness-ui/host/session-task-events';
 
 const entry = (seq, type, data) => ({ type: 'event', event: { seq, type, time: 1000 + seq, data: { turn: 1, step: 1, ...data } } });
 const window = (revision, entries, change = { kind: 'replace', entries }) => ({ revision, entries, change });
@@ -160,7 +160,7 @@ test('committed tool identities anchor early dispatch rows after their actual as
 });
 
 test('a previous run status cannot finish or interrupt a newly submitted turn', async () => {
-  const {nativeStatusForTurn}=await import('../src/client/dsh/session-task-events.mjs');
+  const {nativeStatusForTurn}=await import('@kingsoftcloud/agentkit-harness-ui/host/session-task-events');
   const status={runId:'previous',presentationTurn:1,phase:'completed',outcome:'unverified'};
   assert.equal(nativeStatusForTurn(status,2),null);
   assert.equal(nativeStatusForTurn(status,1),status);

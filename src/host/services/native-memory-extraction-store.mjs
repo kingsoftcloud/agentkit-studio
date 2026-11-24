@@ -30,7 +30,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { dirname, resolve } from 'node:path';
-import { canonical, invariant, scopeKey } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant, scopeKey } from '../../contracts/native-values.mjs';
 
 const SCHEMA_VERSION = 1;
 const JOBS = 'native_memory_extraction_jobs';

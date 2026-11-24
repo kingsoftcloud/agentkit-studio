@@ -1,11 +1,11 @@
 // Historical component verification only; this router is never shipped.
 import { validateNativeInjectionRequest } from '../../src/host/services/native-session-injection.mjs';
-import { validateNativeResourceRetirementRequest } from '../../src/host/services/native-resource-retirement.mjs';
-import { validateNativeA2aControlRequest } from '../../src/host/services/native-a2a-control.mjs';
-import { validateNativeReconciliationRequest, validateNativeBackgroundReviewRequest } from '../../src/host/services/native-recovery.mjs';
+import { validateNativeResourceRetirementRequest } from './retired-native/host/services/native-resource-retirement.mjs';
+import { validateNativeA2aControlRequest } from './retired-native/host/services/native-a2a-control.mjs';
+import { validateNativeReconciliationRequest, validateNativeBackgroundReviewRequest } from './retired-native/host/services/native-recovery.mjs';
 import { validateDshA2aRequest } from '../../src/host/services/dsh-a2a-control.mjs';
-import { validateNativeConversationRequest } from '../../src/host/services/native-conversation.mjs';
-import { validateNativeCommandOutputRequest } from '../../src/host/services/native-command-output.mjs';
+import { validateNativeConversationRequest } from './retired-native/host/services/native-conversation.mjs';
+import { validateNativeCommandOutputRequest } from './retired-native/host/services/native-command-output.mjs';
 import { validateNativeApprovalStatusRequest, validateNativeApprovalDecisionRequest } from '../../src/host/services/native-approval.mjs';
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost, getDshA2aControls }) {

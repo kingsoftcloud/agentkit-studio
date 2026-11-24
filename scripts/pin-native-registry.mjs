@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { NATIVE_PACKAGES } from './native-package-integrity.mjs';
+import { NATIVE_NODE_PACKAGE, NATIVE_PACKAGES, pinnedNativeVersion } from './native-package-integrity.mjs';
 
 // Maintainer operation: use the reviewed lockfile and registry integrity, never
 // local package contents, as release evidence. Lifecycle scripts are not run.
@@ -14,7 +14,6 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const product = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const lock = parse(readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8'));
 const pinsPath = join(root, 'scripts/native-package-pins.json');
-const previous = existsSync(pinsPath) ? JSON.parse(readFileSync(pinsPath, 'utf8')) : undefined;
 const temporary = mkdtempSync(join(tmpdir(), 'native-registry-pins-'));
 const pins = { schemaVersion: 'agentkit.native-registry-pins/v2', packages: {}, dependencyPackages: {} };
 const loaded = new Map();
@@ -99,30 +98,16 @@ async function runtimeDependencies(directory, seen, versions) {
 try {
   const require = createRequire(join(root, 'package.json'));
   for (const name of NATIVE_PACKAGES) {
-    const version = product.dependencies[name];if (!/^\d+\.\d+\.\d+$/.test(version)) throw Error(`Use an exact version for ${name}`);
+    const version = pinnedNativeVersion(product, name);if (!/^\d+\.\d+\.\d+$/.test(version)) throw Error(`Use an exact version for ${name}`);
     const evidence = await releaseEvidence(name, version);pins.packages[name] = evidence;
     let directory = dirname(require.resolve(name));while (!existsSync(join(directory, 'package.json'))) directory = dirname(directory);
     await installedDependencies(directory, evidence);
   }
-  const runtime = NATIVE_PACKAGES[1];
+  const runtime = NATIVE_NODE_PACKAGE;
   let runtimeDirectory = dirname(require.resolve(runtime));
   while (!existsSync(join(runtimeDirectory, 'package.json'))) runtimeDirectory = dirname(runtimeDirectory);
   const versions = new Map();
   await runtimeDependencies(runtimeDirectory, new Set(), versions);
-  pins.runtimeDependencies = Object.fromEntries([...versions].sort().map(([name, { version }]) => [name, version]));
-  const previousVersion = previous?.packages?.[runtime]?.version;
-  if (previousVersion && previousVersion !== pins.packages[runtime].version) {
-    pins.previousRuntime = { version: previousVersion,
-      packages: Object.fromEntries(NATIVE_PACKAGES.slice(0, 2).map(name => [name, previous.packages[name]])),
-      dependencies: previous.runtimeDependencies ?? pins.runtimeDependencies };
-  } else if (previous?.previousRuntime) pins.previousRuntime = previous.previousRuntime;
-  for (const [name, version] of Object.entries(pins.previousRuntime?.dependencies ?? {})) {
-    const key = `${name}@${version}`;
-    if (!pins.dependencyPackages[key]) {
-      if (!previous?.dependencyPackages?.[key]) throw Error(`Previous runtime dependency has no reviewed pin: ${key}`);
-      pins.dependencyPackages[key] = previous.dependencyPackages[key];
-    }
-  }
   writeFileSync(pinsPath, JSON.stringify(pins, null, 2) + '\n');
   console.log('Pinned registry archives and executable dependencies against the reviewed lockfile.');
 } finally { rmSync(temporary, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }

@@ -5,8 +5,8 @@ import { createHash } from 'node:crypto';
 import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync,
   mkdtempSync, openSync, readSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { nativeWebToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/web-tools';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 
 export const DSH_NODE_TOOL_OUTPUT_CONTRACT = 'agentkit.dsh-node-tool-output/v1';
 const MAX_BYTES = 16 * 1024 * 1024;
@@ -72,8 +72,7 @@ function writePrivate(path, bytes, guard) {
   } finally { closeSync(fd); }
 }
 
-export function createDshNodeToolOutputStore({ directory, agentId, isClosed = () => false, signal,
-  toolDefinitions = nativeWebToolDefinitions().filter(item => item.name === 'web_fetch') } = {}) {
+export function createDshNodeToolOutputStore({ directory, agentId, isClosed = () => false, signal, toolDefinitions } = {}) {
   invariant(typeof directory === 'string' && directory.trim() && typeof agentId === 'string' && agentId.trim()
     && typeof isClosed === 'function', 'output_binding_invalid');
   invariant(signal === undefined || signal instanceof AbortSignal, 'output_host_signal_invalid');

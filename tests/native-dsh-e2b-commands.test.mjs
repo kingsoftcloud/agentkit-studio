@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { NativeKernel, emptyUsage, canonical, BACKGROUND_NOTIFICATION_ADMISSION } from '@kingsoftcloud/agentkit-harness-core';
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 const names = ['sandbox_status', 'run_command', 'read_command_output', 'stop_command'];

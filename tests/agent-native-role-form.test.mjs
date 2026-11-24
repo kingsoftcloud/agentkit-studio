@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentForm } from '../src/client/pages/agent-form.mjs';
-import { nativeChildRoles } from '../src/providers/native-subagents.mjs';
+import { nativeChildRoles } from './fixtures/retired-native/providers/native-subagents.mjs';
 
 const walk = node => node && typeof node === 'object' ? [node, ...(node.children ?? []).flatMap(walk)] : [];
 function form(initialAgent, { toolResources, allowHarnessRuntime = false } = {}) {

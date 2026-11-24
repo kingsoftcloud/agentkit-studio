@@ -7,7 +7,7 @@ import { NativeKernel, emptyUsage, planModeToolDefinitions } from '@kingsoftclou
 import { fixture, scope, digest, tool } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { nativeChildToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/child-tools';
-import { createStudioNativeChildren, nativeChildRoles } from '../src/providers/native-subagents.mjs';
+import { createStudioNativeChildren, nativeChildRoles } from './fixtures/retired-native/providers/native-subagents.mjs';
 
 const output = (text, toolCalls = []) => ({ kind: toolCalls.length ? 'tool_calls' : 'final_candidate', text, toolCalls, usage: emptyUsage() });
 for (const [childTaskPolicy, childPlanPolicy] of [[undefined, undefined], ['session-controls/v1', undefined], ['session-controls/v1', 'inherit-plan/v1']])

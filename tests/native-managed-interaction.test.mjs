@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { canonical, copy } from '@kingsoftcloud/agentkit-harness-core';
-import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
+import { createManagedNativeKernel } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel';
 import { permitIssuer, command, target, scope, binding, response, tool } from './fixtures/native-managed-kernel.mjs';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { streamA2aInboundKernelFacts } from '../src/providers/native-a2a-inbound-kernel.mjs';

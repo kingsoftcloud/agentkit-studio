@@ -32,10 +32,10 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | `AGENT_NOT_FOUND` | `src/host/routes/agents.mjs:13` | Check whether the Agent was deleted; recreate it in this workspace |
 | `INVALID_AGENT_ID` | `src/host/routes/agents.mjs:52` | Check that `agentId` is non-empty and well formed |
 | `MODEL_CREDENTIAL_MISSING` | `src/model-service.mjs:71` | Add the API Key for that model profile in settings |
-| `MODEL_NOT_FOUND` | `src/model-service.mjs:61` | Refresh the model catalog; for a custom endpoint check `OPENAI_BASE_URL` |
-| `MODEL_URL_INVALID` | `src/model-service.mjs:37` | The endpoint must be an absolute `http(s)://` URL |
-| `CLOUD_CONFIGURATION_REQUIRED` | `src/remote/control-client.mjs:439` | Configure cloud credentials and the control plane endpoint first |
-| `CLOUD_EXECUTION_MODE_DENIED` | `src/host/routes/agents.mjs:118` | The policy denied this execution mode; request a lower tier |
+| `MODEL_NOT_FOUND` | `src/model-service.mjs:59` | Refresh the model catalog; for a custom endpoint check `OPENAI_BASE_URL` |
+| `MODEL_URL_INVALID` | `src/model-service.mjs:35` | The endpoint must be an absolute `http(s)://` URL |
+| `CLOUD_CONFIGURATION_REQUIRED` | `src/remote/control-client.mjs:444` | Configure cloud credentials and the control plane endpoint first |
+| `CLOUD_EXECUTION_MODE_DENIED` | `src/host/routes/agents.mjs:119` | The policy denied this execution mode; request a lower tier |
 | `MCP_NOT_FOUND` | `src/mcp-probes.mjs:21` | Confirm the MCP server still exists in the resource list |
 | `MCP_CONFIGURATION_REQUIRED` | `src/template-resource-library.mjs:36` | Complete the MCP connection config (command or URL) |
 | `SKILL_MANIFEST_MISSING` | `src/skill-files.mjs:35` | Check that the Skill package contains `SKILL.md` |
@@ -45,69 +45,69 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | `TEAM_TEMPLATE_INVALID` | `src/team-template-audit.mjs:53` | Check `kind`, `id`, `version` and required text |
 | `TEAM_TEMPLATE_ROLE_INVALID` | `src/team-template-contract.mjs:58` | `roles[0].name` must be `lead`; role names must be unique |
 | `TEAM_RUNTIME_UNAVAILABLE` | `src/studio-team-runtime.mjs:105` | A role runtime must be `dsh-native` or `harness` |
-| `DEPLOYMENT_CREATE_INTERRUPTED` | `src/studio-deployments.mjs:364` | Reconcile the cloud side before retrying |
-| `DEPLOYMENT_UPDATE_INTERRUPTED` | `src/deployment-rollouts.mjs:167` | Same; do not retry the update repeatedly |
+| `DEPLOYMENT_CREATE_INTERRUPTED` | `src/studio-deployments.mjs:383` | Reconcile the cloud side before retrying |
+| `DEPLOYMENT_UPDATE_INTERRUPTED` | `src/deployment-rollouts.mjs:194` | Same; do not retry the update repeatedly |
 | `SESSION_NOT_FOUND` | `src/host/routes/sessions.mjs:27` | Confirm `sessionId` belongs to this Host |
-| `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:196` | `sessionId` must not be empty |
+| `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:197` | `sessionId` must not be empty |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | Wait for the build to become available before downloading |
-| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:67` | `runtime.type` is not one of `STUDIO_RUNTIME_TYPES` |
-| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:41` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
-| `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:47` | Shrink the request body or switch to chunked upload |
+| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:74` | `runtime.type` is not one of `STUDIO_RUNTIME_TYPES` |
+| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:39` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
+| `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:75` | Shrink the request body or switch to chunked upload |
 | `INVALID_QUERY` | `src/agent-catalog.mjs:9` | Check the query string types and enum values |
 | `CREDENTIAL_VALUE_MISSING` | `src/host/routes/credentials.mjs:7` | Fill in the value for that credential reference |
 | `EVALUATION_TARGET_NOT_FOUND` | `src/host/services/automation.mjs:47` | Register the evaluation target first |
 | `CHANNEL_URL_INVALID` | `src/channel-connector.mjs:8` | A channel URL must be an absolute HTTPS URL |
-| `STUDIO_HOST_INCOMPATIBLE` | `src/host/compatibility.mjs:40` | Upgrade the DSH base to the version `studio.plugin.json` requires |
-| `DSH_PLUGIN_INDEX_UNAVAILABLE` | `src/dsh-plugin-index.mjs:58` | Check index reachability; on failure the market keeps the last result |
+| `STUDIO_HOST_INCOMPATIBLE` | `src/host/compatibility.mjs:42` | Upgrade the DSH base to the version `studio.plugin.json` requires |
+| `PLUGIN_MARKET_UNAVAILABLE` | `src/plugin-market.mjs:25` | Enable the DSH custom plugin index service in Plugins; reinstall Studio if the bundled index is missing |
 
 ## Namespace index
 
-The remaining 170 codes are grouped by namespace, with meaning and the first triage entry per group.
+The remaining 171 codes are grouped by namespace, with meaning and the first triage entry per group.
 
 | Namespace | Size | Meaning | Triage entry |
 | --- | --- | --- | --- |
-| `STUDIO` | 25 | Studio host and routing. | `src/agent-preset-admission.mjs:162` |
-| `NATIVE` | 16 | Native engine, A2A and web authorization. | `src/agent-preset-admission.mjs:337` |
+| `STUDIO` | 23 | Studio host and routing. | `src/agent-preset-admission.mjs:158` |
 | `CLOUD` | 15 | Cloud execution modes and streaming responses. | `src/cloud-execution-modes.mjs:41` |
-| `CODEX` | 11 | Codex App Server and plugin market. | `src/client/dsh/codex-tool.mjs:33` |
-| `SKILL` | 10 | Skill download, authorization and runtime. | `src/providers/native-skill-connection.mjs:92` |
+| `CODEX` | 11 | Codex App Server and plugin market. | `src/client/dsh/codex-tool.mjs:37` |
+| `MODEL` | 11 | Model catalog, endpoints and credentials. | `src/client/dsh/model-bridge.mjs:61` |
+| `SKILL` | 11 | Skill download, authorization and runtime. | `src/host/routes/resources.mjs:37` |
+| `NATIVE` | 10 | Native engine, A2A and web authorization. | `src/agent-preset-admission.mjs:333` |
 | `INVALID` | 8 | Input validation. | `src/agent-catalog.mjs:9` |
-| `MANAGED` | 8 | Managed runtime, resources and input conflicts. | `src/host/bootstrap.mjs:158` |
-| `MODEL` | 8 | Model catalog, endpoints and credentials. | `src/model-endpoint.mjs:9` |
-| `DSH` | 7 | DSH base and plugin index. | `src/agent-preset-admission.mjs:345` |
-| `RUNTIME` | 7 | Runtime routing and transport. | `src/cloud-runtime-fetch.mjs:6` |
+| `MANAGED` | 8 | Managed runtime, resources and input conflicts. | `src/host/bootstrap.mjs:169` |
+| `RUNTIME` | 8 | Runtime routing and transport. | `src/cloud-runtime-fetch.mjs:6` |
+| `OTHER` | 7 | Standalone codes without a namespace prefix. | `src/cloud-headers.mjs:26` |
 | `MCP` | 6 | MCP server binding and configuration. | `src/host/services/resource-tools.mjs:21` |
 | `RESOURCE` | 5 | Resource catalog and adapters. | `src/host/services/optional-resource.mjs:10` |
 | `SESSION` | 5 | Session identity and export. | `src/host/routes/sessions.mjs:19` |
 | `TEMPLATE` | 5 | Expert template service. | `src/template-catalog-client.mjs:14` |
 | `AUTOMATION` | 4 | Automation runs and delivery. | `src/native-automation-runner.mjs:21` |
 | `CHANNEL` | 4 | Channel connection and turns. | `src/channel-connector.mjs:8` |
-| `HOST` | 4 | Host connection and tool calls. | `src/providers/dsh-runtime-plugin.mjs:167` |
-| `RESPONSES` | 4 | Responses protocol projection. | `src/frozen-build-runtime.mjs:88` |
+| `DSH` | 4 | DSH base and plugin index. | `src/agent-preset-admission.mjs:341` |
+| `HOST` | 4 | Host connection and tool calls. | `src/providers/dsh-runtime-plugin.mjs:169` |
+| `RESPONSES` | 4 | Responses protocol projection. | `src/frozen-build-runtime.mjs:107` |
 | `TEAM` | 4 | Team roles and templates. | `src/providers/codex-resource-context.mjs:18` |
 | `AGENTKIT` | 3 | Standalone codes without a namespace prefix. | `src/contracts/definitions.mjs:17` |
 | `BUILTIN` | 3 | Built-in Skill manifests. | `src/builtin-skills.mjs:44` |
-| `UPSTREAM` | 3 | Upstream streaming. | `src/model-proxy-handler.mjs:150` |
-| `A2A` | 2 | Agent-to-Agent control plane. | `src/providers/native-a2a-receipt.mjs:97` |
+| `MEMORY` | 3 | Memory store outcomes. | `src/memory-identity.mjs:53` |
+| `UPSTREAM` | 3 | Upstream streaming. | `src/model-proxy-handler.mjs:225` |
 | `AGENT` | 2 | Agent catalog and revision resolution. | `src/host/routes/agents.mjs:13` |
-| `BUILD` | 2 | Builds and frozen runtime. | `src/agent-preset-admission.mjs:327` |
+| `BUILD` | 2 | Builds and frozen runtime. | `src/agent-preset-admission.mjs:323` |
 | `CREDENTIAL` | 2 | Credential references and values. | `src/host/routes/credentials.mjs:6` |
-| `DEPLOYMENT` | 2 | Deployment interruption and recovery. | `src/deployment-rollouts.mjs:167` |
-| `DISCOVERY` | 2 | MCP and Skill discovery. | `src/dsh-plugin-discovery.mjs:244` |
+| `DEPLOYMENT` | 2 | Deployment interruption and recovery. | `src/deployment-rollouts.mjs:194` |
 | `EVALUATION` | 2 | Evaluation targets and runs. | `src/host/routes/evaluations.mjs:8` |
-| `REQUEST` | 2 | Request body and cancellation. | `src/model-proxy-handler.mjs:47` |
-| `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:41` |
+| `REQUEST` | 2 | Request body and cancellation. | `src/model-proxy-handler.mjs:75` |
+| `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:39` |
 | `STAR` | 2 | Local Star Harness install, version and workspace binding. | `src/host/routes/http.mjs:65` |
-| `BOUND` | 1 | Resource binding resolution. | `src/providers/codex-resource-context.mjs:137` |
+| `A2A` | 1 | Agent-to-Agent control plane. | `src/providers/native-a2a-tool-activity.mjs:175` |
+| `BOUND` | 1 | Resource binding resolution. | `src/providers/codex-resource-context.mjs:144` |
 | `CHANNELS` | 1 | Channel subsystem availability. | `src/host/routes/channels.mjs:8` |
 | `GATEWAY` | 1 | Standalone codes without a namespace prefix. | `src/host/routes/dispatcher.mjs:28` |
 | `LOCAL` | 1 | Local harness lifecycle. | `src/host/routes/http.mjs:24` |
-| `MEMORY` | 1 | Memory store outcomes. | `src/providers/native-cloud-memory-turn.mjs:113` |
 | `OBSERVABILITY` | 1 | Observability export. | `src/host/routes/traces.mjs:9` |
 | `SCHEDULE` | 1 | Schedules. | `src/host/services/automation.mjs:29` |
 | `SCHEDULER` | 1 | Host scheduler. | `src/host/routes/schedules.mjs:14` |
 | `SERVER` | 1 | Server connection. | `src/remote/compatibility-methods.mjs:57` |
-| `STATELESS` | 1 | Stateless call input. | `src/model-proxy-handler.mjs:55` |
+| `STATELESS` | 1 | Stateless call input. | `src/model-proxy-handler.mjs:83` |
 | `SUMMON` | 1 | Template summon conflicts. | `src/template-summon.mjs:108` |
 | `TOOL` | 1 | Tool lookup. | `src/providers/dsh-presentation-tools.mjs:7` |
 | `USER` | 1 | User question validation. | `src/providers/user-question-tool.mjs:54` |
@@ -116,25 +116,25 @@ The remaining 170 codes are grouped by namespace, with meaning and the first tri
 
 Every code by namespace. Search the repo for a code to find where it is thrown.
 
-**STUDIO** (25) — `STUDIO_AGENT_REQUIRED` · `STUDIO_BUILD_ENGINE_UNSUPPORTED` · `STUDIO_DEPLOYMENT_REQUIRED` · `STUDIO_DSH_A2A_UNAVAILABLE` · `STUDIO_HOST_INCOMPATIBLE` · `STUDIO_IMAGE_ATTACHMENT_UNAVAILABLE` · `STUDIO_INPUT_REQUIRED` · `STUDIO_LEGACY_HARNESS_RETIRED` · `STUDIO_NATIVE_AGENT_POLICY_INVALID` · `STUDIO_NATIVE_AGENT_POLICY_UNAVAILABLE` · `STUDIO_NATIVE_APPROVAL_DECISION_INVALID` · `STUDIO_NATIVE_BUILTIN_UNAVAILABLE` · `STUDIO_NATIVE_EXACT_NUMBER_UNSUPPORTED` · `STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED` · `STUDIO_NATIVE_PRESENTATION_UNAVAILABLE` · `STUDIO_NATIVE_TURN_REQUIRED` · `STUDIO_PRESET_AGENT_ID_MISSING` · `STUDIO_PRESET_REGISTRY_RETIRED` · `STUDIO_PRESET_RESOURCES_UNAVAILABLE` · `STUDIO_PRESET_RUNTIME_UNSUPPORTED` · `STUDIO_PRESET_SCOPE_CLOSED` · `STUDIO_REQUEST_INVALID` · `STUDIO_RESPONSE_INVALID` · `STUDIO_ROUTE_MISSING` · `STUDIO_SCOPE_DISPOSED`
-
-**NATIVE** (16) — `NATIVE_A2A_ASSERT_CURRENT_REQUIRED` · `NATIVE_A2A_AUTHORIZE_REQUIRED` · `NATIVE_A2A_BINDING_DESCRIPTION_REQUIRED` · `NATIVE_A2A_DISCOVERY_REQUIRED` · `NATIVE_A2A_EXPOSURE_PLAN_REQUIRED` · `NATIVE_A2A_SCOPE_REQUIRED` · `NATIVE_ENGINE_CONFIG_INVALID` · `NATIVE_ENGINE_MODEL_UNAVAILABLE` · `NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE` · `NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE` · `NATIVE_ENGINE_TOOLS_CLOSED` · `NATIVE_ENGINE_UNAVAILABLE` · `NATIVE_ENGINE_VERIFICATION_UNAVAILABLE` · `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` · `NATIVE_EXECUTION_NOT_COMPLETED` · `NATIVE_WEB_AUTHORIZE_REQUIRED`
+**STUDIO** (23) — `STUDIO_AGENT_REQUIRED` · `STUDIO_BUILD_ENGINE_UNSUPPORTED` · `STUDIO_DEPLOYMENT_REQUIRED` · `STUDIO_DSH_A2A_UNAVAILABLE` · `STUDIO_HOST_INCOMPATIBLE` · `STUDIO_IMAGE_ATTACHMENT_UNAVAILABLE` · `STUDIO_INPUT_REQUIRED` · `STUDIO_LEGACY_HARNESS_RETIRED` · `STUDIO_NATIVE_AGENT_POLICY_INVALID` · `STUDIO_NATIVE_AGENT_POLICY_UNAVAILABLE` · `STUDIO_NATIVE_APPROVAL_DECISION_INVALID` · `STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED` · `STUDIO_NATIVE_PRESENTATION_UNAVAILABLE` · `STUDIO_NATIVE_TURN_REQUIRED` · `STUDIO_PRESET_AGENT_ID_MISSING` · `STUDIO_PRESET_REGISTRY_RETIRED` · `STUDIO_PRESET_RESOURCES_UNAVAILABLE` · `STUDIO_PRESET_RUNTIME_UNSUPPORTED` · `STUDIO_PRESET_SCOPE_CLOSED` · `STUDIO_REQUEST_INVALID` · `STUDIO_RESPONSE_INVALID` · `STUDIO_ROUTE_MISSING` · `STUDIO_SCOPE_DISPOSED`
 
 **CLOUD** (15) — `CLOUD_AGENT_DELETED` · `CLOUD_AGENT_ID_INVALID` · `CLOUD_CONFIGURATION_REQUIRED` · `CLOUD_DELETE_UNAVAILABLE` · `CLOUD_EXECUTION_MODE_DENIED` · `CLOUD_EXECUTION_MODE_INVALID` · `CLOUD_EXECUTION_MODE_UNAVAILABLE` · `CLOUD_EXECUTION_MODE_UNSUPPORTED` · `CLOUD_IMAGE_INPUT_UNAVAILABLE` · `CLOUD_RUN_CANCELLED` · `CLOUD_RUN_FAILED` · `CLOUD_STREAM_INCOMPLETE` · `CLOUD_STREAM_INVALID` · `CLOUD_STREAM_ITEM_CHANGED` · `CLOUD_SUBACCOUNT_REQUIRED`
 
 **CODEX** (11) — `CODEX_AGENT_REQUIRED` · `CODEX_MARKETPLACE_PARTIAL` · `CODEX_MODEL_PROVIDER_UNAVAILABLE` · `CODEX_PLUGIN_DETAILS_INVALID` · `CODEX_PLUGIN_INVENTORY_UNAVAILABLE` · `CODEX_PLUGIN_MARKETPLACE_MISSING` · `CODEX_PLUGIN_METADATA_UNAVAILABLE` · `CODEX_PLUGIN_NOT_FOUND` · `CODEX_TOOL_CONVERSION_FAILED` · `CODEX_TOOL_OUTCOME_UNKNOWN` · `CODEX_WORKSPACE_UNAVAILABLE`
 
-**SKILL** (10) — `SKILL_AUTHORIZATION_EXPIRED` · `SKILL_BINDING_INVALID` · `SKILL_DOWNLOAD_INVALID` · `SKILL_DOWNLOAD_URL_INVALID` · `SKILL_DOWNLOAD_URL_MISSING` · `SKILL_LOAD_AUTHORITY_CHANGED` · `SKILL_MANIFEST_MISSING` · `SKILL_PAGE_BUDGET_INVALID` · `SKILL_RUNTIME_DEADLINE` · `SKILL_SERVICE_INVALID_RESPONSE`
+**MODEL** (11) — `MODEL_CATALOG_FAILED` · `MODEL_CONNECTION_NOT_FOUND` · `MODEL_CREDENTIAL_MISSING` · `MODEL_ENDPOINT_INVALID` · `MODEL_NOT_FOUND` · `MODEL_PROBE_INPUT_INVALID` · `MODEL_PROFILE_EXISTS` · `MODEL_PROFILE_INVALID` · `MODEL_ROUTE_COLLISION` · `MODEL_UPSTREAM_ERROR` · `MODEL_URL_INVALID`
+
+**SKILL** (11) — `SKILL_AUTHORIZATION_EXPIRED` · `SKILL_BINDING_INVALID` · `SKILL_DOWNLOAD_INVALID` · `SKILL_DOWNLOAD_URL_INVALID` · `SKILL_DOWNLOAD_URL_MISSING` · `SKILL_LOAD_AUTHORITY_CHANGED` · `SKILL_MANIFEST_MISSING` · `SKILL_PAGE_BUDGET_INVALID` · `SKILL_RUNTIME_DEADLINE` · `SKILL_SCOPE_INVALID` · `SKILL_SERVICE_INVALID_RESPONSE`
+
+**NATIVE** (10) — `NATIVE_ENGINE_CONFIG_INVALID` · `NATIVE_ENGINE_CONTEXT_UNAVAILABLE` · `NATIVE_ENGINE_HOOKS_UNAVAILABLE` · `NATIVE_ENGINE_MODEL_UNAVAILABLE` · `NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE` · `NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE` · `NATIVE_ENGINE_TOOLS_CLOSED` · `NATIVE_ENGINE_UNAVAILABLE` · `NATIVE_ENGINE_VERIFICATION_UNAVAILABLE` · `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE`
 
 **INVALID** (8) — `INVALID_AGENT_ID` · `INVALID_CONVERSATION_INPUT` · `INVALID_FEEDBACK` · `INVALID_JSON` · `INVALID_QUERY` · `INVALID_RESOURCE_CURSOR` · `INVALID_RESOURCE_SOURCE` · `INVALID_SESSION_ID`
 
 **MANAGED** (8) — `MANAGED_HARNESS_RUN_INCOMPLETE` · `MANAGED_HOST_INPUT_CONFLICT` · `MANAGED_RESOURCE_IDENTITY_UNAVAILABLE` · `MANAGED_RESOURCE_INVALID` · `MANAGED_RESOURCE_PERMIT_REQUIRED` · `MANAGED_RUNTIME_DELETE_UNCONFIRMED` · `MANAGED_RUNTIME_MODEL_INVALID` · `MANAGED_RUNTIME_REQUIRED`
 
-**MODEL** (8) — `MODEL_CATALOG_FAILED` · `MODEL_CREDENTIAL_MISSING` · `MODEL_ENDPOINT_INVALID` · `MODEL_NOT_FOUND` · `MODEL_PROFILE_EXISTS` · `MODEL_PROFILE_INVALID` · `MODEL_UPSTREAM_ERROR` · `MODEL_URL_INVALID`
+**RUNTIME** (8) — `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` · `RUNTIME_MODEL_UNAVAILABLE` · `RUNTIME_PROTOCOL_UNSUPPORTED` · `RUNTIME_REQUEST_CONFLICT` · `RUNTIME_REQUEST_HISTORY_UNAVAILABLE` · `RUNTIME_REQUEST_METADATA_UNAVAILABLE` · `RUNTIME_TRANSPORT_CLOSED` · `RUNTIME_UNSUPPORTED`
 
-**DSH** (7) — `DSH_PLUGIN_INDEX_TIMEOUT` · `DSH_PLUGIN_INDEX_UNAVAILABLE` · `DSH_PLUGIN_INDEX_URL_REJECTED` · `DSH_PRESET_COMPOSITION_UNAVAILABLE` · `DSH_PRESET_REGISTRY_UNAVAILABLE` · `DSH_PRESET_ROUTE_UNAVAILABLE` · `DSH_TURN_FAILED`
-
-**RUNTIME** (7) — `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` · `RUNTIME_MODEL_UNAVAILABLE` · `RUNTIME_REQUEST_CONFLICT` · `RUNTIME_REQUEST_HISTORY_UNAVAILABLE` · `RUNTIME_REQUEST_METADATA_UNAVAILABLE` · `RUNTIME_TRANSPORT_CLOSED` · `RUNTIME_UNSUPPORTED`
+**OTHER** (7) — `KSXC` · `KSXC_AGENT_MODEL_REQUIRED` · `KSXC_CALLER_PERMIT_REQUIRED` · `KSXC_CONNECTION_REQUIRED` · `KSXC_HOST_UNAVAILABLE` · `KSXC_TOOL_NOT_APPROVED` · `TRAFFIC_SOURCE_INVALID`
 
 **MCP** (6) — `MCP_BINDING_AMBIGUOUS` · `MCP_CONFIGURATION_REQUIRED` · `MCP_ID_INVALID` · `MCP_NOT_FOUND` · `MCP_RESOURCE_ADAPTER_MISSING` · `MCP_RESOURCE_NOT_BOUND`
 
@@ -148,6 +148,8 @@ Every code by namespace. Search the repo for a code to find where it is thrown.
 
 **CHANNEL** (4) — `CHANNEL_AGENT_UNAVAILABLE` · `CHANNEL_REQUEST_NOT_FOUND` · `CHANNEL_TURN_INCOMPLETE` · `CHANNEL_URL_INVALID`
 
+**DSH** (4) — `DSH_PRESET_COMPOSITION_UNAVAILABLE` · `DSH_PRESET_REGISTRY_UNAVAILABLE` · `DSH_PRESET_ROUTE_UNAVAILABLE` · `DSH_TURN_FAILED`
+
 **HOST** (4) — `HOST_CONNECTION_MISSING` · `HOST_TOOL_OUTCOME_UNAVAILABLE` · `HOST_TOOL_REJECTED` · `HOST_TOOL_RUN_MISMATCH`
 
 **RESPONSES** (4) — `RESPONSES_FROZEN_MODEL_MISMATCH` · `RESPONSES_PREVIOUS_NOT_COMPLETED` · `RESPONSES_PREVIOUS_NOT_FOUND` · `RESPONSES_PROJECTION_NOT_JSON`
@@ -158,9 +160,9 @@ Every code by namespace. Search the repo for a code to find where it is thrown.
 
 **BUILTIN** (3) — `BUILTIN_META_TOOL_FORBIDDEN` · `BUILTIN_SKILL_MANIFEST_EMPTY` · `BUILTIN_SKILL_MANIFEST_MISSING`
 
-**UPSTREAM** (3) — `UPSTREAM_EVENT_TOO_LARGE` · `UPSTREAM_STREAM_ERROR` · `UPSTREAM_STREAM_TRUNCATED`
+**MEMORY** (3) — `MEMORY_BINDING_INVALID` · `MEMORY_PARTITION_VERSION_UNSUPPORTED` · `MEMORY_SUBJECT_REQUIRED`
 
-**A2A** (2) — `A2A_QUESTION_STALE` · `A2A_TOOL_ACTIVITY_UNAVAILABLE`
+**UPSTREAM** (3) — `UPSTREAM_EVENT_TOO_LARGE` · `UPSTREAM_STREAM_ERROR` · `UPSTREAM_STREAM_TRUNCATED`
 
 **AGENT** (2) — `AGENT_NOT_FOUND` · `AGENT_REVISION_INVALID`
 
@@ -170,8 +172,6 @@ Every code by namespace. Search the repo for a code to find where it is thrown.
 
 **DEPLOYMENT** (2) — `DEPLOYMENT_CREATE_INTERRUPTED` · `DEPLOYMENT_UPDATE_INTERRUPTED`
 
-**DISCOVERY** (2) — `DISCOVERY_TIMEOUT` · `DISCOVERY_UNAVAILABLE`
-
 **EVALUATION** (2) — `EVALUATION_TARGET_NOT_FOUND` · `EVALUATION_UNAVAILABLE`
 
 **REQUEST** (2) — `REQUEST_CANCELLED` · `REQUEST_TOO_LARGE`
@@ -180,6 +180,8 @@ Every code by namespace. Search the repo for a code to find where it is thrown.
 
 **STAR** (2) — `STAR_HARNESS_OWNER_REQUIRED` · `STAR_HARNESS_UNSUPPORTED`
 
+**A2A** (1) — `A2A_TOOL_ACTIVITY_UNAVAILABLE`
+
 **BOUND** (1) — `BOUND_TOOL_NOT_FOUND`
 
 **CHANNELS** (1) — `CHANNELS_UNAVAILABLE`
@@ -187,8 +189,6 @@ Every code by namespace. Search the repo for a code to find where it is thrown.
 **GATEWAY** (1) — `gateway/cancelled`
 
 **LOCAL** (1) — `LOCAL_HARNESS_RETIRED`
-
-**MEMORY** (1) — `MEMORY_OUTCOME_UNKNOWN`
 
 **OBSERVABILITY** (1) — `OBSERVABILITY_UNAVAILABLE`
 
@@ -222,7 +222,7 @@ Every code by namespace. Search the repo for a code to find where it is thrown.
 | Wire error definitions | `src/contracts/definitions.mjs` |
 | Runtime codes | `src/runtime-contract.mjs` |
 | Template codes | `src/team-template-contract.mjs` |
-| Catalog codes | `src/dsh-plugin-catalog.mjs` |
+| Plugin market codes | `src/plugin-market.mjs` |
 | Troubleshooting page | `content/docs/help/troubleshooting.mdx` |
 
 Related tests:

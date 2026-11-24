@@ -11,7 +11,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
-import { atomicPrivate, lockUntil, privateDirectory, syncDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { atomicPrivate, lockUntil, privateDirectory, syncDirectory } from './host/private-state.mjs';
 
 const DEFAULT_SCAN_RELATIVES = ['skills', '.agents/skills', '.codex/skills', '.claude/skills'];
 const MAX_DEPTH = 4;

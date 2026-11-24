@@ -12,7 +12,7 @@ import { HARNESS_SERVICE_PRESET_SUFFIX } from './harness-service-preset.mjs';
  * native Session UI while delegating runtime work to Studio. The independent engine owns local Harness turns; DSH-native and Codex
  * retain their own execution owners.
  */
-import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
+import { NATIVE_DSH_TURN_CONTRACT } from './contracts/native-dsh.mjs';
 import { selectedNativeBuildContract } from './build-engine.mjs';
 import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
 import { knowledgeBindings } from './knowledge-tools.mjs';

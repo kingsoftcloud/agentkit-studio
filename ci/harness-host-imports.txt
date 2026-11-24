@@ -1,0 +1,53 @@
+# Existing in-process Harness imports. Remove entries when callers migrate.
+scripts/native-artifact-policy-proof.mjs	node/native/artifact-store node/native/sqlite-store
+scripts/native-automation-proof.mjs	core
+scripts/native-child-approval-restart-proof.mjs	node/native/sqlite-store
+scripts/native-child-rewind-proof.mjs	node/native/sqlite-store
+scripts/native-context-pruning-proof.mjs	core node/native/sqlite-store
+scripts/native-conversation-command-rewind-proof.mjs	core node/native/local-background node/native/sqlite-store
+scripts/native-conversation-fork-proof.mjs	core node/native/sqlite-store
+scripts/native-conversation-rewind-proof.mjs	core node/native/sqlite-store
+scripts/native-conversation-workspace-rewind-proof.mjs	core node/native/sqlite-store
+scripts/native-deadline-policy-proof.mjs	node/native/sqlite-store
+scripts/native-delivery-review-proof.mjs	node/native/sqlite-store
+scripts/native-edit-creation-proof.mjs	core node/native/sqlite-store
+scripts/native-memory-managed-proof.mjs	node/native/memory-store node/native/sqlite-store
+scripts/native-memory-parallel-proof.mjs	node/native/sqlite-store
+scripts/native-memory-proof.mjs	node/native/memory-store node/native/sqlite-store
+scripts/native-plan-mode-proof.mjs	node/native/sqlite-store
+scripts/native-session-workspace-proof.mjs	core node/native/sqlite-store
+scripts/native-thinking-display-proof.mjs	core node/native/sqlite-store
+scripts/native-todos-proof.mjs	core node/native/sqlite-store
+scripts/native-tool-search-proof.mjs	core node/native/sqlite-store
+scripts/native-workspace-repair-proof.mjs	core node/native/sqlite-store
+scripts/prepare-studio-native-web-session.mjs	node/native/assistant-stream
+scripts/verify-a2a-host-decisions.mjs	core
+scripts/verify-a2a-question-wait.mjs	core node/native/a2a-tools node/native/sqlite-store
+scripts/verify-a2a-session-events.mjs	core
+scripts/verify-native-dependencies.mjs	core node node/native/browser-workspace-policy node/native/child-owner node/native/local-output-policy node/native/local-process node/native/local-resource-profile node/native/tool-guidance node/native/workspace-tools
+scripts/verify-native-dsh-browser.mjs	core node/native/artifact-store node/native/browser-workspace-protocol
+scripts/verify-native-dsh-numeric.mjs	core
+scripts/verify-native-dsh-output.mjs	core
+scripts/verify-native-dsh-turn.mjs	ui/host/session-task-events
+scripts/verify-native-owned-recovery.mjs	core
+scripts/verify-native-real-model.mjs	core node/native/model-port node/native/sqlite-store
+scripts/verify-studio-frozen-host.mjs	node/native/engine-server
+scripts/verify-studio-native-a2a-busy-cancel.mjs	node/native/sqlite-store
+scripts/verify-studio-native-a2a-recovery.mjs	core node/native/dsh-turn-ownership node/native/sqlite-store
+scripts/verify-studio-native-background.mjs	core node/native/sqlite-store
+scripts/verify-studio-native-child-a2a-recovery.mjs	core node/native/sqlite-store
+scripts/verify-studio-native-child-write-recovery.mjs	node/native/sqlite-store
+scripts/verify-studio-native-children-web.mjs	node/native/sqlite-store
+scripts/verify-studio-native-children.mjs	node/native/sqlite-store
+scripts/verify-studio-native-e2b.mjs	core node/native/sqlite-store
+scripts/verify-studio-native-harness.mjs	core node/native/artifact-store node/native/dsh-turn-ownership node/native/sqlite-store
+scripts/verify-studio-native-managed-a2a.mjs	core node/native/sqlite-store
+scripts/verify-studio-native-managed-children.mjs	core node/native/sqlite-store
+scripts/verify-studio-native-managed-crash.mjs	core
+scripts/verify-studio-native-management-web.mjs	node/native/sqlite-store
+scripts/verify-studio-native-memory-web.mjs	node/native/memory-candidate node/native/memory-store node/native/sqlite-store
+scripts/verify-studio-native-portable-runtime.mjs	core node/native/dsh-turn-ownership node/native/sqlite-store
+scripts/verify-studio-native-portable.mjs	core node/native/dsh-turn-ownership node/native/sqlite-store
+scripts/verify-studio-native-response-crash.mjs	core node/native/dsh-turn-ownership node/native/sqlite-store
+scripts/verify-studio-native-skill-workflow.mjs	core node/native/dsh-turn-ownership node/native/sqlite-store
+scripts/verify-studio-native-vision.mjs	core node/native/sqlite-store

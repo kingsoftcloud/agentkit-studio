@@ -24,7 +24,8 @@
  *   approval     : { action:'approve' } | { action:'reject' }
  *
  */
-import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../../contracts/native-values.mjs';
+import { parseNativeJson } from '../../contracts/native-json.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 
 const WAIT_CONTRACT = 'agentkit.a2a-question-wait/v1';

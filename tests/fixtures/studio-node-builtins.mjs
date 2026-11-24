@@ -13,6 +13,15 @@ import { DSH_NODE_BUILTIN_NAMES } from '../../src/providers/dsh-node-builtin-cat
 import { sandboxRegistryName } from '../../src/providers/sandbox-code-name.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
+async function executeTool({ agent, callId, name, arguments: args, signal }) {
+  const { results } = await agent.ctx.get('tools').execute({ agent, signal, calls: [{
+    type: 'tool-call', id: callId, name, arguments: typeof args === 'string' ? args : JSON.stringify(args),
+  }] });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].callId, callId);
+  return results[0].result;
+}
+
 export const name = 'studio-node-builtin-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer', 'sessionController'];
 export async function apply(ctx, options) {
@@ -44,7 +53,7 @@ export async function apply(ctx, options) {
   const githubFetch = async (input, init) => {
     assert.equal(previous, null, 'cold original management receipts must not fetch GitHub again');
     const url = new URL(input); assert.ok(['https://api.github.com', 'https://github.com', 'https://codeload.github.com'].includes(url.origin));
-    assert.equal(init.redirect, 'error'); assert.equal(init.method, 'GET'); assert.equal(init.headers.Authorization, undefined);
+    assert.equal(init.redirect, 'manual'); assert.equal(init.method, 'GET'); assert.equal(init.headers.Authorization, undefined);
     init.signal.throwIfAborted(); githubRequests.push(url.pathname + url.search);
     let data;
     if (url.pathname === '/search/repositories') data = { items: [{ full_name: 'packed/repository', html_url: 'https://github.com/packed/repository',
@@ -219,7 +228,7 @@ export async function apply(ctx, options) {
           const beforeMemory = memoryRows();
           for (const saved of row.memory.rows) {
             const original = JSON.parse(saved.request), content = JSON.parse(saved.result).content;
-            const recovered = await agent.ctx.get('tools').execute({ agent, callId: original.owner.identity.callId,
+            const recovered = await executeTool({ agent, callId: original.owner.identity.callId,
               name: original.request.name, arguments: original.request.arguments, signal: new AbortController().signal });
             assert.equal(recovered.isError, false, JSON.stringify(recovered));
             assert.deepEqual(typeof content === 'string' ? recovered.value.result : JSON.parse(recovered.value.result), content);
@@ -227,14 +236,14 @@ export async function apply(ctx, options) {
           assert.deepEqual(memoryRows(), beforeMemory);
           restoredMemory.push({ runtime: row.runtime, unchanged: true });
           const knowledgeBytes = await readFile(row.knowledge.record), knowledgeSaved = JSON.parse(knowledgeBytes);
-          const knowledgeRecovered = await agent.ctx.get('tools').execute({ agent, callId: knowledgeSaved.request.call.callId,
+          const knowledgeRecovered = await executeTool({ agent, callId: knowledgeSaved.request.call.callId,
             name: 'search_knowledge_base', arguments: knowledgeSaved.request.call.arguments, signal: new AbortController().signal });
           assert.equal(knowledgeRecovered.isError, false); assert.equal(knowledgeRecovered.value.result, knowledgeSaved.result.content);
           assert.ok((await readFile(row.knowledge.record)).equals(knowledgeBytes));
           restoredKnowledge.push({ runtime: row.runtime, unchanged: true });
           for (const file of [row.management.installRecord, row.management.bindRecord]) {
             const bytes = await readFile(file), saved = JSON.parse(bytes);
-            const recovered = await agent.ctx.get('tools').execute({ agent, callId: saved.request.call.callId,
+            const recovered = await executeTool({ agent, callId: saved.request.call.callId,
               name: saved.request.call.name, arguments: saved.request.call.arguments, signal: new AbortController().signal });
             assert.equal(recovered.isError, false, JSON.stringify(recovered));
             assert.deepEqual(JSON.parse(recovered.value.result), saved.result.content);
@@ -245,7 +254,7 @@ export async function apply(ctx, options) {
           if (row.browser.enabled) {
             const recordBytes = await readFile(row.browser.record), saved = JSON.parse(recordBytes);
             const image = await readFile(join(workspaceRoot, saved.result.content.screenshot_path));
-            const recovered = await agent.ctx.get('tools').execute({ agent, callId: saved.request.call.callId,
+            const recovered = await executeTool({ agent, callId: saved.request.call.callId,
               name: 'browser_inspect_workspace', arguments: saved.request.call.arguments, signal: new AbortController().signal });
             assert.equal(recovered.isError, false); assert.deepEqual(JSON.parse(recovered.value.result), saved.result.content);
             assert.equal(saved.result.content.title, 'Packed Browser 😀');
@@ -254,7 +263,7 @@ export async function apply(ctx, options) {
             restoredBrowsers.push({ runtime: row.runtime, recordSha256: sha256(recordBytes), imageSha256: sha256(image), unchanged: true });
           }
           const a2aBytes = await readFile(row.a2a.record), a2aRecord = JSON.parse(a2aBytes), remoteBytes = await readFile(row.a2a.remoteRecord);
-          const a2aCold = await agent.ctx.get('tools').execute({ agent, callId: a2aRecord.request.call.callId, name: 'call_a2a_agent',
+          const a2aCold = await executeTool({ agent, callId: a2aRecord.request.call.callId, name: 'call_a2a_agent',
             arguments: a2aRecord.request.call.arguments, signal: new AbortController().signal });
           assert.equal(a2aCold.isError, false); assert.deepEqual(JSON.parse(a2aCold.value.result), a2aRecord.result.content);
           assert.ok((await readFile(row.a2a.record)).equals(a2aBytes)); assert.ok((await readFile(row.a2a.remoteRecord)).equals(remoteBytes));
@@ -265,7 +274,7 @@ export async function apply(ctx, options) {
             const ownerRoot = join(dirname(row.workflows.record), 'sandbox'), owners = await readdir(ownerRoot); assert.equal(owners.length, 1);
             const ownerPath = join(ownerRoot, owners[0], 'owner.json'), ownerBytes = await readFile(ownerPath);
             assert.equal(record.request.call.callId, `workflow-original-${row.runtime}`);
-            const cold = await agent.ctx.get('tools').execute({ agent, callId: record.request.call.callId, name: 'execute_skills',
+            const cold = await executeTool({ agent, callId: record.request.call.callId, name: 'execute_skills',
               arguments: record.request.call.arguments, signal: new AbortController().signal });
             assert.equal(cold.isError, false); assert.deepEqual(JSON.parse(cold.value.result), record.result);
             assert.ok((await readFile(row.workflows.record)).equals(recordBytes)); assert.ok((await readFile(ownerPath)).equals(ownerBytes));
@@ -276,7 +285,7 @@ export async function apply(ctx, options) {
             const bytes = await readFile(row.commands.record), record = JSON.parse(bytes);
             const ownerRoot = join(dirname(dirname(row.commands.record)), 'e2b-sandbox'), names = await readdir(ownerRoot);
             assert.equal(names.length, 1); const ownerPath = join(ownerRoot, names[0], 'owner.json'), ownerBytes = await readFile(ownerPath);
-            const cold = await agent.ctx.get('tools').execute({ agent, callId: record.request.call.callId, name: 'run_command',
+            const cold = await executeTool({ agent, callId: record.request.call.callId, name: 'run_command',
               arguments: record.request.call.arguments, signal: new AbortController().signal });
             assert.equal(cold.isError, false); assert.deepEqual(JSON.parse(cold.value.result), record.result.content);
             assert.ok((await readFile(row.commands.record)).equals(bytes)); assert.ok((await readFile(ownerPath)).equals(ownerBytes));
@@ -285,7 +294,7 @@ export async function apply(ctx, options) {
             const codeBytes = await readFile(row.code.record), code = JSON.parse(codeBytes);
             const codeOwnerRoot = join(dirname(dirname(row.code.record)), 'code-sandbox'), codeNames = await readdir(codeOwnerRoot);
             assert.equal(codeNames.length, 1); const codeOwnerPath = join(codeOwnerRoot, codeNames[0], 'owner.json'), codeOwnerBytes = await readFile(codeOwnerPath);
-            const coldCode = await agent.ctx.get('tools').execute({ agent, callId: code.request.call.callId, name: 'sandbox_run_code',
+            const coldCode = await executeTool({ agent, callId: code.request.call.callId, name: 'sandbox_run_code',
               arguments: code.request.call.arguments, signal: new AbortController().signal });
             assert.equal(coldCode.isError, false); assert.deepEqual(JSON.parse(coldCode.value.result), code.result.content);
             assert.ok((await readFile(row.code.record)).equals(codeBytes)); assert.ok((await readFile(codeOwnerPath)).equals(codeOwnerBytes));
@@ -316,7 +325,7 @@ export async function apply(ctx, options) {
         .filter(name => DSH_NODE_BUILTIN_NAMES.includes(name)).sort();
       assert.deepEqual(builtinNames, [...DSH_NODE_BUILTIN_NAMES].sort());
       const call = async (name, args, signal = new AbortController().signal) => {
-        const result = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name, arguments: args, signal });
+        const result = await executeTool({ agent, callId: `builtin-proof-${++serial}`, name, arguments: args, signal });
         assert.equal(result.isError, false, JSON.stringify(result));
         return JSON.parse(result.value.result);
       };
@@ -355,14 +364,14 @@ export async function apply(ctx, options) {
         const removeSkillDeny = agent.ctx.on('tools/pre-execute', async (exec, next) => exec.name === 'load_skill'
           ? { kind: 'deny', reason: 'Skill read policy proof' } : next());
         try {
-          const deniedSkill = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'load_skill',
+          const deniedSkill = await executeTool({ agent, callId: `builtin-proof-${++serial}`, name: 'load_skill',
             arguments: { skill_name: 'packed-alpha' }, signal: new AbortController().signal });
           assert.equal(deniedSkill.isError, true); assert.equal(skillRequests.length, beforeDenied);
         } finally { removeSkillDeny(); }
         const removeSkillPost = agent.ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'preview_skill'
           ? { kind: 'accept', content: [{ type: 'text', text: 'Host-redacted Skill preview' }] } : next());
         try {
-          const redacted = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'preview_skill',
+          const redacted = await executeTool({ agent, callId: `builtin-proof-${++serial}`, name: 'preview_skill',
             arguments: { skill_name: 'packed-alpha' }, signal: new AbortController().signal });
           assert.equal(redacted.isError, false); assert.deepEqual(redacted.content, [{ type: 'text', text: 'Host-redacted Skill preview' }]);
         } finally { removeSkillPost(); }
@@ -377,7 +386,7 @@ export async function apply(ctx, options) {
         setApprovalPolicy(agent.session, 'ask');
         let workflowApprovals = 0, workflowResult, workflowId;
         const removeWorkflowApproval = agent.ctx.on('approval/request', async () => ++workflowApprovals === 1 ? 'allowed-once' : 'rejected');
-        const invokeWorkflow = () => registry.execute({ agent, callId: workflowId, name: 'execute_skills',
+        const invokeWorkflow = () => executeTool({ agent, callId: workflowId, name: 'execute_skills',
           arguments: workflowArgs, signal: new AbortController().signal });
         try {
           workflowId = `workflow-original-${runtime}`;
@@ -440,7 +449,7 @@ export async function apply(ctx, options) {
         const other = await ctx.sessionController.create({ sessionId: `node-builtins-${runtime}-other`, cwd: workspaceRoot, agentPreset: presetId });
         const second = (await ctx.sessionController.resolveAgent(other.sessionId)).agent;
         setSandboxMode(second.session, 'workspace-write');
-        const unread = await second.ctx.get('tools').execute({ agent: second, callId: `builtin-proof-${++serial}`,
+        const unread = await executeTool({ agent: second, callId: `builtin-proof-${++serial}`,
           name: 'edit_workspace_file', arguments: { path, old_text: 'Reviewed', new_text: 'Wrong session' }, signal: new AbortController().signal });
         assert.equal(unread.isError, false);
         assert.equal(JSON.parse(unread.value.result).ok, false);
@@ -471,7 +480,7 @@ export async function apply(ctx, options) {
         const waiting = new Promise(resolve => { ready = resolve; });
         const removeWaiting = agent.ctx.on('approval/request', () => { ready(); return new Promise(resolve => { release = resolve; }); });
         try {
-          const pending = registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'write_workspace_file',
+          const pending = executeTool({ agent, callId: `builtin-proof-${++serial}`, name: 'write_workspace_file',
             arguments: { path: canceledPath, content: 'Late approval.' }, signal: controller.signal });
           await waiting; controller.abort(); release('allowed-once'); await pending;
           assert.equal(existsSync(join(workspaceRoot, canceledPath)), false);
@@ -533,7 +542,7 @@ export async function apply(ctx, options) {
           };
           const firstOutput = await fullOutput(large, created.sessionId, largeCallId);
           const secondCallId = `builtin-proof-${++serial}`;
-          const secondLarge = await second.ctx.get('tools').execute({ agent: second, callId: secondCallId,
+          const secondLarge = await executeTool({ agent: second, callId: secondCallId,
             name: 'web_fetch', arguments: largeArgs, signal: new AbortController().signal });
           assert.equal(secondLarge.isError, false);
           const otherOutput = await fullOutput(JSON.parse(secondLarge.value.result), other.sessionId, secondCallId);
@@ -544,19 +553,19 @@ export async function apply(ctx, options) {
           for (const gate of ['pre', 'guard']) {
             phases.length = 0; preDeny = gate === 'pre'; guardDeny = gate === 'guard';
             const beforeDeny = networkCalls;
-            const deniedWeb = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
+            const deniedWeb = await executeTool({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
               arguments: { url: `${webOrigin}/forbidden` }, signal: new AbortController().signal });
             assert.equal(deniedWeb.isError, true); assert.equal(networkCalls, beforeDeny);
             assert.equal(phases.includes('around'), false);
           }
           preDeny = false; guardDeny = false; redact = true;
-          const redactedWeb = await registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
+          const redactedWeb = await executeTool({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
             arguments: { url: `${webOrigin}/redacted` }, signal: new AbortController().signal });
           assert.equal(redactedWeb.isError, false);
           assert.deepEqual(redactedWeb.content, [{ type: 'text', text: 'Host-redacted web content' }]);
           redact = false;
           const waiting = new Promise(resolve => { pendingRequest = resolve; }), abort = new AbortController();
-          const canceledWeb = registry.execute({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
+          const canceledWeb = executeTool({ agent, callId: `builtin-proof-${++serial}`, name: 'web_fetch',
             arguments: { url: `${webOrigin}/wait` }, signal: abort.signal });
           await waiting; abort.abort();
           const canceledResult = await canceledWeb;
@@ -596,7 +605,7 @@ export async function apply(ctx, options) {
             const status = await call('sandbox_status', {}); assert.equal(status.backend, 'e2b'); assert.equal(status.isolated, true);
             assert.equal(status.sandbox_phase, 'absent'); commandPhases.length = 0;
             const command = `printf forbidden > ${runtime}-must-not-run-locally`, callId = `command-original-${runtime}`;
-            const invoke = (args = { command }, id = callId) => registry.execute({ agent, callId: id, name: 'run_command',
+            const invoke = (args = { command }, id = callId) => executeTool({ agent, callId: id, name: 'run_command',
               arguments: args, signal: new AbortController().signal });
             const first = await invoke(); assert.equal(first.isError, false); const result = JSON.parse(first.value.result);
             assert.equal(result.ok, false); assert.equal(result.error_type, 'e2b_sandbox_outcome_unknown');
@@ -622,7 +631,7 @@ export async function apply(ctx, options) {
             assert.equal((await invoke({ command }, `command-guard-${runtime}`)).isError, true); commandDeny = false;
             commandRedact = true; const redacted = await invoke(); assert.equal(redacted.isError, false);
             assert.deepEqual(redacted.content, [{ type: 'text', text: 'Host-redacted command output' }]); commandRedact = false;
-            const foreign = await second.ctx.get('tools').execute({ agent: second, callId: `foreign-command-${runtime}`,
+            const foreign = await executeTool({ agent: second, callId: `foreign-command-${runtime}`,
               name: 'read_command_output', arguments: { task_id: result.task_id }, signal: new AbortController().signal });
             assert.equal(JSON.parse(foreign.value.result).ok, false);
             assert.equal((await call('stop_command', { task_id: result.task_id })).ok, false, 'unknown creation is not a granted command');
@@ -643,7 +652,7 @@ export async function apply(ctx, options) {
           commandPhases.length = 0;
           const counter = `${runtime}-command-counter`, command = `printf x >> ${counter}; printf "$PATH:$CI"`;
           const callId = `command-duplicate-${runtime}`;
-          const invoke = (args, id = callId) => registry.execute({ agent, callId: id, name: 'run_command',
+          const invoke = (args, id = callId) => executeTool({ agent, callId: id, name: 'run_command',
             arguments: args, signal: new AbortController().signal });
           const first = await invoke({ command }); assert.equal(first.isError, false);
           const foreground = JSON.parse(first.value.result);
@@ -672,7 +681,7 @@ export async function apply(ctx, options) {
           for (const key of ['runId', 'turnId', 'scope', 'executionFence']) assert.equal(key in facts.request, false);
           const launched = await call('run_command', { command: 'printf background; /bin/sleep 5', background: true });
           assert.equal(launched.ok, true); const taskId = launched.task_id;
-          const foreign = await second.ctx.get('tools').execute({ agent: second, callId: `foreign-command-${runtime}`,
+          const foreign = await executeTool({ agent: second, callId: `foreign-command-${runtime}`,
             name: 'read_command_output', arguments: { task_id: taskId }, signal: new AbortController().signal });
           assert.equal(JSON.parse(foreign.value.result).ok, false);
           assert.equal((await call('stop_command', { task_id: taskId })).ok, true);
@@ -697,7 +706,7 @@ export async function apply(ctx, options) {
         let codeProof;
         setSandboxMode(agent.session, 'workspace-write');
         const snippet = { code: 'printf must-not-run-locally', language: 'bash' }, codeCallId = `code-original-${runtime}`;
-        const invokeCode = () => registry.execute({ agent, callId: codeCallId, name: 'sandbox_run_code', arguments: snippet, signal: new AbortController().signal });
+        const invokeCode = () => executeTool({ agent, callId: codeCallId, name: 'sandbox_run_code', arguments: snippet, signal: new AbortController().signal });
         const codeResult = await invokeCode(); assert.equal(codeResult.isError, false);
         const code = JSON.parse(codeResult.value.result); assert.equal(code.ok, false);
         if (e2bCommands) {
@@ -724,7 +733,7 @@ export async function apply(ctx, options) {
         assert.equal((await call('list_a2a_agents', {})).agents[0].agent_id, a2aSpec.target_agent_id);
         assert.equal((await call('get_a2a_agent_card', { agent: 'research' })).agent.agent_id, a2aSpec.target_agent_id);
         const a2aArgs = { agent: 'research', message: 'Packed remote 😀' }, a2aCallId = 'a2a-original-' + runtime;
-        const invokeA2a = () => registry.execute({ agent, callId: a2aCallId, name: 'call_a2a_agent', arguments: a2aArgs, signal: new AbortController().signal });
+        const invokeA2a = () => executeTool({ agent, callId: a2aCallId, name: 'call_a2a_agent', arguments: a2aArgs, signal: new AbortController().signal });
         const a2aFirst = await invokeA2a(); assert.equal(a2aFirst.isError, false);
         const a2aResult = JSON.parse(a2aFirst.value.result); assert.equal(a2aResult.ok, true, JSON.stringify(a2aResult));
         assert.equal(a2aResult.reply, 'Packed A2A reply 😀'); assert.equal(a2aRequests.length - startA2a, 4);
@@ -767,7 +776,7 @@ export async function apply(ctx, options) {
           assert.equal(disabled.error_type, 'BROWSER_LOCAL_BACKEND_REQUIRED'); browserProof = { enabled: false, disabledUnderE2b: true };
         } else {
           const browserCall = `browser-original-${runtime}`;
-          const inspect = () => registry.execute({ agent, callId: browserCall, name: 'browser_inspect_workspace',
+          const inspect = () => executeTool({ agent, callId: browserCall, name: 'browser_inspect_workspace',
             arguments: browserArgs, signal: new AbortController().signal });
           const first = await inspect(); assert.equal(first.isError, false);
           const value = JSON.parse(first.value.result); assert.equal(value.ok, true, JSON.stringify(value));
@@ -803,7 +812,7 @@ export async function apply(ctx, options) {
         const memoryStart = memoryRequests.length, memoryIds = [];
         for (const [memoryName, memoryArgs] of [['save_memory', { content: 'Packed Memory 😀' }], ['load_memory', { query: 'Packed Memory 😀' }]]) {
           const callId = `builtin-proof-${memoryName}-${runtime}`; memoryIds.push(callId);
-          const invoke = () => registry.execute({ agent, callId, name: memoryName, arguments: memoryArgs, signal: new AbortController().signal });
+          const invoke = () => executeTool({ agent, callId, name: memoryName, arguments: memoryArgs, signal: new AbortController().signal });
           const result = await invoke(); assert.equal(result.isError, false, JSON.stringify(result));
           if (memoryName === 'save_memory') assert.equal(JSON.parse(result.value.result).status, 'persisted');
           else assert.equal(result.value.result, '[1] Packed Memory 😀');
@@ -827,7 +836,7 @@ export async function apply(ctx, options) {
         const memoryProof = { rows: ownedMemoryRows, backend: memoryBackend, actualRequests: expectedMemoryRequests, originalDshOwner: true,
           duplicateSuppressed: true, policyDenied: true, postPolicyPreserved: true };
         const knowledgeId = `builtin-proof-knowledge-${runtime}`, knowledgeArgs = { query: '完整知识查询😀'.repeat(60) };
-        const lookup = () => registry.execute({ agent, callId: knowledgeId, name: 'search_knowledge_base', arguments: knowledgeArgs, signal: new AbortController().signal });
+        const lookup = () => executeTool({ agent, callId: knowledgeId, name: 'search_knowledge_base', arguments: knowledgeArgs, signal: new AbortController().signal });
         const knowledgeStart = knowledgeRequests.length, knowledgeResult = await lookup(); assert.equal(knowledgeResult.isError, false);
         assert.equal(knowledgeResult.value.result, '[1] (来源: 来源文档) Packed Knowledge 😀\n    答案: 实际回答');
         assert.deepEqual(await lookup(), knowledgeResult);
@@ -860,7 +869,7 @@ export async function apply(ctx, options) {
         assert.deepEqual(inspection.candidates[0].risk, { containsScripts: true, scripts: ['scripts/review.SH'],
           networkMarkers: [], requiresReview: true });
         const installArgs = { inspection_token: inspection.inspectionToken, candidate_id: inspection.candidates[0].candidateId };
-        const installId = `builtin-proof-${++serial}`, install = () => registry.execute({ agent, callId: installId, name: 'skill_install',
+        const installId = `builtin-proof-${++serial}`, install = () => executeTool({ agent, callId: installId, name: 'skill_install',
           arguments: installArgs, signal: new AbortController().signal });
         const installedResult = await install(); assert.equal(installedResult.isError, false, JSON.stringify(installedResult));
         const installedSkill = JSON.parse(installedResult.value.result).installed_resource; assert.equal(installedSkill.name, 'packed-github-skill');
@@ -868,7 +877,7 @@ export async function apply(ctx, options) {
         const resource = await rpc('skills/list', {});
         assert.ok(resource.items.some(item => item.resourceId === installedSkill.resourceId));
         const bindArgs = { resource_id: installedSkill.resourceId }, bindId = `builtin-proof-${++serial}`;
-        const bind = () => registry.execute({ agent, callId: bindId, name: 'skill_bind_agent', arguments: bindArgs, signal: new AbortController().signal });
+        const bind = () => executeTool({ agent, callId: bindId, name: 'skill_bind_agent', arguments: bindArgs, signal: new AbortController().signal });
         const boundResult = await bind(); assert.equal(boundResult.isError, false, JSON.stringify(boundResult));
         const boundSkill = JSON.parse(boundResult.value.result); assert.equal(boundSkill.revision, 2); assert.equal(boundSkill.effective_from, 'next_run');
         assert.deepEqual(JSON.parse((await bind()).value.result), boundSkill);

@@ -3,7 +3,7 @@ import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { digest } from './native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { prepareNativeA2AHost } from '../../src/providers/native-a2a-host.mjs';
-import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter } from '../../src/providers/native-a2a-receipt.mjs';
+import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter } from './retired-native/providers/native-a2a-receipt.mjs';
 import { scope, spec } from './native-a2a-internal-peer.mjs';
 
 process.once('message', async ({ root, workspaceRoot, env, action }) => {

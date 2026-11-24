@@ -1,12 +1,12 @@
-import { nativeGoalContract, nativeVerificationRequired, ARTIFACT_VERIFIER_REF } from '../src/providers/native-verification.mjs';
+import { nativeGoalContract, nativeVerificationRequired, ARTIFACT_VERIFIER_REF } from './fixtures/retired-native/providers/native-verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { nativeRunPresentation } from '../src/client/state/native-outcome.mjs';
 import { nativeCapabilitySummary, NATIVE_CAPABILITY_PRESETS } from '../src/client/state/native-capabilities.mjs';
 import { nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
 import { nativeToolDisplay } from '../src/client/dsh/native-tool-view.mjs';
-import { nativePublicTerminalError } from '../src/providers/native-terminal-failure.mjs';
-import { projectNativeKernelEvent } from '../src/providers/native-kernel-events.mjs';
+import { nativePublicTerminalError } from './fixtures/retired-native/providers/native-terminal-failure.mjs';
+import { projectNativeKernelEvent } from './fixtures/retired-native/providers/native-kernel-events.mjs';
 
 test('model errors use validated provenance rather than guessing credentials from a terminal failure', () => {
   const failure = { contract: 'model-failure-diagnostic/v1', protocol: 'openai-chat', phase: 'stream', code: 'usage_conflict', frameIndex: 2 };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeChildRoleDeclarations } from '../src/native-child-declarations.mjs';
+import { nativeChildRoleDeclarations } from './fixtures/retired-native/native-child-declarations.mjs';
 
 test('preset admission preserves omitted budgets and explicit limits instead of freezing defaults before runtime selection', () => {
   const spec = { sub_agents: [{ name: 'reader', instructions: 'Read evidence', tools: [], inherit_skills: false },

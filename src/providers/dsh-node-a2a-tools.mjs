@@ -3,15 +3,44 @@
  * original remote task. Neither unknown receipt permits another SendMessage. */
 import { join } from 'node:path';
 import { readdirSync } from 'node:fs';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { createDshA2aToolPort, nativeA2aTerminalResult, nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { prepareDshA2AHost } from './native-a2a-host.mjs';
 import { commandStateRoot, commandDigest, DshNodeCommandLedger } from './dsh-node-command-ledger.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
 import { a2aTerminal } from './native-a2a-protocol.mjs';
+import { a2aAgentCard, a2aAgentList, a2aTerminalResult } from './studio-a2a-tool-results.mjs';
 
 export const DSH_NODE_A2A_CONTRACT = 'agentkit.dsh-node-a2a-tools/v1';
+const A2A_LOCATOR = 'agentkit.dsh-a2a-tools/v1';
+const agentRef = { type: 'string', description: 'The A2A agent id (a2a-agent-*) or card name.' };
+const definition = (name, description, properties, readOnly) => ({ name, description,
+  parameters: { type: 'object', properties, ...(Object.keys(properties).length ? { required: Object.keys(properties) } : {}), additionalProperties: false },
+  readOnly, concurrentSafe: readOnly, permissions: readOnly ? [] : ['a2a:call'], timeoutMs: readOnly ? 30000 : 90000,
+  contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' });
+const definitions = [
+  definition('list_a2a_agents', 'List remote A2A agents in the configured A2A Space. Returns each agent\'s id, name, description and version. No remote calls are made to the agents themselves — only discovery metadata.', {}, true),
+  definition('get_a2a_agent_card', 'Get the AgentCard of a remote A2A agent by id or name. Accepts the A2AAgentId (a2a-agent-*) or the card name. When not found, returns available_agents and a suggestion.', { agent: agentRef }, true),
+  definition('call_a2a_agent', 'Invoke a managed remote agent and return its reply. The runtime supplies authorization, actual call identity and a fixed target. The model provides only the agent reference and message.',
+    { agent: agentRef, message: { type: 'string', description: 'The message to send to the remote agent.' } }, false),
+];
+const formal = new Map(definitions.map(tool => [tool.name, tool]));
 const errorResult = code => ({ status: 'error', content: { ok: false, error_type: code, executed: false } });
+
+export function dshA2aAccess(port) {
+  return {
+    a2aTaskHistory(request, assertCurrent) {
+      invariant(port, 'DSH_A2A_UNAVAILABLE'); return port.taskHistory(request, assertCurrent);
+    },
+    controlA2aTask(request, authority) {
+      invariant(port, 'DSH_A2A_UNAVAILABLE'); return port.controlTask(request, authority);
+    },
+    observeA2aReceipt(request) {
+      invariant(port, 'DSH_A2A_UNAVAILABLE'); return port.observeOwnedReceipt(request);
+    },
+  };
+}
+
 function abortable(work, signal) {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -23,6 +52,47 @@ function abortable(work, signal) {
   });
 }
 
+async function executeA2a({ owner, spaceId, request, assertCurrent }) {
+  const { signal, call, agentId, agentRevision, buildId, sessionId, operationKey } = request;
+  const { agent, message } = call.arguments;
+  const result = content => ({ status: content.ok ? 'ok' : 'error', content });
+  assertCurrent();
+  if (call.name !== 'call_a2a_agent') {
+    let agents;
+    try { agents = await abortable(() => owner.discovery.list({ spaceId, signal }), signal); }
+    catch {
+      assertCurrent();
+      return result({ ok: false, error_type: 'a2a_discovery_failed', error_message: 'Unable to list A2A agents' });
+    }
+    assertCurrent();
+    return result(call.name === 'list_a2a_agents' ? a2aAgentList(agents, spaceId) : a2aAgentCard(agents, agent));
+  }
+  if (!message.trim()) return result({ ok: false, error_message: 'message is required' });
+
+  let resolved;
+  try { resolved = await abortable(() => owner.invocation.resolve({ agent, message, signal, dshRequest: request }), signal); }
+  catch {
+    signal.throwIfAborted();
+    return result({ ok: false, error_type: 'A2A_INVOCATION_FAILED', error_message: 'Managed A2A invocation failed' });
+  }
+  const target = resolved.spec.target_agent_id;
+  // Resolve derives this spec from Studio's pinned bindings. Recheck the
+  // admitted target before the first operation that can send a message.
+  try { owner.exposurePlan.assertGenericTargetAllowed(target); }
+  catch { return result({ ok: false, error_type: 'A2A_TARGET_NOT_ALLOWED', error_message: 'The resolved target is not allowed by the exposure plan' }); }
+  assertCurrent();
+  const locator = { contract: A2A_LOCATOR, agentId, agentRevision, buildId, sessionId, operationKey, callId: call.callId };
+  let observation;
+  const uncertain = error_message => ({ status: 'uncertain', content: { ok: false, error_type: 'A2A_INVOCATION_UNCERTAIN',
+    error_message, agent: target, executed: true, task_id: observation?.task_id ?? null, operation_locator: locator } });
+  try { observation = await abortable(() => owner.invocation.dispatch({ request: resolved, signal }), signal); }
+  catch { return uncertain('Dispatch failed; the remote call may have been sent'); }
+  try { assertCurrent(); }
+  catch { return uncertain('Lease lost after dispatch; the remote call may have completed'); }
+  if (!a2aTerminal.has(observation.state)) return uncertain(`Invocation is not terminal (state: ${observation.state})`);
+  return a2aTerminalResult(observation, target);
+}
+
 export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
   env = {}, bindings = [], fetchImpl, sessionEvents, isClosed = () => false, signal: hostSignal, assertManagedAuthority } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision >= 1
@@ -31,7 +101,6 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
     && (assertManagedAuthority === undefined || typeof assertManagedAuthority === 'function'), 'dsh_a2a_binding_invalid');
   const prepared = prepareDshA2AHost({ env: { ...env }, bindings: copy(bindings), ...(fetchImpl ? { fetchImpl } : {}),
     ...(sessionEvents ? { sessionEvents } : {}) });
-  const definitions = nativeA2aToolDefinitions(), formal = new Map(definitions.map(definition => [definition.name, definition]));
   const lifetime = new AbortController(), ownerSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
   const state = commandStateRoot(join(stateDir, 'a2a'), workspaceRoot, agentId), sessions = new Map(), owners = new Set();
   // Reopen committed projection delivery at preset startup. No session/model
@@ -94,7 +163,7 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
         const observation = found.result ?? await owner.control.execute({ kind: 'get', commandId: observationId,
           operation_locator: locator, authority, signal: AbortSignal.any([signal, ownerSignal]) });
         check();
-        return a2aTerminal.has(observation.state) ? { result: nativeA2aTerminalResult(observation, found.agent) } : {};
+        return a2aTerminal.has(observation.state) ? { result: a2aTerminalResult(observation, found.agent) } : {};
       } finally {
         if (!readinessOnly) await Promise.allSettled([Promise.resolve().then(() => owner.eventDelivery?.flushSession?.({ raiseOnError: false }))]);
         owner.close(); owners.delete(owner);
@@ -173,9 +242,7 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
             stateRoot: join(ledger.root, 'remote-calls'), assertCurrent });
           owners.add(owner);
           try {
-            const tools = createDshA2aToolPort({ agentId, agentRevision, buildId, sessionId: original.sessionId,
-              spaceId: prepared.spaceId, ...owner, assertCurrent, authorize: async () => { assertCurrent(); return 'allow'; } });
-            const result = await tools.execute(request);
+            const result = await executeA2a({ owner, spaceId: prepared.spaceId, request, assertCurrent });
             // The shared port preserves an uncertain locator when authority was
             // lost after Send. Do not replace that receipt with a pre-effect error.
             if (result.status !== 'uncertain') assertCurrent();

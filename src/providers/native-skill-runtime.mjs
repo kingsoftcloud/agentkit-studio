@@ -2,17 +2,20 @@
  * Native and DSH have distinct owner contracts; a separate fsynced record precedes staging/process dispatch, and
  * the existing process supervisor retains the original command locator. */
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { canonical, copy, invariant, scopeKey, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, privateDirectory, openPrivate, tryLock, syncDirectory, TERMINAL, delay } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
-import { LocalCommandStore } from '@kingsoftcloud/agentkit-harness-node/native/local-background';
-import { buildScriptEnvironment, localControlSettings } from '@kingsoftcloud/agentkit-harness-node/native/local-process';
-import { readSkillWorkflowArtifact, NATIVE_SKILL_WORKFLOW, createNativeSkillWorkflowExecutor } from './native-skill-workflow.mjs';
-import { checkGovernedCommand } from '@kingsoftcloud/agentkit-harness-node/native/local-command-policy';
-import { createNativeSkillEventJournal, nativeSkillEventEvidence, SKILL_EVENT_FILE, SKILL_EVENT_BYTES } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
+import { canonical, copy, invariant, scopeKey } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { atomicPrivate, privateDirectory, openPrivate, tryLock } from '../host/private-state.mjs';
+import { LocalCommandStore } from './studio-local-command/local-background.mjs';
+import { buildScriptEnvironment, localControlSettings } from './studio-local-command/local-process.mjs';
+import { readSkillWorkflowArtifact, createNativeSkillWorkflowExecutor } from './native-skill-workflow.mjs';
+import { checkGovernedCommand } from './studio-local-command/local-command-policy.mjs';
+import { isTerminalCommandStatus, SKILL_EVENT_FILE } from '../contracts/native-dsh.mjs';
+import { createNativeSkillEventJournal, nativeSkillEventEvidence, SKILL_EVENT_BYTES } from './studio-skill-event-journal.mjs';
+import { NATIVE_SKILL_RUNTIME, publishArtifacts, stagePackages } from './studio-skill-runtime-files.mjs';
 
-export const NATIVE_SKILL_RUNTIME = 'agentkit.native-skill-runtime/v1';
 const RECORD_LIMIT = 16 * 1024 ** 2, REQUEST_LIMIT = 2 * 1024 ** 2;
 const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : canonical(value)).digest('hex');
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
@@ -23,23 +26,6 @@ const unknown = (runtimeId, taskId, error = 'skill_runtime_outcome_unknown') => 
   runtime_id: runtimeId, task_id: taskId, error_type: error, exit_code: null,
   instruction: 'Inspect and reconcile this original runtime; do not launch it again.' });
 
-export function nativeSkillRuntimeSettings(env = {}) {
-  const value = env.KSADK_SKILL_RUNTIME_BACKEND ?? env.KSADK_SANDBOX_BACKEND
-    ?? (env.KSADK_SANDBOX_TEMPLATE_ID || env.KSADK_SKILL_RUNTIME_TEMPLATE_ID ? 'e2b' : 'disabled');
-  invariant(typeof value === 'string', 'SKILL_RUNTIME_BACKEND_INVALID');
-  const backend = value.trim().toLowerCase();
-  invariant(['', 'disabled', 'none', 'off', 'local_process', 'e2b'].includes(backend), 'SKILL_RUNTIME_BACKEND_INVALID');
-  const timeout = env.KSADK_SKILL_RUNTIME_TIMEOUT ?? '900';
-  invariant(typeof timeout === 'string' && /^\d+$/u.test(timeout) && Number.isSafeInteger(Number(timeout))
-    && Number(timeout) >= 1 && Number(timeout) <= 900, 'SKILL_RUNTIME_TIMEOUT_INVALID');
-  invariant(env.KSADK_SKILL_PROJECT_NAME === undefined || typeof env.KSADK_SKILL_PROJECT_NAME === 'string', 'SKILL_RUNTIME_PROJECT_INVALID');
-  invariant(env.KSADK_SKILL_ARTIFACT_PROJECT === undefined || typeof env.KSADK_SKILL_ARTIFACT_PROJECT === 'string', 'SKILL_RUNTIME_PROJECT_INVALID');
-  return Object.freeze({ contract: NATIVE_SKILL_RUNTIME, workflowContract: NATIVE_SKILL_WORKFLOW,
-    backend: backend === 'local_process' ? backend : backend === 'e2b' ? 'e2b' : 'disabled',
-    enabled: ['local_process', 'e2b'].includes(backend), isolated: backend === 'e2b', timeoutSeconds: Number(timeout),
-    projectName: env.KSADK_SKILL_PROJECT_NAME || env.KSADK_SKILL_ARTIFACT_PROJECT || 'ksadk-artifact',
-    environmentBindingDigest: hash(buildScriptEnvironment(env)) });
-}
 function readJson(path, max = RECORD_LIMIT) {
   const fd = openPrivate(path, constants.O_RDONLY);
   try { invariant(fstatSync(fd).size <= max, 'SKILL_RUNTIME_RECORD_TOO_LARGE'); return parseNativeJson(readFileSync(fd, 'utf8')); }
@@ -50,74 +36,6 @@ function saveRecord(path, record) {
   invariant(Buffer.byteLength(serialized) <= RECORD_LIMIT, 'SKILL_RUNTIME_RECORD_TOO_LARGE');
   atomicPrivate(path, serialized);
 }
-// Trusted Host helpers shared by local and remote runtimes. Neither is a model
-// tool; both require the original runtime's synchronous authority guard.
-export function stagePackages(packages, root, guard) {
-  invariant(Array.isArray(packages) && packages.length <= 100, 'SKILL_RUNTIME_PACKAGES_INVALID');
-  let count = 0, total = 0;
-  return packages.map((pkg, index) => {
-    invariant(pkg && typeof pkg.name === 'string' && pkg.name && typeof pkg.body === 'string' && typeof pkg.rootDir === 'string', 'SKILL_RUNTIME_PACKAGE_INVALID');
-    guard(); privateDirectory(root, true);
-    const source = resolve(pkg.rootDir), destination = join(root, String(index)); privateDirectory(destination, true);
-    const manifest = [];
-    function walk(from, to, depth) {
-      invariant(depth <= 32, 'SKILL_RUNTIME_PACKAGE_DEPTH'); guard();
-      // readSkillWorkflowArtifact checks every ancestor for each file. Empty
-      // directories also reject links before enumeration.
-      for (let part = from;; part = dirname(part)) {
-        const stat = lstatSync(part); invariant(stat.isDirectory() && !stat.isSymbolicLink(), 'SKILL_RUNTIME_PACKAGE_SYMLINK');
-        if (part === dirname(part)) break;
-      }
-      const dir = opendirSync(from);
-      try {
-        for (;;) {
-          const entry = dir.readSync(); if (!entry) break;
-          invariant(++count <= 4000 && !entry.isSymbolicLink(), 'SKILL_RUNTIME_PACKAGE_ENTRIES'); guard();
-          const input = join(from, entry.name), output = join(to, entry.name);
-          if (entry.isDirectory()) { privateDirectory(output, true); walk(input, output, depth + 1); }
-          else {
-            invariant(entry.isFile(), 'SKILL_RUNTIME_PACKAGE_FILE_INVALID');
-            const item = readSkillWorkflowArtifact(input, source, 50 * 1024 ** 2 - total);
-            invariant(!item.truncated, 'SKILL_RUNTIME_PACKAGE_SIZE'); total += item.size;
-            const executable = lstatSync(input).mode & 0o111;
-            guard(); const fd = openSync(output, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, executable ? 0o700 : 0o600);
-            try { writeFileSync(fd, item.bytes); fsyncSync(fd); } finally { closeSync(fd); }
-            manifest.push({ path: relative(source, input), sha256: hash(item.bytes), executable: Boolean(executable) });
-          }
-        }
-      } finally { dir.closeSync(); }
-      syncDirectory(to);
-    }
-    walk(source, destination, 0); guard();
-    return { ...copy(pkg), rootDir: destination, stagedManifest: manifest };
-  });
-}
-export function publishArtifacts(result, workDir, workspace, runtimeId, guard) {
-  const paths = [...new Set([...(result.artifacts ?? []), ...(result.output_files ?? [])])];
-  invariant(paths.length <= 500, 'SKILL_RUNTIME_ARTIFACT_COUNT');
-  if (!paths.length) return { ...result, artifacts: [], output_files: [], artifact_metadata: [] };
-  const target = join(workspace, '.agentkit', 'skill-results', hash(runtimeId));
-  function ensure(path) {
-    if (path === workspace) return;
-    invariant(inside(path, workspace), 'SKILL_RUNTIME_ARTIFACT_PATH'); ensure(dirname(path)); guard();
-    if (!existsSync(path)) { mkdirSync(path, { mode: 0o700 }); syncDirectory(dirname(path)); }
-    invariant(lstatSync(path).isDirectory() && !lstatSync(path).isSymbolicLink(), 'SKILL_RUNTIME_ARTIFACT_PATH');
-  }
-  ensure(target); let total = 0;
-  const mapping = new Map(), metadata = [];
-  for (let i = 0; i < paths.length; i++) {
-    guard(); const item = readSkillWorkflowArtifact(paths[i], workDir, 50 * 1024 ** 2 - total);
-    invariant(!item.truncated, 'SKILL_RUNTIME_ARTIFACT_SIZE'); total += item.size;
-    const filename = `${i}-${basename(item.path)}`, output = join(target, filename); ensure(target); guard();
-    const fd = openSync(output, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
-    try { writeFileSync(fd, item.bytes); fsyncSync(fd); } finally { closeSync(fd); }
-    syncDirectory(target); guard(); mapping.set(paths[i], output);
-    metadata.push({ path: output, sha256: hash(item.bytes), size_bytes: item.size, source_path: relative(workDir, item.path) });
-  }
-  return { ...result, artifacts: paths.map(path => mapping.get(path)),
-    output_files: (result.output_files ?? []).map(path => mapping.get(path)), artifact_metadata: metadata };
-}
-
 export function createNativeLocalSkillRuntime(options = {}) {
   scopeKey(options.scope); const scope = copy(options.scope), sessionId = options.sessionId;
   return createLocalSkillRuntime({ ...options, owner: { contract: NATIVE_SKILL_RUNTIME, prefix: 'local-skill', fields: { scope },
@@ -238,7 +156,7 @@ function createLocalSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, b
           let observed;
           try {
             const until = performance.now() + timeoutMs + 15000;
-            while (!TERMINAL.has((observed = handle.readOutput()).status)) { check(); invariant(performance.now() < until, 'SKILL_RUNTIME_DEADLINE'); await delay(20); }
+            while (!isTerminalCommandStatus((observed = handle.readOutput()).status)) { check(); invariant(performance.now() < until, 'SKILL_RUNTIME_DEADLINE'); await delay(20); }
             check(); observed = await handle.wait({ timeoutMs: 100 }); check();
           } catch (error) { cancel(); throw error; }
           finally { signal.removeEventListener('abort', cancel); }

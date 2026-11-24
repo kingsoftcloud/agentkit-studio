@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { MemoryRunStore, NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { scope, fixture, digest } from './fixtures/native-core.mjs';

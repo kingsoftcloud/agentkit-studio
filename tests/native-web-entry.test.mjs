@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { writtenNativeWebEntry } from '../src/providers/native-web-entry.mjs';
+import { writtenNativeWebEntry } from './fixtures/retired-native/providers/native-web-entry.mjs';
 import { DELIVERY_SCOPE_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 function workspace(t) {
   const directory = mkdtempSync(join(tmpdir(), 'native-web-entry-')), root = join(directory, 'workspace'); mkdirSync(root);

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createNativeSkillTools } from '@kingsoftcloud/agentkit-harness-node/native/skill-tools';
-import { createStudioNativeSkills } from '../src/providers/native-dsh-skills.mjs';
+import { createStudioNativeSkills } from './fixtures/retired-native/providers/native-dsh-skills.mjs';
 
 const SCOPE = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };
 const IDENTITY = { scope: SCOPE, runId: 'r1', sessionId: 's1', turnId: 't1', buildId: 'b1', parentRunId: null, taskChainId: 'c1', operationKey: 'op1', executionFence: 1 };

@@ -3,7 +3,7 @@
  *  isolation, and automatic timer-triggered ticks. Not a migration proof. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeWaitRecoveryWorker } from '../src/host/services/native-wait-recovery-worker.mjs';
+import { createNativeWaitRecoveryWorker } from './fixtures/retired-native/host/services/native-wait-recovery-worker.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };

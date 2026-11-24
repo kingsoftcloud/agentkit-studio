@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeDurableApproval, HOST_PREFLIGHT_DEFER, NATIVE_DURABLE_APPROVAL } from '../src/providers/native-durable-approval.mjs';
+import { createNativeDurableApproval, HOST_PREFLIGHT_DEFER, NATIVE_DURABLE_APPROVAL } from './fixtures/retired-native/providers/native-durable-approval.mjs';
 
 function fixture() {
   const agent = { session: { id: 's' } }, signal = new AbortController().signal;

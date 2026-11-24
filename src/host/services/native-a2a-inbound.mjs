@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../../contracts/native-values.mjs';
 import { createA2aInboundServer } from '../../providers/native-a2a-inbound-server.mjs';
 
 /** Explicit trusted Host composition. No workspace/preset metadata, ordinary

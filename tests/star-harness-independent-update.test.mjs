@@ -11,6 +11,9 @@ import { createStarHarnessManager } from '../src/host/services/star-harness.mjs'
 import { createNativeEngineRuntime, createHarnessServiceModelAdapter } from '../src/providers/native-engine-runtime.mjs';
 import { starHarnessClientResponse } from '../src/host/routes/star-harness-client.mjs';
 import { loadActiveStarHarnessUI, refreshStarHarnessUI, watchStarHarnessUI } from '../src/client/dsh/star-harness-ui.mjs';
+import { ENGINE_TOOL_CATALOG, ENGINE_TOOL_CATALOG_FILE } from '../src/contracts/engine-tool-catalog.mjs';
+import { createResourceRoutes } from '../src/host/routes/resources.mjs';
+import { starHarnessProofFixture } from './fixtures/star-harness-proof.mjs';
 
 test('loads the new signed module if the active release changes during an import', async () => {
   const old = { version: '0.0.29', sha256: '1'.repeat(64) };
@@ -52,7 +55,7 @@ test('an automatic model stays pinned during a lease and cutover leaves one work
     start: async ({ profile, stateDir }) => {
       assert.equal(active.size, 0, 'another worker still owns this state directory');
       if (failNext && profile.id === next.id) throw Error('new worker rejected');
-      const worker = { model: profile.modelName, stateDir, alive: true, stop: async () => {
+      const worker = { model: profile.modelName, contextWindow: profile.contextWindow, stateDir, alive: true, stop: async () => {
         worker.alive = false;
         active.delete(worker);
       } };
@@ -83,6 +86,20 @@ test('an automatic model stays pinned during a lease and cutover leaves one work
     await manager.bind(workspace, 'old');
     assert.equal(manager.route(workspace).modelSelection.model, 'wide');
     assert.deepEqual(manager.summaryProfile(workspace, 'small'), profiles[1]);
+    const explicit = await manager.acquire(workspace);
+    profiles = [{ ...profiles[0], contextWindow: 192000 }, profiles[1]];
+    manager.refreshModelProfiles(profiles);
+    assert.deepEqual(manager.modelInfo('wide'), { images: false, contextWindow: old.contextWindow });
+    const pinned = await manager.acquire(workspace);
+    assert.equal(pinned.connection, explicit.connection);
+    pinned.release();
+    explicit.release();
+    assert.deepEqual(manager.modelInfo('wide'), { images: false, contextWindow: 192000 });
+    const refreshed = await manager.acquire(workspace);
+    assert.equal(refreshed.connection.contextWindow, 192000);
+    assert.equal(refreshed.connection.stateDir, explicit.connection.stateDir);
+    assert.equal(explicit.connection.alive, false);
+    refreshed.release();
     failNext = true;
     await assert.rejects(manager.bind(workspace, 'new'), /new worker rejected/);
     assert.equal([...active][0].model, 'wide');
@@ -128,11 +145,9 @@ test('stale explicit bindings do not hide the minimum context capacity of workin
   assert.deepEqual(await runtime.serviceModelInfo('wide'), { images: false });
 });
 
-const oldVersion = '0.0.26';
-const newVersion = '0.0.27';
+const oldVersion = '9.0.26';
+const newVersion = '9.0.27';
 const sha256 = data => createHash('sha256').update(data).digest('hex');
-const sri = 'sha512-' + createHash('sha512').update('fixture').digest('base64');
-const pins = { schemaVersion: 'agentkit.native-registry-pins/v2', packages: {}, dependencyPackages: {} };
 
 function signedFixture(version, change = () => {}) {
   const ui = 'export const version=' + JSON.stringify(version);
@@ -141,24 +156,16 @@ function signedFixture(version, change = () => {}) {
       dependencies: { [STAR_HARNESS_CORE]: version },
     }) }),
     ...(name === STAR_HARNESS_UI ? { [STAR_HARNESS_CLIENT_FILE]: ui } : {}),
+    ...(name === STAR_HARNESS_PACKAGE && version === newVersion ? {
+      [ENGINE_TOOL_CATALOG_FILE]: JSON.stringify({ schemaVersion: ENGINE_TOOL_CATALOG, version,
+        defaultTools: ['fixture_builtin'], childWorkspaceTools: ['fixture_builtin'], supportedCommandPlatforms: [],
+        tools: [{ name: 'fixture_builtin', description: 'Verified catalog fixture.',
+          parameters: { type: 'object', properties: {} }, readOnly: true, timeoutMs: 1000,
+          permissions: [], availability: 'always' }] }),
+    } : {}),
   }]));
-  const manifest = {
-    schemaVersion: 'agentkit.native-packages/v1', sourceCommit: 'c'.repeat(40),
-    studio: { engineProtocol: 'agentkit.engine/v1', uiContract: STAR_HARNESS_UI_CONTRACT, uiSha256: sha256(ui) },
-    packages: Object.entries(files).map(([name, rows]) => ({
-      name, version, integrity: sri, fileHashes: Object.fromEntries(Object.entries(rows).map(([path, data]) => [path, sha256(data)])),
-    })), dependencyPackages: {},
-  };
-  change(manifest);
-  const bytes = Buffer.from(JSON.stringify(manifest));
-  const statement = {
-    _type: 'https://in-toto.io/Statement/v1', predicateType: 'https://slsa.dev/provenance/v1',
-    subject: [{ name: 'manifest.json', digest: { sha256: sha256(bytes) } }],
-  };
-  const proof = { manifest: bytes.toString('base64'), bundle: { dsseEnvelope: {
-    payloadType: 'application/vnd.in-toto+json', payload: Buffer.from(JSON.stringify(statement)).toString('base64'),
-  } } };
-  return { proof, files, ui, sha256: manifest.studio.uiSha256 };
+  const proof = starHarnessProofFixture(version, files, { change });
+  return { proof, files, ui, sha256: sha256(ui) };
 }
 
 test('the provenance policy binds the exact workflow, version and manifest bytes', async () => {
@@ -220,7 +227,7 @@ test('one release switches verified engine and UI together, and a failed candida
     cpSync(files[version], 'node_modules', {recursive:true});
   `;
   const makeReleases = () => createStarHarnessReleases({
-    directory: releasesDirectory, pins, fetchImpl, verifySignature: async (_bundle, options) => {
+    directory: releasesDirectory, fetchImpl, verifySignature: async (_bundle, options) => {
       if (offline) assert.equal(options.tufForceCache, true);
     },
     packageManager: { command: process.execPath, args: ['--input-type=module', '-e', command, '--'] },
@@ -247,6 +254,7 @@ test('one release switches verified engine and UI together, and a failed candida
   await manager.install(oldVersion);
   await manager.setEnabled(true);
   assert.equal(manager.clientAsset.version, oldVersion);
+  assert.equal(manager.toolCatalog, null);
   const old = await manager.acquire(workspace);
   assert.equal(old.connection.version, oldVersion);
   old.release();
@@ -256,6 +264,7 @@ test('one release switches verified engine and UI together, and a failed candida
   failedVersion = newVersion;
   await assert.rejects(manager.install(newVersion), /candidate refused/);
   assert.equal(manager.clientAsset.version, oldVersion);
+  assert.equal(manager.toolCatalog, null);
   assert.equal((await manager.status()).version, oldVersion);
   assert.deepEqual(starts, [oldVersion, newVersion, oldVersion]);
 
@@ -265,6 +274,12 @@ test('one release switches verified engine and UI together, and a failed candida
   let status = await manager.status();
   assert.deepEqual(status.clientUI, { version: newVersion, sha256: fixtures[newVersion].sha256 });
   assert.equal(status.previousVersion, oldVersion);
+  assert.equal(manager.toolCatalog.version, newVersion);
+  const resources = createResourceRoutes({ starHarness: manager,
+    serverClientPromise: Promise.resolve({ listCatalogResources: async () => ({ items: [] }) }) });
+  const list = await resources('resources/list', { kind: 'tool', runtimeType: 'harness' });
+  assert.deepEqual(list.value.items.map(item => item.resourceId), ['fixture_builtin']);
+  assert.equal(list.value.items[0].contract.childWorkspace, true);
   let reads = 0;
   const active = await loadActiveStarHarnessUI({
     fetchImpl: async (url, options) => {
@@ -309,9 +324,17 @@ test('one release switches verified engine and UI together, and a failed candida
   manager = makeManager(makeReleases());
   await manager.restoreClientAsset();
   assert.equal(manager.clientAsset.version, newVersion);
+  assert.equal(manager.toolCatalog.version, newVersion);
+  const catalogFile = join(releasesDirectory, newVersion, 'node_modules', STAR_HARNESS_PACKAGE, ENGINE_TOOL_CATALOG_FILE);
+  await writeFile(catalogFile, '{}');
+  await assert.rejects(manager.restoreClientAsset(), { code: 'STAR_HARNESS_RELEASE_INVALID' });
+  assert.equal(manager.toolCatalog, null);
+  await writeFile(catalogFile, fixtures[newVersion].files[STAR_HARNESS_PACKAGE][ENGINE_TOOL_CATALOG_FILE]);
+  await manager.restoreClientAsset();
   await manager.install(oldVersion);
   status = await manager.status();
   assert.equal(status.version, oldVersion);
+  assert.equal(manager.toolCatalog, null);
   assert.equal(status.clientUI.sha256, fixtures[oldVersion].sha256);
   assert.equal(starHarnessClientResponse(new Request('http://localhost/?sha256=' + fixtures[newVersion].sha256), manager.clientAsset).status, 404);
 
@@ -322,4 +345,15 @@ test('one release switches verified engine and UI together, and a failed candida
     provider: 'Harness', id: 'deepseek-flash', name: 'deepseek-flash', modalities: ['text', 'image'],
     context: { contextWindow: 1_048_576 },
   });
+
+  // An installation from a previous Host with no release proof is repairable
+  // through the current signed release and cannot become a rollback target.
+  await rm(join(releasesDirectory, oldVersion, '.studio-release-proof.json'));
+  await manager.close();
+  manager = makeManager(makeReleases());
+  await assert.rejects(manager.restoreClientAsset(), { code: 'STAR_HARNESS_RELEASE_INVALID' });
+  assert.equal((await manager.status()).repairNeeded, true);
+  await manager.install(newVersion);
+  assert.equal((await manager.status()).previousVersion, null);
+  assert.equal(manager.clientAsset.version, newVersion);
 });

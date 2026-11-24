@@ -6,7 +6,7 @@
  * cleanup; the command store owns per-operation receipts and recovery claims.
  * No command replay, Python process, or environment-selected fallback.
  */
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { createHash } from 'node:crypto';
 
 export const NATIVE_E2B_SDK_TRANSPORT = 'agentkit.native-e2b-sdk-transport/v1';

@@ -21,7 +21,7 @@
  * the lifetime and waits for inFlight to converge before returning; a late
  * callback result after close never writes the registry.
  */
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../../contracts/native-values.mjs';
 
 const DISPATCH_REASONS = new Set([
   'already_notified', 'source_canceled', 'budget_exhausted', 'task_not_found',

@@ -4,8 +4,8 @@ import { createHash } from 'node:crypto';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 import { OWNED_COMMAND_OUTPUT_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/owned-command';
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
-import { createStudioNativeCommandOutput } from '../src/host/services/native-command-output.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
+import { createStudioNativeCommandOutput } from './fixtures/retired-native/host/services/native-command-output.mjs';
 import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 
 const scope = { tenantId: 'local', workspaceId: 'w', userId: 'local-user', agentId: 'a' };

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { NativeKernel, MemoryRunStore, canonical, configure, emptyUsage, reduceVerification, DELIVERY_SCOPE_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeVerification, nativeGoalContract } from '../src/providers/native-verification.mjs';
+import { createNativeVerification, nativeGoalContract } from './fixtures/retired-native/providers/native-verification.mjs';
 
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };
 const digest = value => createHash('sha256').update(canonical(value)).digest('hex');

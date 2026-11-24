@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
 import { createRuntimeResponsesStream } from './runtime-responses-stream.mjs';
-import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
+import { redactDiagnosticText } from './diagnostic-text.mjs';
 import { HOSTED_HARNESS_VIEW_PATH } from './harness-view-presentation.mjs';
 import { ENGINE_VIEW_HEADERS } from './host/routes/native-engine-view.mjs';
 import { bindBusinessInvocation, runWithBusinessInvocation } from './providers/business-invocation-context.mjs';

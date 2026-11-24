@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
+import { createStudioManagedNativeBinding } from './fixtures/retired-native/host/services/native-managed-binding.mjs';
 import { MemoryRunStore } from '@kingsoftcloud/agentkit-harness-core';
 import { command, target } from './fixtures/native-managed-kernel.mjs';
 

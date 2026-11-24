@@ -3,8 +3,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
-import { atomicPrivate, privateDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { canonical, copy, invariant } from './contracts/native-values.mjs';
+import { atomicPrivate, privateDirectory } from './host/private-state.mjs';
 import { commandStateRoot } from './providers/dsh-node-command-ledger.mjs';
 import { createSkillInspectionStore, MAX_SKILL_CANDIDATES } from './skill-inspection-store.mjs';
 

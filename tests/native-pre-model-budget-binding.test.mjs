@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 const description = { protocol: 'openai-chat', modelName: 'fixture', parameters: {}, contextWindow: 128000, maxOutputTokens: 8192 };
 
 test('new admissions pin pre-model budgeting without changing model capacity or restored policy defaults', () => {

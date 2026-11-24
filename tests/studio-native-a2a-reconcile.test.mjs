@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { readNativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
 import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';

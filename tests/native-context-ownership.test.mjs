@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NATIVE_HOST_CONTEXT_OWNERSHIP as policy, NATIVE_EXECUTION_CONTEXT_OWNERSHIP,
   NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../src/providers/native-context-ownership.mjs';
-import { nativeRecoveryBinding, readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding, readNativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 import { digest, scope } from './fixtures/native-core.mjs';
 
 const user = (id, kind, content) => ({ id, role: 'user', source: { kind }, content: [{ type: 'text', text: content }] });

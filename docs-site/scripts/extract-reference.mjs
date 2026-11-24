@@ -25,7 +25,7 @@
  * | `src/runtime-contract.mjs`                | runtime/entity contract             |
  * | `src/team-template-contract.mjs`          | team template contract              |
  * | `src/product.json` + 3 manifests          | configuration keys                  |
- * | `src/dsh-plugin-catalog.mjs`              | plugin catalog schema + curated set |
+ * | `assets/plugin-market/index.json`         | bundled DSH plugin index            |
  *
  * Values that are secrets, private hosts or internal model code names are
  * redacted at render time, never at extraction time, so the extractor stays a
@@ -456,13 +456,6 @@ const ENV_SECRET =
 const ENV_PLATFORM =
   /^(?:AGENTENGINE_|AGENTKIT_RUNTIME_|AGENTKIT_BUNDLE_|AGENTKIT_DEPLOYMENT_|AGENTKIT_USER_HOME|AGENTKIT_STUDIO_DESKTOP_|AGENTKIT_STUDIO_DSH_|AGENTKIT_STUDIO_NATIVE_|AGENTKIT_STUDIO_BUNDLE_DIR|AGENTKIT_STUDIO_DEPLOYMENT_TYPE|AGENTKIT_STUDIO_WORKSPACE|AGENTKIT_ENGINE_SERVICE_|OTEL_|CLOUD_MONITOR_|KSYUN_|KS3_|DOWNLOAD_PROD_|STUDIO_DOWNLOAD_PROD_|DSH_OTEL_|DSH_OBSERVABILITY_|KSADK_)/;
 
-/** Names whose tier the prefix heuristic gets wrong: an operator-supplied
- * plugin index is configuration, not a platform-injected identity. */
-const ENV_TIER_OVERRIDE = {
-  AGENTKIT_STUDIO_DSH_PLUGIN_INDEX: "configurable",
-  DSH_PLUGIN_INDEX_URL: "configurable",
-};
-
 const ENV_TIERS = {
   configurable: ["可配置", "Configurable"],
   platform: ["平台注入", "Platform-injected"],
@@ -548,7 +541,6 @@ function extractEnvironment() {
     name: entry.name,
     namespace: envNamespace(entry.name),
     tier:
-      ENV_TIER_OVERRIDE[entry.name] ??
       (ENV_SECRET.test(entry.name)
         ? "forbidden"
         : ENV_PLATFORM.test(entry.name)
@@ -1079,190 +1071,20 @@ function extractConfiguration() {
 }
 
 // ---------------------------------------------------------------------------
-// 10. Plugin catalog — src/dsh-plugin-catalog.mjs + src/dsh-plugin-index.mjs
+// 10. Plugin catalog — bundled index and official Host source
 // ---------------------------------------------------------------------------
 
 async function extractPluginCatalog() {
-  const catalog = await import(
-    pathToFileURL(abs("src/dsh-plugin-catalog.mjs")).href
+  const file = "assets/plugin-market/index.json";
+  const document = JSON.parse(read(file));
+  const { PLUGIN_MARKET_INDEX_PATH } = await import(
+    pathToFileURL(abs("src/plugin-market.mjs")).href
   );
-  const file = "src/dsh-plugin-catalog.mjs";
-  const text = read(file);
   return {
     file,
-    indexFile: "src/dsh-plugin-index.mjs",
-    schemaVersion: catalog.DSH_PLUGIN_CATALOG_SCHEMA_VERSION,
-    indexEnv: catalog.DSH_PLUGIN_INDEX_ENV,
-    indexAliases: [...catalog.DSH_PLUGIN_INDEX_ENV_ALIASES],
-    maxEntries: Number(/MAX_ENTRIES\s*=\s*(\d+)/.exec(text)[1]),
-    curated: catalog.dshCuratedEntries().map((entry) => ({
-      ...entry,
-      description: entry.description,
-    })),
-    fields: [
-      {
-        name: "id",
-        type: "string",
-        limit: "120",
-        required: true,
-        note: [
-          "插件包名，同时作为去重键。",
-          "Package name; also the dedupe key.",
-        ],
-      },
-      {
-        name: "installSpec",
-        type: "string",
-        limit: "140",
-        required: true,
-        note: ["安装规格，缺省等于 `id`。", "Install spec; defaults to `id`."],
-      },
-      {
-        name: "displayName",
-        type: "string",
-        limit: "80",
-        required: false,
-        note: [
-          "市场行标题，缺省等于 `id`。",
-          "Market row title; defaults to `id`.",
-        ],
-      },
-      {
-        name: "description",
-        type: "string",
-        limit: "400",
-        required: false,
-        note: ["一行说明，超长截断。", "One-line summary, truncated."],
-      },
-      {
-        name: "category",
-        type: "string",
-        limit: "24",
-        required: false,
-        note: ["分组，缺省 `其他`。", "Grouping; defaults to `其他`."],
-      },
-      {
-        name: "tags",
-        type: "string[]",
-        limit: "8 × 24",
-        required: false,
-        note: ["去重后截断。", "Deduped then truncated."],
-      },
-      {
-        name: "featured",
-        type: "boolean",
-        limit: "—",
-        required: false,
-        note: ["仅 `true` 生效。", "Only `true` counts."],
-      },
-      {
-        name: "experimental",
-        type: "boolean",
-        limit: "—",
-        required: false,
-        note: ["渲染 `beta` 徽章。", "Renders the `beta` badge."],
-      },
-      {
-        name: "capabilities",
-        type: "string[]",
-        limit: "12 × 40",
-        required: false,
-        note: ["能力标签。", "Capability labels."],
-      },
-      {
-        name: "homepage",
-        type: "https URL",
-        limit: "400",
-        required: false,
-        note: ["非 HTTPS 丢弃。", "Non-HTTPS is dropped."],
-      },
-      {
-        name: "repository",
-        type: "https URL",
-        limit: "400",
-        required: false,
-        note: ["非 HTTPS 丢弃。", "Non-HTTPS is dropped."],
-      },
-      {
-        name: "author",
-        type: "string",
-        limit: "60",
-        required: false,
-        note: ["展示用署名。", "Display credit."],
-      },
-      {
-        name: "icon",
-        type: "glyph \\| https URL",
-        limit: "8 字符",
-        required: false,
-        note: [
-          "短字形或 HTTPS 图片，不接受内联 data。",
-          "Short glyph or HTTPS image; inline data is rejected.",
-        ],
-      },
-      {
-        name: "origin",
-        type: "`builtin` \\| `remote`",
-        limit: "—",
-        required: true,
-        note: [
-          "由加载来源决定，远程不可伪造。",
-          "Set by the loader; a remote row cannot forge it.",
-        ],
-      },
-      {
-        name: "expectedEntries",
-        type: "string[]",
-        limit: "12 × 60",
-        required: false,
-        note: [
-          "仅 `builtin`：就绪校验的条目名。",
-          "`builtin` only: entries probed for readiness.",
-        ],
-      },
-      {
-        name: "service",
-        type: "{name, methods, probe?}",
-        limit: "16 methods",
-        required: false,
-        note: [
-          "仅 `builtin`：就绪校验的 Host 服务。",
-          "`builtin` only: Host service probed for readiness.",
-        ],
-      },
-      {
-        name: "readinessNote",
-        type: "string",
-        limit: "200",
-        required: false,
-        note: ["仅 `builtin`：就绪提示。", "`builtin` only: readiness hint."],
-      },
-      {
-        name: "defaultEnabled",
-        type: "boolean",
-        limit: "—",
-        required: false,
-        note: [
-          "仅 `builtin`：安装后默认启用。",
-          "`builtin` only: enabled after install.",
-        ],
-      },
-    ],
-    codes: uniq(
-      [
-        ...text.matchAll(
-          /(?:DshPluginCatalogError|DshPluginIndexError)\(\s*'([A-Z][A-Z0-9_]+)'/g,
-        ),
-      ].map((match) => match[1]),
-    ).concat(
-      uniq(
-        [
-          ...read("src/dsh-plugin-index.mjs").matchAll(
-            /code:\s*'([A-Z][A-Z0-9_]+)'/g,
-          ),
-        ].map((match) => match[1]),
-      ),
-    ),
+    format: document.format,
+    size: document.plugins.length,
+    path: PLUGIN_MARKET_INDEX_PATH,
   };
 }
 
@@ -1956,14 +1778,14 @@ function pageIndex(lang) {
       "plugin-catalog",
       T("插件市场目录 Schema", "Plugin catalog schema"),
       T(
-        "目录文档结构、合并规则与内置条目",
-        "Catalog document shape, merge rules and builtin rows",
+        "DSH 索引结构、默认源与 Star Harness 签名发行",
+        "DSH index shape, default source and signed Star Harness releases",
       ),
       T(
-        `${data.catalog.fields.length} fields · ${data.catalog.curated.length} rows`,
-        `${data.catalog.fields.length} fields · ${data.catalog.curated.length} rows`,
+        `format ${data.catalog.format} · ${data.catalog.size} plugins`,
+        `format ${data.catalog.format} · ${data.catalog.size} plugins`,
       ),
-      "src/dsh-plugin-catalog.mjs",
+      data.catalog.file,
     ],
     [
       "deployment-states",
@@ -3045,14 +2867,6 @@ function pageEnvironment(lang) {
       ),
     ],
     [
-      C("AGENTKIT_STUDIO_DSH_PLUGIN_INDEX"),
-      T("空", "empty"),
-      T(
-        "远程插件索引的 HTTPS 地址；空表示只用内置目录",
-        "HTTPS address of a remote plugin index; empty means builtin only",
-      ),
-    ],
-    [
       C("AGENTKIT_EXECUTION_POLICY_DEFAULT"),
       C("workspace-write"),
       T(
@@ -3218,7 +3032,7 @@ function pageEnvironment(lang) {
           "Container deployment environment",
           "src/container-deployment-env.mjs",
         ],
-        ["插件索引地址", "Plugin index address", "src/dsh-plugin-index.mjs"],
+        ["默认插件索引源", "Default plugin index source", "src/plugin-market.mjs"],
       ],
       testsFor(
         "src/global-config.mjs",
@@ -3481,222 +3295,45 @@ function pageTemplates(lang) {
 
 function pagePluginCatalog(lang) {
   const catalog = DATA.catalog;
-  const fieldRows = catalog.fields.map((field) => [
-    C(field.name),
-    C(field.type),
-    field.limit,
-    T(field.required ? "是" : "否", field.required ? "Yes" : "No"),
-    T(field.note[0], field.note[1]),
-  ]);
-  const curatedRows = catalog.curated.map((entry) => [
-    C(entry.id),
-    entry.displayName,
-    entry.category,
-    String(entry.capabilities.length),
-    entry.experimental ? "`beta`" : "—",
-    entry.expectedEntries ? entry.expectedEntries.map(C).join(" ") : "—",
-  ]);
-  const codeRows = catalog.codes.map((code) => {
-    const file = code.startsWith("DSH_PLUGIN_INDEX")
-      ? catalog.indexFile
-      : catalog.file;
-    return [C(code), C(cite(file, lineOf(file, code)))];
-  });
-  const docRows = [
-    [
-      C("schemaVersion"),
-      C("number"),
-      T(
-        `缺省按 ${catalog.schemaVersion} 处理；其他值直接拒绝`,
-        `Defaults to ${catalog.schemaVersion}; any other value is rejected`,
-      ),
-    ],
-    [
-      C("plugins"),
-      C("array"),
-      T(
-        `条目数组，上限 ${catalog.maxEntries} 条`,
-        `Rows, capped at ${catalog.maxEntries}`,
-      ),
-    ],
-    [
-      C("updatedAt"),
-      C("string"),
-      T(
-        "ISO 时间；无法解析时丢弃，不影响条目",
-        "ISO timestamp; dropped when unparsable, without affecting rows",
-      ),
-    ],
-  ];
-  const mergeRows = [
-    [T("环境变量", "Environment"), C(catalog.indexEnv)],
-    [
-      T("别名", "Aliases"),
-      catalog.indexAliases
-        .filter((name) => name !== catalog.indexEnv)
-        .map(C)
-        .join(" · "),
-    ],
-    [
-      T("协议", "Protocol"),
-      T(
-        "`https:`；`http:` 只允许 `localhost` / `127.0.0.1` / `::1`",
-        "`https:`; `http:` only for `localhost` / `127.0.0.1` / `::1`",
-      ),
-    ],
-    [
-      T("拒绝", "Rejected"),
-      T(
-        "带用户名或密码的 URL、非 HTTP(S) 协议、无法解析的 URL",
-        "URLs with a username or password, non-HTTP(S) schemes, unparsable URLs",
-      ),
-    ],
-    [
-      T("合并", "Merge"),
-      T(
-        "内置条目优先占位；远程同 id 覆盖文案字段，不覆盖就绪校验字段；新 id 追加",
-        "Builtin rows reserve the id; a remote row overrides copy fields but not readiness fields; new ids append",
-      ),
-    ],
-    [
-      T("失败", "Failure"),
-      T(
-        "刷新失败保留上一次成功文档并标记为 stale，市场不清空",
-        "A failed refresh keeps the last good document as stale; the market never empties",
-      ),
-    ],
+  const fields = [
+    [C("format"), C(String(catalog.format)), T("DSH 索引格式版本", "DSH index format version")],
+    [C("title"), C("string | object"), T("索引名称，可提供多语言文本", "Index name, optionally localized")],
+    [C("metadata.sortKeys.downloads"), C("object"), T("内置索引的下载量排序定义", "Download-count sort definition in the bundled index")],
+    [C("plugins"), C("array"), T("插件条目，每项使用唯一的 npm 包名", "Plugin entries, each with a unique npm package name")],
+    [C("plugins[].versions"), C("array"), T("每项包含精确 SemVer、发布时间与安装来源", "Each entry has an exact SemVer, publication time and installation source")],
   ];
   const sections = [
     secT("目录文档结构", "Catalog document shape", (lang) =>
-      [
-        pick(
-          T(
-            `插件市场目录的 schema 版本是 ${C(String(catalog.schemaVersion))}。远程索引是一个 JSON 文档，可以是数组，也可以是 \`{ schemaVersion, plugins, updatedAt }\` 对象。`,
-            `The plugin market catalog schema version is ${C(String(catalog.schemaVersion))}. A remote index is a JSON document: either an array, or an object \`{ schemaVersion, plugins, updatedAt }\`.`,
-          ),
-          lang,
-        ),
-        "",
-        "```json",
-        JSON.stringify(
-          {
-            schemaVersion: catalog.schemaVersion,
-            updatedAt: "1970-01-01T00:00:00Z",
-            plugins: [
-              {
-                id: "@scope/dsh-plugin",
-                displayName: lang === "zh" ? "示例插件" : "Example plugin",
-                category: lang === "zh" ? "协作" : "Collaboration",
-                tags: ["team"],
-              },
-            ],
-          },
-          null,
-          2,
-        ),
-        "```",
-        "",
-        bTable(
-          [T("字段", "Field"), T("类型", "Type"), T("说明", "Notes")],
-          docRows,
-          lang,
-        ),
-      ].join("\n"),
+      bTable([T("字段", "Field"), T("类型或值", "Type or value"), T("说明", "Notes")], fields, lang),
     ),
-    secT("条目字段", "Row fields", (lang) =>
-      [
-        pick(
-          T(
-            "`source` 为 `builtin` 时额外接受就绪校验字段；远程文档**不能**声明它们，这是信任边界，不是可选项。",
-            "When the source is `builtin`, readiness fields are also accepted. A remote document **cannot** declare them; this is a trust boundary, not an option.",
-          ),
-          lang,
-        ),
-        "",
-        bTable(
-          [
-            T("字段", "Field"),
-            T("类型", "Type"),
-            T("上限", "Limit"),
-            T("必填", "Required"),
-            T("说明", "Notes"),
-          ],
-          fieldRows,
-          lang,
-        ),
-      ].join("\n"),
+    secT("默认索引源", "Default index source", (lang) =>
+      pick(T(
+        `Studio 将内置社区清单暴露在 ${C(catalog.path)}。仅当 DSH 的配置中尚无索引时，Studio 才添加此默认源。DSH 的插件市场负责读取、校验、搜索和分页。清单目前包含 ${catalog.size} 个插件，随 Studio 发版更新。`,
+        `Studio serves its bundled community index at ${C(catalog.path)}. Studio adds it only when the DSH profile has no configured indexes. The DSH plugin market fetches, validates, searches and pages the index. The bundled snapshot contains ${catalog.size} plugins and is refreshed through Studio releases.`,
+      ), lang),
     ),
-    secT("内置条目", "Builtin rows", (lang) =>
-      [
-        pick(
-          T(
-            `产品自带 ${catalog.curated.length} 条精选条目，离线可用。就绪校验读取 Host 服务，未就绪时只给提示，不阻塞安装。`,
-            `${catalog.curated.length} curated rows ship with the product and work offline. Readiness probes read Host services; when absent they surface a hint instead of blocking install.`,
-          ),
-          lang,
-        ),
-        "",
-        bTable(
-          [
-            T("插件 id", "Plugin id"),
-            T("displayName", "displayName"),
-            T("category", "category"),
-            T("capabilities", "capabilities"),
-            T("标记", "Badge"),
-            T("expectedEntries", "expectedEntries"),
-          ],
-          curatedRows,
-          lang,
-        ),
-      ].join("\n"),
+    secT("Star Harness 独立发行", "Independent Star Harness releases", (lang) =>
+      pick(T(
+        "Star Harness 管理页通过签名发布清单发现可安装的版本。Studio 校验宿主兼容性以及引擎、界面与工具目录的完整性，再激活对应版本。社区索引负责 DSH 的通用插件浏览。",
+        "The Star Harness management page discovers installable versions through a signed release manifest. Studio checks host compatibility and verifies the engine, renderer and tool catalog before activation. The community index provides general DSH plugin browsing.",
+      ), lang),
     ),
-    secT("索引地址与合并", "Index address and merging", (lang) =>
-      bTable([T("项", "Item"), T("值", "Value")], mergeRows, lang),
-    ),
-    secT("错误码", "Error codes", (lang) =>
-      bTable([T("错误码", "Code"), T("源码位置", "Source")], codeRows, lang),
-    ),
-    versionSection([
-      [
-        T("schema 版本", "Schema version"),
-        C(String(catalog.schemaVersion)),
-        T("不兼容变更必须升版本", "An incompatible change must bump it"),
-      ],
-      [
-        T("条目上限", "Row cap"),
-        C(String(catalog.maxEntries)),
-        T(
-          "超出抛 `DSH_PLUGIN_CATALOG_TOO_LARGE`",
-          "Exceeding it throws `DSH_PLUGIN_CATALOG_TOO_LARGE`",
-        ),
-      ],
-      [
-        T("内置条目", "Builtin rows"),
-        C(String(catalog.curated.length)),
-        T("随产品发布，不联网", "Ship with the product, no network"),
-      ],
-      [
-        T("就绪校验", "Readiness probes"),
-        T("仅内置", "Builtin only"),
-        T("远程文档无法声明探针", "A remote document cannot declare probes"),
-      ],
-    ]),
     entrySection(
       [
-        ["目录归一化", "Catalog normalization", "src/dsh-plugin-catalog.mjs"],
-        ["远程索引刷新", "Remote index refresh", "src/dsh-plugin-index.mjs"],
-        ["插件发现", "Plugin discovery", "src/dsh-plugin-discovery.mjs"],
-        ["插件市场 UI", "Plugin market UI", "src/client/state/plugins.mjs"],
+        ["内置索引", "Bundled index", catalog.file],
+        ["索引生成和校验", "Index generation and validation", "scripts/build-plugin-market-index.mjs"],
+        ["Host 索引路由", "Host index route", "src/host/routes/plugin-market-index.mjs"],
+        ["Star Harness 签名发行", "Signed Star Harness releases", "src/host/services/star-harness-release.mjs"],
       ],
-      testsFor("src/dsh-plugin-catalog.mjs", "src/dsh-plugin-index.mjs"),
+      testsFor("src/plugin-market.mjs", "src/host/routes/plugin-market-index.mjs", "src/host/services/star-harness-release.mjs"),
     ),
   ];
   return buildPage(
     lang,
     ["插件市场目录 Schema", "Plugin catalog schema"],
     [
-      `插件市场目录 schema v${catalog.schemaVersion}：${catalog.fields.length} 个条目字段、${catalog.curated.length} 条内置条目与 ${catalog.codes.length} 个错误码。`,
-      `Plugin market catalog schema v${catalog.schemaVersion}: ${catalog.fields.length} row fields, ${catalog.curated.length} builtin rows and ${catalog.codes.length} error codes.`,
+      `DSH 插件索引 format ${catalog.format}，当前内置 ${catalog.size} 个社区插件。另见 Star Harness 签名发行入口。`,
+      `DSH plugin index format ${catalog.format} with ${catalog.size} bundled community plugins, plus the signed Star Harness release entry point.`,
     ],
     sections,
   );
@@ -4024,9 +3661,9 @@ const TOP_ERRORS = [
     "Upgrade the DSH base to the version `studio.plugin.json` requires",
   ],
   [
-    "DSH_PLUGIN_INDEX_UNAVAILABLE",
-    "检查索引地址可达性；失败时市场保留上一次结果",
-    "Check index reachability; on failure the market keeps the last result",
+    "PLUGIN_MARKET_UNAVAILABLE",
+    "在插件页启用 DSH 的自定义插件索引服务；内置索引缺失时重新安装 Studio",
+    "Enable the DSH custom plugin index service in Plugins; reinstall Studio if the bundled index is missing",
   ],
 ];
 
@@ -4187,7 +3824,7 @@ function pageErrors(lang) {
         ],
         ["运行时错误码", "Runtime codes", "src/runtime-contract.mjs"],
         ["模板错误码", "Template codes", "src/team-template-contract.mjs"],
-        ["目录错误码", "Catalog codes", "src/dsh-plugin-catalog.mjs"],
+        ["插件市场错误码", "Plugin market codes", "src/plugin-market.mjs"],
         [
           "排障页",
           "Troubleshooting page",

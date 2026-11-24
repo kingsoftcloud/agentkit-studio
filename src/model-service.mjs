@@ -4,32 +4,25 @@ import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { STUDIO_REASONING_LEVELS, studioReasoning } from './model-reasoning.mjs';
 import { catalogReasoningMetadata } from './model-catalog-reasoning.mjs';
 import { createHash } from 'node:crypto';
-import { modelCatalogLimits, admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
+import { modelCatalogLimits, admitModelCapabilities } from './model-capabilities.mjs';
 import { hasConfiguredAuthentication, providerWireApi, requestHeaders } from './model-profile-contract.mjs';
 import { normalizeModelEndpoint } from './model-endpoint.mjs';
 import { diagnoseModelEfforts, untestedEfforts } from './model-effort-probe.mjs';
 import { probeModelWire, probeModelWires } from './model-wire-probe.mjs';
-
-function inputModalities(model = {}) {
-  // KSPMAS/OpenAI-compatible gateways expose capabilities under
-  // `architecture.input_modalities`; older gateways put the same field at the
-  // top level. Accept both shapes so a multimodal model is not downgraded to
-  // text-only when its profile is synchronized into DSH.
-  const architecture = model.architecture && typeof model.architecture === 'object' ? model.architecture : {};
-  return model.input_modalities || model.inputModalities || architecture.input_modalities || architecture.inputModalities || model.input;
-}
-
-export function modelInput(model = {}) {
-  const values = inputModalities(model);
-  return ['text', ...(Array.isArray(values) && values.some(value => ['image', '图片', '图像'].includes(value)) ? ['image'] : [])];
-}
+import { inputModalities, modelInput } from './model-input.mjs';
+export { modelInput };
 
 export function createModelService({ configuration, credentials, fetchImpl = hostFetch }) {
   const catalogs = new Map();
   const pendingCatalogs = new Map();
   const sync = () => syncGlobalModelCredential({ configuration, credentials });
   const settings = () => configuration.describe();
-  const save = async patch => { await configuration.update(patch); catalogs.clear(); await sync(); return settings(); };
+  const save = async patch => {
+    await configuration.update(patch);
+    catalogs.clear();
+    await sync();
+    return settings();
+  };
   let creating = Promise.resolve();
   function create(resource = {}) {
     const operation = async () => {

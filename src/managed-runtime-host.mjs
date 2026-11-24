@@ -356,7 +356,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   if (bundledHarness) {
     const profile = runtime.modelProfiles[0];
     companion = await startHarness({ workspaceRoot: cwd, stateDir: join(root, 'star-harness-state'),
-      agentId: runtime.identity.agentId, env,
+      agentId: runtime.identity.agentId, env, releaseVersion: env.AGENTKIT_STAR_HARNESS_VERSION,
       profile: { ...profile, apiKey: env[profile.credentialName] } });
     Object.assign(childEnv, { AGENTKIT_ENGINE_SERVICE_URL: companion.endpoint,
       AGENTKIT_ENGINE_SERVICE_TOKEN: companion.token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: cwd,

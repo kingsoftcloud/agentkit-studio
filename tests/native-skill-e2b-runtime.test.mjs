@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeE2BSkillRuntime } from '../src/providers/native-skill-e2b-runtime.mjs';
-import { prepareNativeE2BHost } from '../src/providers/native-e2b-host.mjs';
+import { prepareNativeE2BHost } from './fixtures/retired-native/providers/native-e2b-host.mjs';
 import { canonical, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
 import { skillE2BSdk } from './fixtures/native-skill-e2b-sdk.mjs';
 const scope = { tenantId: 'tenant', workspaceId: 'workspace', userId: 'user', agentId: 'agent' };
@@ -112,12 +112,16 @@ for (const boundary of ['before-create', 'after-upload']) {
     const marker = join(h.root, 'boundary.json'), audit = join(h.root, 'sdk.log');
     const code = `
       import {createNativeE2BSkillRuntime} from ${JSON.stringify(new URL('../src/providers/native-skill-e2b-runtime.mjs', import.meta.url).href)};
-      import {prepareNativeE2BHost} from ${JSON.stringify(new URL('../src/providers/native-e2b-host.mjs', import.meta.url).href)};
+      import {prepareNativeE2BHost} from ${JSON.stringify(new URL('./fixtures/retired-native/providers/native-e2b-host.mjs', import.meta.url).href)};
       import {skillE2BSdk} from ${JSON.stringify(new URL('./fixtures/native-skill-e2b-sdk.mjs', import.meta.url).href)};
       import {parseNativeJson,canonical} from ${JSON.stringify(import.meta.resolve('@kingsoftcloud/agentkit-harness-core'))};
-      import {appendFileSync,writeFileSync} from 'node:fs';
+      import {appendFileSync,renameSync,writeFileSync} from 'node:fs';
       const input=parseNativeJson(process.argv[1]), recover=process.argv[2]==='recover';
-      const blocked=new Promise(()=>{}), marker=()=>writeFileSync(input.root+'/boundary.json',JSON.stringify({pid:process.pid,boundary:input.boundary}));
+      const blocked=new Promise(()=>{});
+      const marker=()=>{
+        writeFileSync(input.root+'/boundary.next',JSON.stringify({pid:process.pid,boundary:input.boundary}));
+        renameSync(input.root+'/boundary.next',input.root+'/boundary.json');
+      };
       const peer=skillE2BSdk({after(){}},{root:input.root+'/remote',
         before(method){appendFileSync(input.root+'/sdk.log',method+'\\n'); if(recover)throw Error('cold recovery cannot touch SDK');
           if(input.boundary==='before-create' && method==='create')marker();},
@@ -331,7 +335,7 @@ test('a real SIGKILL after the remote script effect leaves the original intent a
     .map(key => [key, h.options[key]])), request: requestBody, packages: [{ name: 'alpha', body: '# Alpha', rootDir: h.pkg }] };
   const code = `
     import {createNativeE2BSkillRuntime} from ${JSON.stringify(new URL('../src/providers/native-skill-e2b-runtime.mjs', import.meta.url).href)};
-    import {prepareNativeE2BHost} from ${JSON.stringify(new URL('../src/providers/native-e2b-host.mjs', import.meta.url).href)};
+    import {prepareNativeE2BHost} from ${JSON.stringify(new URL('./fixtures/retired-native/providers/native-e2b-host.mjs', import.meta.url).href)};
     import {skillE2BSdk} from ${JSON.stringify(new URL('./fixtures/native-skill-e2b-sdk.mjs', import.meta.url).href)};
     import {parseNativeJson} from ${JSON.stringify(import.meta.resolve('@kingsoftcloud/agentkit-harness-core'))};
     const input=parseNativeJson(process.argv[1]);

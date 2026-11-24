@@ -6,8 +6,8 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { createNativeChildOwner } from '@kingsoftcloud/agentkit-harness-node/native/child-owner';
 import { nativeChildToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/child-tools';
 import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
-import { createStudioNativeChildWorkspaces } from '../../src/providers/native-child-workspace-host.mjs';
-import { createStudioNativeChildMerge } from '../../src/providers/native-child-merge.mjs';
+import { createStudioNativeChildWorkspaces } from './retired-native/providers/native-child-workspace-host.mjs';
+import { createStudioNativeChildMerge } from './retired-native/providers/native-child-merge.mjs';
 import { previousChildPublication } from '@kingsoftcloud/agentkit-harness-node/native/child-publication';
 
 const root = process.argv[2], source = join(root, 'workspace'); mkdirSync(source, { recursive: true });

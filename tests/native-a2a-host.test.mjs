@@ -10,8 +10,9 @@ import { tmpdir } from 'node:os';
 import { NativeKernel, emptyUsage, canonical } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { prepareNativeA2AHost } from '../src/providers/native-a2a-host.mjs';
+import { isBlockedAddress } from '../src/providers/ssrf-pinned-fetch.mjs';
 import { createA2AProjection } from '../src/providers/native-a2a-protocol.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
@@ -20,6 +21,12 @@ const spec = { local_name: 'research', binding_id: 'binding-1', space_id: 'a2a-s
 const final = () => ({ kind: 'final_candidate', text: 'Done.', toolCalls: [], usage: emptyUsage() });
 const call = (name = 'call_a2a_agent', args = { agent: 'research', message: '查一下😀' }) => ({ kind: 'tool_calls', text: '', usage: emptyUsage(),
   toolCalls: [{ callId: 'actual-call', name, arguments: args }] });
+
+test('Studio egress accepts public addresses and excludes addresses outside its policy', () => {
+  for (const address of ['8.8.8.8', '2606:4700::1111']) assert.equal(isBlockedAddress(address), false, address);
+  for (const address of ['127.0.0.1', '100.64.0.1', '192.0.2.1', '::1', '::ffff:8.8.8.8', 'fd00::1', '2001:db8::1', 'invalid'])
+    assert.equal(isBlockedAddress(address), true, address);
+});
 
 async function setup(t, { protocol = 'JSONRPC', streaming = true, source = 'hosted', mode = 'complete', denied = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-a2a-host-'))), workspaceRoot = join(root, 'workspace'), stateDir = join(root, 'state');

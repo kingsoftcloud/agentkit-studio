@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createDshNodeWorkspaceTools, DSH_NODE_WORKSPACE_CONTRACT } from '../src/providers/dsh-node-workspace-tools.mjs';
+import { createStudioWorkspaceTools, workspaceToolDefinitions } from '../src/providers/studio-workspace/workspace-tools.mjs';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const MODULE_PATH = resolve(REPO_ROOT, 'src/providers/dsh-node-workspace-tools.mjs');
@@ -120,6 +121,45 @@ test('edit without a prior read is rejected and writes nothing', async () => {
 });
 
 // --- state persistence + isolation --------------------------------------------
+
+test('workspace schemas, snapshots and read receipts interoperate with the installed compatibility library', async t => {
+  const h = setup();
+  t.after(h.cleanup);
+  const { createNativeWorkspaceTools } = await import('@kingsoftcloud/agentkit-harness-node/native/workspace-tools');
+  const options = { workspaceRoot: h.workspaceRoot, stateDir: h.stateDir, sessionId: 'same-session' };
+  const legacy = () => createNativeWorkspaceTools({ ...options, authorize: async () => 'allow' });
+  const studio = () => createStudioWorkspaceTools(options);
+  writeFileSync(join(h.workspaceRoot, 'f.txt'), '旧版 😀\n');
+  symlinkSync('f.txt', join(h.workspaceRoot, 'alias.txt'));
+  assert.deepEqual(workspaceToolDefinitions(), legacy().definitions);
+  assert.deepEqual(studio().capture(options), legacy().capture(options));
+  const request = (name, args) => ({
+    sessionId: options.sessionId, signal: new AbortController().signal,
+    call: { name, callId: name, arguments: args },
+  });
+  const read = request('read_workspace_file', { path: 'alias.txt' });
+  for (const call of [
+    request('workspace_status', {}), request('list_workspace_files', { recursive: true }),
+    request('search_workspace_files', { query: '旧版', glob: '*.txt' }), read,
+  ]) {
+    assert.deepEqual(await studio().execute(call, () => {}), await legacy().execute(call));
+  }
+  const edit = request('edit_workspace_file', { path: 'f.txt', old_text: '旧版', new_text: '新版' });
+  assert.equal((await studio().execute(edit, () => {})).status, 'ok');
+  const editAgain = request('edit_workspace_file', { path: 'f.txt', old_text: '新版', new_text: '回退' });
+  assert.equal((await legacy().execute(editAgain)).status, 'ok');
+  assert.equal(readFileSync(join(h.workspaceRoot, 'f.txt'), 'utf8'), '回退 😀\n');
+  const batch = request('write_workspace_files', { files: [{ path: 'a.txt', content: 'x y' }, { path: 'b.txt', content: 'b' }] });
+  assert.deepEqual((await studio().execute(batch, () => {})).workspaceChangedPaths, ['a.txt', 'b.txt']);
+  const multi = request('multi_edit_workspace_file', { path: 'a.txt', edits: [
+    { old_text: 'x', new_text: '甲' }, { old_text: 'y', new_text: '乙' },
+  ] });
+  assert.deepEqual((await studio().execute(multi, () => {})).workspaceChangedPaths, ['a.txt']);
+  assert.equal(readFileSync(join(h.workspaceRoot, 'a.txt'), 'utf8'), '甲 乙');
+  const remove = request('delete_workspace_file', { path: 'b.txt' });
+  assert.deepEqual((await studio().execute(remove, () => {})).workspaceChangedPaths, ['b.txt']);
+  assert.equal(existsSync(join(h.workspaceRoot, 'b.txt')), false);
+});
 
 test('same session reopens in-process with persisted read state', async () => {
   const h = setup();

@@ -3,7 +3,22 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNativeDshBrowserTools } from '../src/providers/native-dsh-browser.mjs';
+import { createNativeDshBrowserTools } from './fixtures/retired-native/providers/native-dsh-browser.mjs';
+import { parseWorkspaceBrowserInput as parseEarlierInput } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-protocol';
+import { parseWorkspaceBrowserInput } from '../src/host/browser-inspection-input.mjs';
+
+test('host browser requests retain the saved action shape across the package boundary', () => {
+  const run = parse => parse({ path: 'index.html', wait_ms: 0, actions: [
+    { type: 'click', selector: 'button', duration_ms: 20, button: 'middle' },
+    { type: 'fill', selector: 'input', value: '' }, { type: 'press', key: 'Enter' },
+    { type: 'move', x: 100, y: 50 }, { type: 'scroll', delta_x: 10, delta_y: 20, x: 4, y: 5 },
+    { type: 'wait', ms: 1 }, { type: 'reload' },
+  ] }, 'original-browser-operation');
+  assert.deepEqual(run(parseWorkspaceBrowserInput), run(parseEarlierInput));
+  const oversized = { path: '.', actions: [{ type: 'press', key: '汉'.repeat(129) }] };
+  assert.throws(() => parseEarlierInput(oversized, 'original-operation'), { code: 'browser_action_invalid' });
+  assert.throws(() => parseWorkspaceBrowserInput(oversized, 'original-operation'), { code: 'browser_action_invalid' });
+});
 
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };
 const request = (sessionId = 'session', extra = {}) => ({ sessionId, scope, runId: 'run',

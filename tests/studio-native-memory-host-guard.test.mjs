@@ -8,10 +8,10 @@ import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
-import { bindStudioNativeMemoryHost } from '../src/providers/native-memory-host.mjs';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
+import { bindStudioNativeMemoryHost } from './fixtures/retired-native/providers/native-memory-host.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 // Focused guard tests (items 2-3): the Memory tool write is re-verified against

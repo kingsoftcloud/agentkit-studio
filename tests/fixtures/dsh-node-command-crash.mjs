@@ -21,9 +21,9 @@ if (mode === 'before') {
   process.exit(0);
 }
 const args = { command: mode === 'after'
-  ? 'printf x >> counter; printf ready > ready; sleep 1; printf done'
+  ? 'printf x >> counter; printf ready > ready; while [ ! -f release ]; do sleep 0.05; done; printf done'
   : 'printf x >> counter; printf done' };
-const port = createDshNodeCommandTools({ workspaceRoot, stateDir, agentId: 'bound-agent', settings: { wallSeconds: 5 },
+const port = createDshNodeCommandTools({ workspaceRoot, stateDir, agentId: 'bound-agent', settings: { wallSeconds: mode === 'after' ? 30 : 5 },
   env: { PATH: '/bin:/usr/bin', KSADK_PYTHON: '/python-unavailable' },
   ctx: { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) } } });
 const exec = { agent: { session: { id: 'session' } }, name: 'run_command', callId: 'crash-call', arguments: args,

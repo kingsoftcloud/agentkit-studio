@@ -1,6 +1,7 @@
 /** DSH-owned lifecycle for the neutral Studio Skill management service. */
 import { join } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { skillManagementDefinitions, SKILL_MANAGEMENT_CONTRACT } from '../skill-management.mjs';
 import { commandStateRoot, DshNodeCommandLedger } from './dsh-node-command-ledger.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';

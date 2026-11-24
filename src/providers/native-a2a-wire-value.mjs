@@ -2,7 +2,7 @@
  * This is a Node wire adapter, with no SDK, Host or Python dependency. Empty
  * proto3 scalars/lists are absent; explicitly present empty messages survive.
  * Struct/Value contents retain their own null/default values and double domain. */
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../contracts/native-values.mjs';
 import { a2aState } from './native-a2a-protocol.mjs';
 const plain = value => value && typeof value === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 function text(value) {

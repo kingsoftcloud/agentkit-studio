@@ -46,9 +46,7 @@ const thirdPartyCycles = cycles.filter(cycle => cycle.some(name => name.startsWi
 const studioCycles = cycles.filter(cycle => !cycle.some(name => name.startsWith('node_modules/')));
 // The build allowlists reviewed browser entry points; anything else reaching
 // the browser bundle from a published package is a leak.
-const allowlistedClientInput = name => name === 'node_modules/@deepseek-ai/dsh-util-values/lib/index.js'
-  || /^node_modules\/@kingsoftcloud\/agentkit-harness-ui\/(?:src\/|markdown\/dist\/markdown\.mjs$)/.test(name)
-  || /^node_modules\/@kingsoftcloud\/agentkit-harness-core\/dist\/(?:child-workspace-tools|capability-profile|model-capabilities|values|error-presentation)\.mjs$/.test(name);
+const allowlistedClientInput = name => name === 'node_modules/@deepseek-ai/dsh-util-values/lib/index.js';
 const unexpectedNodeInputs = nodeInputs.filter(name => !allowlistedClientInput(name));
 // React is a Host-provided external: a bundled copy would break the JSX runtime.
 const bundledReact = inputs.filter(name => /(?:^|\/)node_modules\/(?:react|react-dom|react-is)\//.test(name));

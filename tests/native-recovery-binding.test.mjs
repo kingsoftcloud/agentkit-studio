@@ -7,7 +7,7 @@ import { MemoryRunStore, NativeKernel, configure, RESULT_DELIVERY_POLICY, delive
 import { fixture, scope, digest, tool } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { freezeNativeDshConfiguration, rebindNativeDshConfiguration } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
-import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../src/providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 import { NATIVE_INSTRUCTION_ASSEMBLY } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
 
 function admission() {

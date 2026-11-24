@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createNativeLocalSkillRuntime, nativeSkillRuntimeSettings } from '../src/providers/native-skill-runtime.mjs';
+import { createHash } from 'node:crypto';
+import { buildScriptEnvironment } from '@kingsoftcloud/agentkit-harness-node/native/local-process';
+import { checkGovernedCommand as checkCompatibilityCommand } from '@kingsoftcloud/agentkit-harness-node/native/local-command-policy';
+import { canonical } from '../src/contracts/native-values.mjs';
+import { createNativeLocalSkillRuntime } from '../src/providers/native-skill-runtime.mjs';
+import { nativeSkillRuntimeSettings } from '../src/providers/studio-skill-runtime-files.mjs';
+import { checkGovernedCommand } from '../src/providers/studio-local-command/local-command-policy.mjs';
 const scope = { tenantId: 'tenant', workspaceId: 'workspace', userId: 'user', agentId: 'agent' };
 const settings = nativeSkillRuntimeSettings({ KSADK_SKILL_RUNTIME_BACKEND: 'local_process', KSADK_SKILL_RUNTIME_TIMEOUT: '20' });
 function request(signal = new AbortController().signal) {
@@ -37,6 +43,11 @@ test('runtime settings preserve the reference project-name alias and explicit ba
   assert.equal(selected.projectName, 'custom-project');
   assert.throws(() => nativeSkillRuntimeSettings({ KSADK_SKILL_ARTIFACT_PROJECT: 1 }), /SKILL_RUNTIME_PROJECT_INVALID/);
   assert.equal(nativeSkillRuntimeSettings({ KSADK_SKILL_RUNTIME_BACKEND: 'off' }).enabled, false);
+  const env = { PATH: '/bin', LC_ALL: 'C', TZ: 'UTC', SYSTEMROOT: '/system', HOME: '/user', E2B_API_KEY: 'test-fixture' };
+  for (const values of [{}, env]) {
+    const prior = createHash('sha256').update(canonical(buildScriptEnvironment(values))).digest('hex');
+    assert.equal(nativeSkillRuntimeSettings(values).environmentBindingDigest, prior);
+  }
 });
 
 test('real supervised Node workflow stages its package, delivers exact bytes and reopens without another process', async t => {
@@ -55,6 +66,24 @@ test('real supervised Node workflow stages its package, delivers exact bytes and
   assert.equal(readFileSync(join(entry(h), 'record.json'), 'utf8'), saved);
   const drift = request(); drift.workflowPrompt = 'different';
   await assert.rejects(cold.execute(drift), /SKILL_RUNTIME_IDENTITY_CONFLICT/);
+});
+
+test('Studio command admission matches the compatibility library for parsed shell and packaged Skill scripts', async t => {
+  const h = setup(t);
+  const cwd = h.workspace;
+  writeFileSync(join(cwd, 'skill.sh'), 'echo ready\n');
+  for (const [command, allowed] of [
+    ['bash skill.sh', true],
+    ['printf "%s" "a & b"', true],
+    ['sleep 1 &', false],
+    ['printf "$(echo ok)"', true],
+    ['printf "broken', false],
+  ]) {
+    const options = { cwd, allowedRoots: [cwd], signal: AbortSignal.timeout(5000) };
+    const expected = await checkCompatibilityCommand(command, options);
+    assert.equal(expected === null, allowed, command);
+    assert.deepEqual(await checkGovernedCommand(command, options), expected, command);
+  }
 });
 
 test('instruction-only Skills execute the Node runtime without inventing a script invocation', async t => {

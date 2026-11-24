@@ -15,6 +15,14 @@ on:
         description: Run unsigned packaging smoke without publishing or installer qualification
         type: boolean
         default: false
+      harness_upgrade_from:
+        description: Published signed Harness baseline for optional plugin UI qualification
+        type: string
+        default: ''
+      harness_upgrade_to:
+        description: Published signed Harness upgrade for optional plugin UI qualification
+        type: string
+        default: ''
       qualify_telemetry:
         description: Build a signed candidate with a local telemetry fixture and run native qualification
         type: boolean
@@ -67,6 +75,18 @@ jobs:
         if: ${{ inputs.qualify_telemetry && inputs.diagnostic_only }}
         shell: pwsh
         run: throw 'Telemetry qualification requires a signed candidate'
+      - name: Validate Harness qualification options
+        if: ${{ inputs.harness_upgrade_from != '' || inputs.harness_upgrade_to != '' }}
+        shell: pwsh
+        env:
+          HARNESS_UPGRADE_FROM: ${{ inputs.harness_upgrade_from }}
+          HARNESS_UPGRADE_TO: ${{ inputs.harness_upgrade_to }}
+        run: |
+          $pattern = '^\d{1,5}\.\d{1,5}\.\d{1,5}$'
+          if ($env:HARNESS_UPGRADE_FROM -notmatch $pattern -or $env:HARNESS_UPGRADE_TO -notmatch $pattern -or
+              $env:HARNESS_UPGRADE_FROM -eq $env:HARNESS_UPGRADE_TO) {
+            throw 'Provide two distinct signed Harness versions'
+          }
       - name: Preserve canonical source line endings
         shell: pwsh
         run: git config --global core.autocrlf false
@@ -284,6 +304,7 @@ jobs:
           Write-Host "Packaged app.asar candidates: $($archives -join ', ')"
           if ($archives.Count -ne 1) { throw "Expected exactly one packaged app.asar, found $($archives.Count)" }
           $archive = $archives[0]
+          "archive=$archive" >> $env:GITHUB_OUTPUT
           node .qualification-tools/scripts/verify-packaged-drag-region.mjs $archive --json .artifacts/windows-proof/drag-region.json
           if ($LASTEXITCODE) { throw 'Packaged drag-region contract failed' }
           Copy-Item -LiteralPath $archive -Destination .artifacts/windows-proof/app.asar
@@ -320,6 +341,23 @@ jobs:
           if (-not ($retained.Extension -contains '.exe')) { throw 'no signed installer retained' }
           $retained | Select-Object Name, Length | Format-Table | Out-String | Write-Host
           if (Test-Path .artifacts/windows-candidate/provenance.json) { Copy-Item .artifacts/windows-candidate/provenance.json .artifacts/windows-proof/candidate-provenance.json }
+      - name: Verify signed Harness upgrade and restart through the Windows UI
+        if: ${{ inputs.harness_upgrade_from != '' && inputs.harness_upgrade_to != '' }}
+        timeout-minutes: 20
+        shell: pwsh
+        env:
+          HARNESS_UPGRADE_FROM: ${{ inputs.harness_upgrade_from }}
+          HARNESS_UPGRADE_TO: ${{ inputs.harness_upgrade_to }}
+          DIAGNOSTIC_ONLY: ${{ inputs.diagnostic_only }}
+          PACKAGED_ARCHIVE: ${{ steps.packaged-drag-region.outputs.archive }}
+        run: |
+          $app = $env:STUDIO_INSTALLED_APP
+          if ($env:DIAGNOSTIC_ONLY -eq 'true') {
+            $app = Join-Path (Split-Path (Split-Path $env:PACKAGED_ARCHIVE)) 'AgentKit Studio.exe'
+          }
+          if (-not $app -or -not (Test-Path -LiteralPath $app -PathType Leaf)) { throw 'Studio executable is missing' }
+          node .qualification-tools/scripts/verify-desktop-harness-upgrade.mjs $app $env:HARNESS_UPGRADE_FROM $env:HARNESS_UPGRADE_TO .artifacts/windows-proof/harness-upgrade
+          if ($LASTEXITCODE) { throw 'Windows Harness upgrade and original-conversation recovery failed' }
       - name: Verify the actually installed Windows App UI
         if: ${{ ! inputs.diagnostic_only }}
         timeout-minutes: 20

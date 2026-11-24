@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './retired-native/providers/native-dsh-tools.mjs';
 import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { fixture, scope, digest } from './native-core.mjs';

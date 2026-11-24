@@ -1,7 +1,7 @@
 /** Human task approvals use an owned Host turn when the original conversation
  * is idle. The remote command ledger independently owns effects and recovery;
  * an approval turn never drives the model or invents a Native Run. */
-import { canonical, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant } from '../../contracts/native-values.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 import { A2A_HOST_DECISION, a2aDecisionDigest } from '../../providers/native-a2a-decision.mjs';
 

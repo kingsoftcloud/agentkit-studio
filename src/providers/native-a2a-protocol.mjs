@@ -3,7 +3,7 @@
  * KsADK event behavior: ksadk/events/adapters/a2a.py at the recorded revision.
  * No transport, credentials, Host session, or effect admission lives here.
  */
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { createHash } from 'node:crypto';
 import { hasA2AActivityDeclaration } from './native-a2a-tool-activity.mjs';
 

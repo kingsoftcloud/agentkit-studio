@@ -10,10 +10,10 @@ import { NativePlaywrightBrowser } from '@kingsoftcloud/agentkit-harness-node/na
 import { resolveNativeBrowserExecutable } from '@kingsoftcloud/agentkit-harness-node/native/browser-availability';
 import { createNativeVerificationAuthority } from '@kingsoftcloud/agentkit-harness-node/native/verification-authority';
 import { createNativeToolAuthority } from '@kingsoftcloud/agentkit-harness-node/native/tool-authority';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
-import { createNativeVerification, nativeGoalContract } from '../src/providers/native-verification.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
+import { createNativeVerification, nativeGoalContract } from './fixtures/retired-native/providers/native-verification.mjs';
 import { installNativeBoundPolicy } from '../src/providers/native-bound-policy.mjs';
-import { HOST_PREFLIGHT_DEFER } from '../src/providers/native-durable-approval.mjs';
+import { HOST_PREFLIGHT_DEFER } from './fixtures/retired-native/providers/native-durable-approval.mjs';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 

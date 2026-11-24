@@ -8,10 +8,13 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createDshNodeBuiltins } from '../src/providers/dsh-node-builtins.mjs';
+import { createStudioDshBuiltins, onlyStudioDshTools } from '../src/providers/studio-dsh-builtins.mjs';
+import { DSH_NODE_A2A_NAMES } from '../src/providers/dsh-node-builtin-catalog.mjs';
 import { createStudioDshA2aControls } from '../src/host/services/dsh-a2a-control.mjs';
 import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 import { createNativeA2aTaskState } from '../src/client/state/native-a2a.mjs';
@@ -78,9 +81,14 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false, re
       },
     } };
   bridge.setBuiltinToolsFactory(({ config, isClosed, signal }) => {
-    const port = createDshNodeBuiltins({ ctx, workspaceRoot, stateDir: join(root, 'state'), agentId: config.agentId,
+    const options = { ctx, workspaceRoot, stateDir: join(root, 'state'), agentId: config.agentId,
       agentRevision: config.agentRevision, buildId: config.buildId, toolBindings: [], a2aBindings: config.a2aBindings,
-      isClosed, signal, env: { KSADK_A2A_SERVICE_URL: origin, KSADK_A2A_ALLOW_PRIVATE: 'true' } }); ports.push(port); return port;
+      isClosed, signal, env: { KSADK_A2A_SERVICE_URL: origin, KSADK_A2A_ALLOW_PRIVATE: 'true' } };
+    const names = new Set(DSH_NODE_A2A_NAMES);
+    assert.equal(onlyStudioDshTools(names), true);
+    const port = runtime === 'native-engine' ? createStudioDshBuiltins(options, names, 'local_process') : createDshNodeBuiltins(options);
+    ports.push(port);
+    return port;
   });
   const config = { agentId: 'agent', agentRevision: 3, buildId: 'build', runtime, local: true, a2aBindings: [binding], toolBindings: [] };
   applyPreset(ctx, config);
@@ -235,8 +243,9 @@ test('Desktop Studio resumes the original service Run and original A2A task afte
   const resources = await createResources({ agentId: 'agent', buildId: 'build', runtime: 'native-engine',
     nativeService: true, sessionId: 'session', agent: f.agent, toolAdapter });
   assert(resources.dynamicTools.some(tool => tool.name === 'call_a2a_agent' && tool.receiptObservation === true));
-  const { createEngineService } = await import(new URL('engine-service.mjs',
-    import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')));
+  const engineServer = process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER;
+  const { createEngineService } = await import(new URL('engine-service.mjs', engineServer ? pathToFileURL(engineServer)
+    : import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')));
   const token = 'fixture-studio-local-receipt-token', modelRequests = [];
   const startup = { workspace: f.workspaceRoot, stateDir: join(f.root, 'engine-state'),
     scope: { tenantId: 'fixture', workspaceId: 'workspace', userId: 'user', agentId: 'agent' },

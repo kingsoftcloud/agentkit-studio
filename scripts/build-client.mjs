@@ -28,25 +28,6 @@ const result = await build({
         const result = await transform(match[1], { loader: 'css', minify: true, legalComments: 'none' });
         return { contents: `export default ${JSON.stringify(result.code)};`, loader: 'js' };
       });
-      // The published Harness package exports these styles as static template
-      // strings. Minify the CSS with the same parser used for Studio assets.
-      builder.onLoad({ filter: /agentkit-harness-ui[\/]src[\/](styles|status-panel)\.mjs$/ }, async ({ path }) => {
-        const source = await readFile(path, 'utf8');
-        const declaration = /(export const (?:styles|statusPanelStyles) = )`([^`]+)`;/;
-        const match = source.match(declaration);
-        if (!match || /\$\{/.test(match[2])) return;
-        const css = await transform(match[2], { loader: 'css', minify: true, legalComments: 'none' });
-        return { contents: source.replace(declaration, () => match[1] + JSON.stringify(css.code) + ';'), loader: 'js' };
-      });
-      // Compress the published renderer before linking it into the host script
-      // so syntax highlighting fits Studio's existing client budget.
-      builder.onLoad({ filter: /agentkit-harness-ui[\\/]markdown[\\/]dist[\\/]markdown\.mjs$/ }, async ({ path }) => {
-        const { code } = await minify(await readFile(path, 'utf8'), {
-          ecma: 2022, module: true, compress: { passes: 2 },
-        });
-        if (!code) throw new Error('Harness Markdown compression produced no code');
-        return { contents: code, loader: 'js' };
-      });
     },
   }],
 });
@@ -62,8 +43,6 @@ if (!output.includes('window.__ModuleLoader__.load({')) throw new Error('client 
 if (!output.includes('@kingsoftcloud/agentkit-studio')) throw new Error('client bundle lost the Studio module id');
 for (const input of Object.keys(result.metafile.inputs)) {
   if (input === 'node_modules/@deepseek-ai/dsh-util-values/lib/index.js') continue;
-  if (/^node_modules\/@kingsoftcloud\/agentkit-harness-ui\/(?:src\/|markdown\/dist\/markdown\.mjs$)/.test(input)) continue;
-  if (/^node_modules\/@kingsoftcloud\/agentkit-harness-core\/dist\/(?:child-workspace-tools|capability-profile|model-capabilities|values|error-presentation)\.mjs$/.test(input)) continue;
   if (/^(?:src\/(?:host|providers)\/|packages\/agentkit-harness\/|node_modules\/)/.test(input)) throw new Error(`Unexpected browser dependency: ${input}`);
 }
 await mkdir(resolve(root, 'dist'), { recursive: true });

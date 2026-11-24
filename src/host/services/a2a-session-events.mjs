@@ -2,7 +2,7 @@
  * the child source retains its independent seq. No model surface, approval,
  * Native kernel commit, external turn or task effect is created here. */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../../contracts/native-values.mjs';
 import { dshPresetId, HARNESS_SERVICE_PRESET_SUFFIX } from '../../agent-preset-admission.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 

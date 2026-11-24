@@ -6,7 +6,7 @@ import { createAgentStore } from '../../src/agent-store.mjs';
 import { createModelService } from '../../src/model-service.mjs';
 import { createStudioNativeHarness } from './retired-native-harness.mjs';
 import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';
-import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './retired-native/providers/native-dsh-tools.mjs';
 import { dshPresetId, HARNESS_SERVICE_PRESET_SUFFIX } from '../../src/agent-preset-admission.mjs';
 import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
 import { installWorkspaceRepairFault } from './studio-native-workspace-repair.mjs';

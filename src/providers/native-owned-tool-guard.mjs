@@ -1,4 +1,5 @@
-import { canonical, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical } from '../contracts/native-values.mjs';
+import { parseNativeJson } from '../contracts/native-json.mjs';
 import { sandboxRegistryName } from './sandbox-code-name.mjs';
 
 /** Recheck immutable Native authority after approval and immediately before dispatch,

@@ -42,7 +42,7 @@ Product identity and packaging input. `copy` is the only optional section and co
 | Key | Value | Notes |
 | --- | --- | --- |
 | `id` | `agentkit-studio` | Plugin identifier |
-| `version` | `0.0.16` | Follows `package.json#version` |
+| `version` | `0.0.22` | Follows `package.json#version` |
 | `requiredHostApi` | `dsh-native/0.2.2-rc.1` | Required Host API version |
 | `requiredDsh` | `0.2.2-rc.1` | Required DSH version |
 | `requiredHostContract` | `1` | Host contract number |
@@ -70,7 +70,7 @@ The DSH base pin. Raw commit SHAs and digests are internal, so this page shows p
 
 ## `cordis.patch.yml`
 
-10 named entries and 2 insert blocks. `disabled: true` turns an official module off; `false` keeps it.
+11 named entries and 1 insert blocks. `disabled: true` turns an official module off; `false` keeps it.
 
 | Entry | disabled | Package | config | Location |
 | --- | --- | --- | --- | --- |
@@ -83,14 +83,15 @@ The DSH base pin. Raw commit SHAs and digests are internal, so this page shows p
 | `schedule` | `false` | — | — | `cordis.patch.yml:30` |
 | `ui-schedule` | `false` | — | — | `cordis.patch.yml:33` |
 | `ui-agent-preset` | `false` | — | — | `cordis.patch.yml:41` |
-| `ui-model-selection` | `false` | — | — | `cordis.patch.yml:54` |
+| `agent-preset-registry` | — | — | `default=standard` | `cordis.patch.yml:46` |
+| `ui-model-selection` | `false` | — | — | `cordis.patch.yml:51` |
 
 ## Version and compatibility
 
 | Item | Value | Notes |
 | --- | --- | --- |
 | Product schema | `1` | A new required key is a breaking change |
-| Plugin version | `0.0.16` | Matches `package.json#version` |
+| Plugin version | `0.0.22` | Matches `package.json#version` |
 | Host contract | `1` | Must equal `dsh-pin.json#hostContract` |
 | DSH version | `0.2.2-rc.1` | Pinned, does not follow npm latest |
 

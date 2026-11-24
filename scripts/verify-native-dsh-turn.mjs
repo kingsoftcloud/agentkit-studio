@@ -127,7 +127,7 @@ try {
     assert.equal(new Set(markers.map(event => event.data.runId)).size, 2);
     assert.ok(markers.every(event => event.ignorable === true && !Object.hasOwn(event, 'surfaceOp')
       && event.data.contract === 'agentkit.native-context-presentation/v1' && event.data.marker.status === 'completed'));
-    const { createSessionTaskProjector } = await import('../src/client/dsh/session-task-events.mjs');
+    const { createSessionTaskProjector } = await import('@kingsoftcloud/agentkit-harness-ui/host/session-task-events');
     const windows = createSessionTaskProjector({ sessionId: 'native-sdk-session' }).project({ revision: 1,
       entries: stored.filter(event => typeof event.type === 'string' && event.data).map(event => ({ type: 'event', event })) });
     for (const turn of [1, 2]) assert.ok(windows.find(row => row.turn === turn)?.state.contextMarkers?.length,

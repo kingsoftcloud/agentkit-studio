@@ -1,5 +1,6 @@
 /** Model-facing knowledge lookup. Independent of Native and DSH lifecycles. */
-import { copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { toolInputRejection } from './contracts/tool-input.mjs';
+import { copy, invariant } from './contracts/native-values.mjs';
 import { createAicpResourceConnection } from './aicp-resource-connection.mjs';
 
 export const STUDIO_KNOWLEDGE_TOOLS = 'agentkit.studio-knowledge-tools/v1';

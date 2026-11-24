@@ -8,8 +8,8 @@ import { NativeKernel, configure, emptyUsage } from '@kingsoftcloud/agentkit-har
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { memoryDigest } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
-import { composeStudioNativeMemoryTools, explicitMemoryTarget } from '../src/providers/native-memory-tools.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
+import { composeStudioNativeMemoryTools, explicitMemoryTarget } from './fixtures/retired-native/providers/native-memory-tools.mjs';
 
 const finish = text => ({ kind: 'final_candidate', text, toolCalls: [], usage: emptyUsage() });
 function config(text, source = { kind: 'user' }) {

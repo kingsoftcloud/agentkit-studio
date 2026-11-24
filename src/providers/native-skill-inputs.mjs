@@ -4,8 +4,8 @@
 import { createHash } from 'node:crypto';
 import { constants, closeSync, fsyncSync, openSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
-import { copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
-import { privateDirectory, syncDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { copy, invariant } from '../contracts/native-values.mjs';
+import { privateDirectory, syncDirectory } from '../host/private-state.mjs';
 import { readSkillWorkflowArtifact } from './native-skill-workflow.mjs';
 
 export const NATIVE_SKILL_INPUT_FILES = 'agentkit.native-skill-input-files/v1';

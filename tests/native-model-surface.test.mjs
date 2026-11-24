@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindNativeModelSurface } from '../src/providers/native-model-surface.mjs';
-import { nativeChildModelSurface } from '../src/providers/native-child-surface.mjs';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindNativeModelSurface } from './fixtures/retired-native/providers/native-model-surface.mjs';
+import { nativeChildModelSurface } from './fixtures/retired-native/providers/native-child-surface.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 import { NATIVE_EXECUTION_CONTEXT_OWNERSHIP as policy, nativeHostInputRows, nativeHostInputIsRefresh } from '../src/providers/native-context-ownership.mjs';
-import { nativeRecoveryBinding, readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { nativeRecoveryBinding, readNativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
 import { fixture, digest, scope } from './fixtures/native-core.mjs';
-import { nativeLocalExecutionMethods } from '../src/providers/native-local-execution.mjs';
+import { nativeLocalExecutionMethods } from './fixtures/retired-native/providers/native-local-execution.mjs';
 import { workspaceBrowserCapability } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-policy';
 const description = { protocol: 'openai-chat', modelName: 'test', parameters: {}, input: ['text', 'image'],
   contextWindow: 128000, maxOutputTokens: 8192 };

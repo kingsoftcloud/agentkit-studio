@@ -103,7 +103,7 @@ Source: `src/local-resource-adapters.mjs:95-126`, `:26`, `:65`.
 | Manual retry entry point | A "retry this call" action on the resource status page | Only automatic re-probes exist; there is no `AGENTKIT_MCP_RETRY`-style switch |
 | Idempotency identity | Every resource call carries an `IdempotencyKey` so replay cannot duplicate side effects | Only deployment, build and evaluation paths carry one; resource calls do not |
 | Single absolute deadline | One deadline per turn instead of per-layer timers | Today budgets are layered: Codex idle/stream, 15-minute frozen runtime, 60-second MCP tool |
-| safe-read recovery | Read-only tools may be replayed when side effects are uncertain | `readOnly: false` and `concurrentSafe: false` are hard-coded — unknown external effects never earn safe-read (`src/providers/native-dsh-tools.mjs:952-954`) |
+| Safe-read recovery | Read-only tools may be replayed after an uncertain response | The engine enforces permissions based on the declared tool and its committed outcome |
 | Resource events as first-class UI actions | Resource check events drive page actions | The event ships, but the UI only displays it |
 
 <Callout type="error" title="Never mask unknown side effects with a retry">

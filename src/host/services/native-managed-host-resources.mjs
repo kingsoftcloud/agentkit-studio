@@ -1,5 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { canonical, invariant, parseNativeJson, TOOL_RECEIPT_OBSERVATION_CONTRACT } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant } from '../../contracts/native-values.mjs';
+import { parseNativeJson } from '../../contracts/native-json.mjs';
+import { ENGINE_TOOL_RECEIPT } from '../../providers/engine-service-client.mjs';
 import { codexToolBindings, prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { nativeAgentPolicyDecision, nativeAgentPolicyFromSpec } from '../../native-agent-policy.mjs';
 import { engineHostTools, nativeHostToolCallId } from '../../providers/native-engine-runtime.mjs';
@@ -95,7 +97,7 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     const pairs = codexToolBindings([...a2aTools, ...prepared.tools.filter(tool => tool._source === 'mcp')])
       .filter(({ tool }) => nativeAgentPolicyDecision(policy, tool.name, tool._source === 'a2a' && tool.readOnly === true) !== 'deny');
     const wire = engineHostTools(pairs.map(({ spec, tool }) => tool._source === 'a2a' ? { ...spec, timeoutMs: tool.timeoutMs,
-      ...(tool.name === 'call_a2a_agent' && toolCatalog.receiptObservation === TOOL_RECEIPT_OBSERVATION_CONTRACT
+      ...(tool.name === 'call_a2a_agent' && toolCatalog.receiptObservation === ENGINE_TOOL_RECEIPT
         ? { receiptObservation: true } : {}),
       readOnly: tool.readOnly && nativeAgentPolicyDecision(policy, tool.name, true) !== 'ask' } : spec), toolCatalog);
     const tools = wire.tools;

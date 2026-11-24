@@ -103,7 +103,7 @@ AGENTKIT_STRICT_RESOURCES=1
 | 手动重试入口 | 资源状态页提供「重试本次调用」按钮 | 只有自动重探；没有 `AGENTKIT_MCP_RETRY` 之类的开关 |
 | 幂等身份 | 每次资源调用带 `IdempotencyKey`，重放不会重复副作用 | 只有部署/构建/评测路径有 `idempotencyKey`；资源调用没有 |
 | 单一绝对 deadline | 一轮请求只有一个截止时间，而不是各层各自计时 | 目前是分层预算：Codex 空闲/流式、冻结运行 15 分钟、MCP 工具 60 秒 |
-| safe-read 恢复 | 只读工具可在不确定副作用时安全重放 | `readOnly: false` 且 `concurrentSafe: false` 是硬编码——未知外部效果永不获得 safe-read（`src/providers/native-dsh-tools.mjs:952-954`） |
+| safe-read 恢复 | 只读工具在响应不明确时可安全重试 | 引擎依据工具的权限声明和已持久化结果判断是否允许重试 |
 | 资源事件作为 UI 一等动作 | 资源检查事件驱动页面操作 | 事件已落地，但 UI 侧只读展示 |
 
 <Callout type="error" title="不要用「重试」掩盖未知副作用">

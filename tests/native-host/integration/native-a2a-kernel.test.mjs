@@ -15,7 +15,7 @@ import { createNativeA2aToolPort, nativeA2aToolDefinitions } from '@kingsoftclou
 const tmp = realpathSync(tmpdir());
 
 // Import the production authority rather than substituting an always-true guard.
-import { createNativeToolAuthority } from '../../../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority } from '../../fixtures/retired-native/providers/native-tool-authority.mjs';
 
 // ---- Mock discovery/invocation/exposurePlan for A2A ----
 

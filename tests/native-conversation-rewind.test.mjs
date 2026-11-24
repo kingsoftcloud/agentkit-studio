@@ -5,7 +5,7 @@ import {
   nativeConversationRewindAdmission,
   nativeConversationRewindMarkers,
   NATIVE_CONVERSATION_REWIND_SOURCE,
-} from '../src/providers/native-conversation-rewind.mjs';
+} from './fixtures/retired-native/providers/native-conversation-rewind.mjs';
 
 // Data-only Session/head fixtures — no Host, Run store, or network. The
 // scanner and admission helper are pure functions over event arrays, so the

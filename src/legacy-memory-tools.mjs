@@ -3,14 +3,15 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { toolInputRejection } from './contracts/tool-input.mjs';
+import { canonical, copy, invariant } from './contracts/native-values.mjs';
 import { hostFetch } from './http-fetch.mjs';
 import { createAicpResourceConnection } from './aicp-resource-connection.mjs';
 import { aicpCompatibleId } from './memory-identity.mjs';
 import { memorySubjectId, memorySessionId } from './memory-identity.mjs';
 import { LegacyMemoryEffects } from './legacy-memory-effects.mjs';
 import { LegacyLocalMemory } from './legacy-memory-local.mjs';
-import { nativeMemorySensitiveLabels } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
+import { nativeMemorySensitiveLabels } from './host/legacy-memory-sensitivity.mjs';
 import { formatLegacyMemoryEntries, parseLegacySdkMemoryEntries } from './legacy-memory-format.mjs';
 
 export const LEGACY_MEMORY_TOOLS = 'agentkit.legacy-memory-tools/v1';

@@ -9,7 +9,7 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { createNativeSessionDelivery, nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { NATIVE_DSH_CONTENT_FORMAT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { fixture, tool, scope, digest } from './fixtures/native-core.mjs';
-import { nativeConversationCut } from '../src/providers/native-conversation-cut.mjs';
+import { nativeConversationCut } from './fixtures/retired-native/providers/native-conversation-cut.mjs';
 import { nativeLiveStream } from '@kingsoftcloud/agentkit-harness-node/native/assistant-stream';
 
 // A fault-injectable durable consumer for transport tests; the shipped SDK

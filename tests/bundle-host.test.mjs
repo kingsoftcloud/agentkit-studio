@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath, lstat, readdir, cp, rename, readlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -78,14 +78,24 @@ test('offline boot wires the public DSH CLI/profile and forwards only target res
   assert.equal(JSON.stringify(plan.identity).includes('secret'), false);
 });
 
-test('a Container bundle starts the reviewed Harness on its own loopback port and retains its task view after restart', async t => {
+test('the Container rejects an invalid version before consuming an engine release', async t => {
   const f = await fixture(t);
   const plan = await prepareBundleHost(f);
-  assert.equal(await startBundleHarness(plan, { env: {} }), null);
+  assert.equal(await startBundleHarness(plan, { env: { AGENTKIT_STAR_HARNESS_VERSION: 'invalid' } }), null);
   const env = { AGENTKIT_BUNDLE_STAR_HARNESS: '1' };
+  await assert.rejects(startBundleHarness(plan, { env: { ...env, AGENTKIT_STAR_HARNESS_VERSION: '../0.0.31' } }),
+    { code: 'STAR_HARNESS_RELEASE_INVALID' });
+});
+
+const signedHarnessVersion = process.env.AGENTKIT_TEST_SIGNED_CLOUD_HARNESS_VERSION;
+test('a Container bundle reuses the installed signed release and retains its task view after restart',
+  { skip: !signedHarnessVersion }, async t => {
+  const f = await fixture(t);
+  const plan = await prepareBundleHost(f);
+  const env = { AGENTKIT_BUNDLE_STAR_HARNESS: '1', PATH: process.env.PATH };
   const first = await startBundleHarness(plan, { env });
   t.after(() => first.stop());
-  assert.equal(first.version, '0.0.26');
+  assert.equal(first.version, signedHarnessVersion);
   assert.match(first.endpoint, /^http:\/\/127\.0\.0\.1:\d+$/u);
   assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_WORKSPACE, plan.cwd);
   assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_MODEL, 'model');
@@ -97,10 +107,24 @@ test('a Container bundle starts the reviewed Harness on its own loopback port an
   assert.ok(await fetchEngineServiceView(first.endpoint, first.token, view));
   await client.close();
   await first.stop();
-  const second = await startBundleHarness(await prepareBundleHost(f), { env });
+  // Reuse the prior signed install when upgrading a deployment that
+  // provisioned the release before Studio wrote a persistent selection.
+  const selection = join(dirname(plan.cwd), 'star-harness-releases', 'selected-release.json');
+  assert.deepEqual(JSON.parse(await readFile(selection, 'utf8')), { version: signedHarnessVersion });
+  await rm(selection);
+  const restart = async () => startBundleHarness(await prepareBundleHost(f), {
+    env: { ...env, PATH: join(f.state, 'unavailable-package-manager') },
+  });
+  const second = await restart();
   t.after(() => second.stop());
   assert.notEqual(second.token, first.token);
+  assert.equal(second.version, first.version);
   assert.ok(await fetchEngineServiceView(second.endpoint, second.token, view));
+  await second.stop();
+  const pinned = await restart();
+  t.after(() => pinned.stop());
+  assert.equal(pinned.version, first.version);
+  assert.ok(await fetchEngineServiceView(pinned.endpoint, pinned.token, view));
 });
 
 test('restart preserves DSH session state, while changed archives cannot take over a deployment', async t => {

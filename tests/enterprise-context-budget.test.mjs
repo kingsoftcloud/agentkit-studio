@@ -21,7 +21,7 @@ import { fixture, scope, tool, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
 import { estimateNativeWireInput } from '@kingsoftcloud/agentkit-harness-node/native/context-counter';
-import { bindNativeContext } from '../src/providers/native-context.mjs';
+import { bindNativeContext } from './fixtures/retired-native/providers/native-context.mjs';
 
 const description = { protocol: 'openai-chat', modelName: 'pinned', contextWindow: 6000, maxOutputTokens: 256, parameters: {} };
 const summaryText = 'PRIVATE-CONTEXT-NOTES' + '中文摘要'.repeat(12);

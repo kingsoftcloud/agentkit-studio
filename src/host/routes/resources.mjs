@@ -1,7 +1,7 @@
 /** Resource operations behind the existing authenticated dispatch boundary. */
 import { listStudioTools } from '../../native-tool-catalog.mjs';
 export function createResourceRoutes({
-  models, serverClientPromise, localMcpStorePromise, skillDiscoveryPromise, mcpProbePromise,
+  models, serverClientPromise, localMcpStorePromise, skillDiscoveryPromise, mcpProbePromise, starHarness,
 }) {
   return async (endpoint, payload, signal) => {
     const serverClient = await serverClientPromise;
@@ -13,7 +13,7 @@ export function createResourceRoutes({
           localMcpStore: await localMcpStorePromise, skillDiscovery: await skillDiscoveryPromise, mcpProbes: await mcpProbePromise }) };
       }
       if (kind === 'tool') {
-        const value = await listStudioTools({ query: payload, serverClient, signal });
+        const value = await listStudioTools({ query: payload, serverClient, signal, catalog: starHarness?.toolCatalog ?? undefined });
         return { ok: true, value };
       }
       const resourceKind = kind;

@@ -8,10 +8,10 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { createNativeDshTurnExecutor } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
-import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './retired-native/providers/native-dsh-tools.mjs';
 import { installNativeBoundPolicy } from '../../src/providers/native-bound-policy.mjs';
-import { createNativeHostInteraction } from '../../src/providers/native-host-interaction.mjs';
-import { createStudioNativeCommandProgress } from '../../src/host/services/native-command-progress.mjs';
+import { createNativeHostInteraction } from './retired-native/providers/native-host-interaction.mjs';
+import { createStudioNativeCommandProgress } from './retired-native/host/services/native-command-progress.mjs';
 
 export const name = 'native-durable-approval-sdk-verification';
 export const inject = ['tools', 'approval', 'sandboxPolicy', 'llm', 'sessions', 'sessionProjections'];

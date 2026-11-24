@@ -2,6 +2,7 @@ import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { installTaskTimeline } from '../../src/client/dsh/task-timeline.mjs';
+import { installTaskTimeline as installRenderer } from '@kingsoftcloud/agentkit-harness-ui/host/task-timeline';
 
 const gates = new Map(), slots = new Map();let current = 'alpha', failReads = false;
 const localAgentId = 'ar-20261118155500-a1b2c3d4';
@@ -33,7 +34,7 @@ const hostRemote = {
   },
   nativeChildHistory: async ({ sessionId }) => { await data(sessionId).children.promise;return directory(sessionId); },
 };
-installTaskTimeline(context, { ui: { React, ReactDOM }, hostRemote });
+installTaskTimeline(context, { ui: { React, ReactDOM }, hostRemote }, installRenderer);
 const View = slots.get('conversation.chat.presentation:primary');
 const entry = (seq, type, payload) => ({ type: 'event', event: { seq, type, time: 1000 + seq, data: { turn: 1, step: 1, ...payload } } });
 const windowFor = sessionId => ({ revision: 1, entries: [entry(1, 'turn/start', {}),

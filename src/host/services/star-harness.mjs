@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { canonicalEngineWorkspace, HARNESS_SERVICE_MODEL_PROVIDER } from '../../providers/engine-service-workspaces.mjs';
-import { modelInput } from '../../model-service.mjs';
+import { modelInput } from '../../model-input.mjs';
 import { createStarHarnessReleases, inspectStarHarness, probeStarHarness, startStarHarness, starHarnessError, starHarnessVersion } from './star-harness-release.mjs';
 
 const initial = { version: null, previousVersion: null, enabled: false, bindings: [] };
@@ -25,11 +25,11 @@ const newer = (a, b) => {
 };
 const modelSelection = model => ({ provider: HARNESS_SERVICE_MODEL_PROVIDER, model });
 
-export function createStarHarnessManager({ root, env, externalRoutes, profile, settings, bundledVersion, packageManager, workspaceRegistry, modelProfiles = [],
+export function createStarHarnessManager({ root, env, externalRoutes, profile, settings, packageManager, workspaceRegistry, modelProfiles = [],
   releases = createStarHarnessReleases({ directory: join(root, 'releases'), env, packageManager }),
   start = startStarHarness, probe = probeStarHarness, inspect = inspectStarHarness } = {}) {
   const configPath = join(root, 'settings.json');
-  let configuration = initial, configError, clientError, clientAsset = null;
+  let configuration = initial, configError, clientError, clientAsset = null, toolCatalog = null;
   try {
     const found = JSON.parse(readFileSync(configPath, 'utf8'));
     if (!(found.version === null && found.enabled === false || starHarnessVersion(found.version))
@@ -45,15 +45,23 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   const lifetime = new AbortController();
   let mutation, latestVersion = null, closing;
 
-  const readClient = next => next.enabled ? releases.client?.(next.version) ?? null : null;
+  async function readAssets(next) {
+    if (!next.enabled) return { client: null, toolCatalog: null };
+    if (releases.assets) return releases.assets(next.version);
+    return { client: await releases.client?.(next.version) ?? null, toolCatalog: null };
+  }
+  function applyAssets(assets) {
+    clientAsset = assets.client;
+    toolCatalog = assets.toolCatalog;
+  }
   const clientDescriptor = () => clientAsset ? { version: clientAsset.version, sha256: clientAsset.sha256 } : null;
-  async function save(next, nextAsset = clientAsset) {
+  async function save(next, nextAssets) {
     await mkdir(root, { recursive: true, mode: 0o700 });
     const temp = join(root, '.settings-' + randomUUID());
     try {
       await writeFile(temp, JSON.stringify(next), { mode: 0o600 });
       await rename(temp, configPath);
-      clientAsset = nextAsset;
+      applyAssets(nextAssets);
       clientError = null;
       configuration = next;
     } finally { await rm(temp, { force: true }); }
@@ -62,14 +70,20 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   const registeredWorkspaces = () => workspaceRegistry?.()?.list?.() ?? [];
   const defaultProfile = profiles => profiles.find(row => row.enabled !== false && row.default)
     ?? profiles.find(row => row.enabled !== false);
+  const configuredProfile = id => configuredProfiles.find(row => row.enabled !== false && row.id === id);
   const automaticBinding = workspace => {
     if (!registeredWorkspaces().some(row => row.path === workspace)) return;
-    if (leases.has(workspace)) return starting.get(workspace)?.binding ?? workers.get(workspace)?.binding;
     const selected = defaultProfile(configuredProfiles);
     return { workspace, automatic: true, profileId: selected?.id, model: selected?.modelName || 'Star Harness',
       contextWindow: selected?.contextWindow, images: modelInput(selected).includes('image') };
   };
-  const bindingFor = workspace => managedBinding(workspace) ?? automaticBinding(workspace);
+  const bindingFor = workspace => {
+    if (leases.has(workspace)) return starting.get(workspace)?.binding ?? workers.get(workspace)?.binding;
+    const binding = managedBinding(workspace);
+    if (!binding) return automaticBinding(workspace);
+    const selected = configuredProfile(binding.profileId);
+    return { ...binding, contextWindow: selected?.modelName === binding.model ? selected.contextWindow : undefined };
+  };
   const workspaceExists = workspace => typeof workspace === 'string' && canonicalEngineWorkspace(workspace) === workspace;
   const hasConflict = workspace => [...externalRoutes.keys()].some(bound => overlaps(bound, workspace));
   const presentBinding = binding => ({
@@ -79,7 +93,9 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
     const selected = await profile(binding.profileId, signal);
     if (selected.modelName !== binding.model && (!binding.automatic || binding.profileId))
       throw starHarnessError('STAR_HARNESS_MODEL_CHANGED', '工作区绑定的模型已变化，请重新绑定后启动。');
-    return { ...selected, images: binding.automatic && !binding.profileId ? modelInput(selected).includes('image') : binding.images };
+    return { ...selected,
+      ...(binding.contextWindow !== undefined ? { contextWindow: binding.contextWindow } : {}),
+      images: binding.automatic && !binding.profileId ? modelInput(selected).includes('image') : binding.images };
   }
   function ownWorker(binding, connection) {
     workers.set(binding.workspace, { binding, connection });
@@ -117,7 +133,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   async function replaceWorkers(before, after, next, signal) {
     // A workspace ledger has one writer. The new worker takes over only after
     // the old one has stopped. Restore its previous version if cutover fails.
-    const nextAsset = await readClient(next);
+    const nextAssets = await readAssets(next);
     const stopped = [], started = [];
     try {
       for (const binding of before) {
@@ -129,7 +145,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         started.push(binding);
       }
       signal.throwIfAborted();
-      await save(next, nextAsset);
+      await save(next, nextAssets);
     } catch (error) {
       await Promise.allSettled(started.map(binding => stop(binding.workspace)));
       if (!lifetime.signal.aborted) await Promise.allSettled(stopped.filter(binding => available(binding.workspace) && bindingFor(binding.workspace)).map(async binding => {
@@ -161,10 +177,15 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   return {
     get enabled() { return configuration.enabled; },
     get clientAsset() { return clientAsset; },
+    get toolCatalog() { return toolCatalog && structuredClone(toolCatalog); },
     async restoreClientAsset() {
-      try { clientAsset = await readClient(configuration); }
+      try {
+        applyAssets(await readAssets(configuration));
+        clientError = null;
+      }
       catch (error) {
-        clientError = starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 前端校验失败，请重新安装当前版本。', { cause: error });
+        applyAssets({ client: null, toolCatalog: null });
+        clientError = starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 发行签名或文件校验失败，请在插件页安装兼容的签名版本。', { cause: error });
         throw clientError;
       }
     },
@@ -180,15 +201,13 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
     },
     modelInfo(model) {
       const capabilities = activeBindings().filter(binding => binding.model === model).flatMap(binding => {
-        const { automatic, profileId, images, contextWindow } = binding;
-        // Automatic bindings can use a worker's pinned profile while leased.
-        if (automatic && profileId) return [{ images, window: contextWindow ?? 128000 }];
+        const { automatic, workspace, profileId, images, contextWindow } = binding;
         // A legacy binding without a profile has no known capacity.
         if (!profileId) return [{ images, window: undefined }];
-        const selected = configuredProfiles.find(row => row.enabled !== false && row.id === profileId);
+        if (automatic || leases.has(workspace)) return [{ images, window: contextWindow ?? 128000 }];
         // Keep stale bindings visible in settings, but exclude them from the
         // shared catalog entry's capabilities.
-        return selected?.modelName === model ? [{ images, window: selected.contextWindow ?? 128000 }] : [];
+        return configuredProfile(profileId)?.modelName === model ? [{ images, window: contextWindow ?? 128000 }] : [];
       });
       // A legacy binding without a profile has no known capacity. Drop it
       // instead of letting `undefined` veto every sibling: one stale binding
@@ -224,8 +243,6 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         catch { signal?.throwIfAborted(); latestVersion = null; registryUnavailable = true; }
       }
       const { version, enabled, previousVersion } = configuration;
-      const recommendedVersion = starHarnessVersion(bundledVersion) && (!latestVersion || newer(bundledVersion, latestVersion))
-        ? bundledVersion : latestVersion;
       if (!includeWorkspaces) return { canCreate: Boolean(version && enabled && !clientError) };
       const configuredModels = await settings();
       const external = await Promise.all([...externalRoutes.values()].map(async route => {
@@ -236,8 +253,8 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       }));
       return {
         version, enabled, previousVersion, registryUnavailable, busy: Boolean(mutation || leases.size), clientUI: clientDescriptor(),
-        recommendedVersion,
-        availableUpgrade: recommendedVersion && version && newer(recommendedVersion, version) ? recommendedVersion : null,
+        recommendedVersion: latestVersion,
+        availableUpgrade: latestVersion && version && newer(latestVersion, version) ? latestVersion : null,
         canCreate: Boolean(version && enabled && !clientError), repairNeeded: Boolean(clientError),
         workspaceChoices: (workspaceRegistry?.()?.list?.() ?? []).map(({ path, title }) => ({ path, title })),
         models: (configuredModels.modelProfiles ?? []).filter(item => item.enabled !== false).map(item => ({
@@ -262,7 +279,12 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         const packageDirectory = await releases.install(version, guard);
         await probe({ root, packageDirectory, version, env, signal: guard });
         if (current === version && !clientError) return;
-        const next = current === version ? configuration : { ...configuration, version, previousVersion: current };
+        let previousVersion = current;
+        if (current && current !== version && releases.assets) {
+          try { await releases.assets(current); }
+          catch { guard.throwIfAborted(); previousVersion = null; }
+        }
+        const next = current === version ? configuration : { ...configuration, version, previousVersion };
         const live = [...workers.values()].map(row => row.binding);
         await replaceWorkers(live, live.map(({ workspace }) => available(workspace) && bindingFor(workspace)).filter(Boolean), next, guard);
       }, signal);
@@ -291,12 +313,14 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
         const binding = { workspace: cwd, profileId: selected.id || profileId, model: selected.modelName,
           images: modelInput(selected).includes('image') };
         const original = managedBinding(cwd);
-        if (JSON.stringify(original) === JSON.stringify(binding) && (!configuration.enabled || workers.get(cwd)?.connection.alive)) return;
+        const worker = workers.get(cwd);
+        if (JSON.stringify(original) === JSON.stringify(binding) && (!configuration.enabled
+          || worker?.connection.alive && worker.binding.contextWindow === selected.contextWindow)) return;
         guard.throwIfAborted();
         await workspaceRegistry?.()?.create?.(cwd);
-        const previousWorker = workers.get(cwd)?.binding;
-        const live = previousWorker ? [previousWorker] : [];
-        await replaceWorkers(live, configuration.enabled ? [binding] : [], { ...configuration,
+        const live = worker ? [worker.binding] : [];
+        const candidates = configuration.enabled ? [{ ...binding, contextWindow: selected.contextWindow }] : [];
+        await replaceWorkers(live, candidates, { ...configuration,
           bindings: [...configuration.bindings.filter(row => row.workspace !== cwd), binding] }, guard);
       }, signal);
     },

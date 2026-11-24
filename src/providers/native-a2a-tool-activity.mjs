@@ -3,7 +3,7 @@
  * _a2a_tool_activity.py; bounded state is committed by the original caller. */
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant } from '../contracts/native-values.mjs';
 import { a2aIdentity } from './native-a2a-events.mjs';
 
 export const A2A_TOOL_ACTIVITY_URI = 'urn:ksadk:a2a:tool-activity:v1';

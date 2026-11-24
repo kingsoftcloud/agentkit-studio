@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { teamsContextDigest } from '../../src/providers/native-teams-context-contract.mjs';
+import { teamsContextDigest } from './retired-native/providers/native-teams-context-contract.mjs';
 import { command, target } from './native-managed-kernel.mjs';
 
 export function preparedContext({ sessionId = 'teams-session', contextRef = randomUUID(), policyRef = randomUUID(),

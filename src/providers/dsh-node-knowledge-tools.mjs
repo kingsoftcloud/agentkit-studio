@@ -1,6 +1,7 @@
 /** DSH-owned lifecycle for the neutral Studio knowledge lookup service. */
 import { join } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
 import { knowledgeToolDefinitions, STUDIO_KNOWLEDGE_TOOLS } from '../knowledge-tools.mjs';
 import { commandStateRoot, DshNodeCommandLedger } from './dsh-node-command-ledger.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';

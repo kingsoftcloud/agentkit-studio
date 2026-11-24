@@ -1,7 +1,12 @@
 /** Explicit Skill Service transport. Endpoint and credentials are Host input;
  * tools cannot change either. KOP and legacy REST have separate paging rules. */
+import { createHash } from 'node:crypto';
 import aws4 from 'aws4';
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { hostFetch } from '../http-fetch.mjs';
+import { createAgentEngineClient } from '../server-client.mjs';
+
+export const STUDIO_NATIVE_REMOTE_SKILLS = 'agentkit.studio-native-remote-skills/v1';
 
 const prefix = 'KSADK_SKILL_SERVICE_';
 const official = new Set(['aicp.api.ksyun.com', 'aicp.inner.api.ksyun.com', 'aicp.internal.api.ksyun.com']);
@@ -100,4 +105,19 @@ export function createExplicitNativeSkillClient(settings, fetchImpl) {
     return { data: payload.Data ?? payload.data ?? {}, requestId: String(payload.RequestId ?? payload.request_id ?? '') };
   }
   return Object.freeze({ skillAction, skillProtocol: settings.protocol });
+}
+
+const fields = ['cloudAccessKey', 'cloudSecretKey', 'cloudSessionToken', 'cloudRegion', 'cloudAccountId', 'cloudServerUrl', 'cloudCustomSource'];
+
+/** Snapshot at Host activation, including credentials in a private closure.
+ * A later global configuration edit cannot redirect an already pinned Run. */
+export async function createNativeSkillConnection({ configuration, env = {}, fetchImpl = hostFetch, innerKopUrl = '', innerIamUrl = '' }) {
+  const resolved = await configuration.resolve();
+  const values = Object.fromEntries(fields.map(key => [key, resolved.values[key] ?? '']));
+  invariant(Object.values(values).every(value => typeof value === 'string'), 'NATIVE_SKILL_CONNECTION_INVALID');
+  const explicit = nativeSkillConnectionSettings(values, { ...env });
+  const client = explicit ? createExplicitNativeSkillClient(explicit, fetchImpl)
+    : createAgentEngineClient({ configuration: { resolve: async () => ({ values: copy(values) }) }, fetchImpl, innerKopUrl, innerIamUrl });
+  return Object.freeze({ client, bindingDigest: createHash('sha256').update(canonical({
+    contract: STUDIO_NATIVE_REMOTE_SKILLS, values, explicit, innerKopUrl, innerIamUrl })).digest('hex') });
 }

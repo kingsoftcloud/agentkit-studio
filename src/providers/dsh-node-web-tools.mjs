@@ -1,8 +1,15 @@
-/** DSH Session-bound web calls; HTTP/search semantics live in the shared transport. */
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { createWebToolTransport, nativeWebToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/web-tools';
+/** DSH Session-bound web calls and their Host-owned receipts. */
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { redactDiagnosticText } from '../diagnostic-text.mjs';
+import { hostFetch } from '../http-fetch.mjs';
+import { createDshNodeToolOutputStore } from './dsh-node-tool-output-store.mjs';
+import { resolveWebSearchConfig, resolveWebSsrfPolicy } from './native-web-configuration.mjs';
+import { createSsrfPinnedFetch, isBlockedAddress } from './ssrf-pinned-fetch.mjs';
+import { studioWebToolDefinitions, webFetch, webSearch } from './studio-web-transport.mjs';
 
 export const DSH_NODE_WEB_CONTRACT = 'agentkit.dsh-node-web/v1';
+export const DSH_WEB_TOOL_NAMES = Object.freeze(studioWebToolDefinitions().map(tool => tool.name));
 const failure = code => Object.assign(new Error(code), { code });
 const errorResult = code => ({ status: 'error', content: { ok: false, error_type: code } });
 const discard = response => {
@@ -37,7 +44,7 @@ export function createDshNodeWebTools({ agentId, fetchImpl, searchFetch = fetchI
   invariant(typeof fetchImpl === 'function' && typeof searchFetch === 'function', 'dsh_node_web_fetch_missing');
   invariant(typeof isClosed === 'function', 'dsh_node_web_is_closed_invalid');
   invariant(hostSignal === undefined || hostSignal instanceof AbortSignal, 'dsh_node_web_host_signal_invalid');
-  const definitions = nativeWebToolDefinitions(), formal = new Map(definitions.map(item => [item.name, item]));
+  const definitions = studioWebToolDefinitions(), formal = new Map(definitions.map(item => [item.name, item]));
   // The public copies never alias the private admission schemas.
   const config = { providerConfig: copy(providerConfig), ssrfPolicy: copy(ssrfPolicy) };
   const lifetime = new AbortController();
@@ -94,11 +101,22 @@ export function createDshNodeWebTools({ agentId, fetchImpl, searchFetch = fetchI
           const ref = await abortable(persistOutput(request, text, metadata), signal);
           assertCurrent(); return ref;
         } : undefined;
-        const transport = createWebToolTransport({ ...config, fetch: guardedFetch(fetchImpl),
-          searchFetch: guardedFetch(searchFetch), persistOutput: persist });
-        const result = await abortable(transport.execute(bound), signal);
+        const input = bound.call.arguments;
+        const operation = name === 'web_fetch'
+          ? webFetch({ fetch: guardedFetch(fetchImpl), url: input.url, maxChars: input.max_chars, offset: input.offset_chars,
+            find: input.find, timeout: input.timeout, ssrfPolicy: config.ssrfPolicy, signal, persistOutput: persist,
+            request: bound, checkCurrent: assertCurrent })
+          : webSearch({ fetch: guardedFetch(searchFetch), providerConfig: config.providerConfig, query: input.query,
+            maxResults: input.max_results, recencyDays: input.recency_days, signal });
+        const content = await abortable(operation, signal).catch(() => {
+          assertCurrent();
+          return { ok: false, error_type: 'WebToolError', error_message: 'web tool failed' };
+        });
         assertCurrent();
-        return result;
+        if (content.ok) return { status: 'ok', content };
+        return { status: 'error', content: { ...content,
+          ...(content.url !== undefined ? { url: redactDiagnosticText(content.url, 1024) } : {}),
+          error_message: redactDiagnosticText(content.error_message, 1024) } };
       } catch (error) {
         // A drift error inside the shared transport may have been sanitized;
         // recompute the original DSH guard before publishing anything.
@@ -109,4 +127,21 @@ export function createDshNodeWebTools({ agentId, fetchImpl, searchFetch = fetchI
       }
     },
   };
+}
+
+export function mountDshNodeWebTools({ agentId, stateDir, isClosed, signal, env = process.env, fetchImpl = hostFetch, persistOutput }) {
+  invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_node_output_store_invalid');
+  const output = persistOutput === undefined ? createDshNodeToolOutputStore({ directory: stateDir, agentId, isClosed, signal,
+    toolDefinitions: studioWebToolDefinitions().filter(tool => tool.name === 'web_fetch') }) : null;
+  const policy = resolveWebSsrfPolicy(env);
+  const allowPrivate = policy.allowPrivate === true || policy.allow_private === true;
+  const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });
+  const port = createDshNodeWebTools({ agentId, isClosed, signal, fetchImpl: pinned.fetch, searchFetch: fetchImpl,
+    providerConfig: resolveWebSearchConfig(env), ssrfPolicy: { allowPrivate }, persistOutput: persistOutput ?? output?.persistOutput });
+  let closing;
+  return { ...port, get definitions() { return port.definitions; }, close() {
+    port.close();
+    output?.close();
+    return closing ??= Promise.resolve(pinned.close());
+  } };
 }

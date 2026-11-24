@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "agentkit.local-process-binary/v1",
+  "sourceSha256": "aec24ff7327319074bd7dd66fcde657f55179556f8a7e954303ea3f9eb135f0e",
+  "builds": {
+    "darwin-arm64": {
+      "file": "local-process-bin/darwin-arm64/launcher",
+      "sha256": "202cb67e15c09285123b60a9b72c4a8b5824e49e3d8c30746eae2ffb681c22e8",
+      "bytes": 50944,
+      "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+    },
+    "darwin-x64": {
+      "file": "local-process-bin/darwin-x64/launcher",
+      "sha256": "756085384f20c8690b43ea4b304b5acd10ecb438f12c51cf1d78ad545d594fe3",
+      "bytes": 17640,
+      "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+    },
+    "linux-x64": {
+      "file": "local-process-bin/linux-x64/launcher",
+      "sha256": "15205c3219e9771855c0c64812639a589f5d58d2cb6cb5ede9c07a416ecb64b1",
+      "bytes": 62840,
+      "compiler": "cc (Alpine 14.2.0) 14.2.0",
+      "image": "docker.m.daocloud.io/library/alpine@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412"
+    },
+    "linux-arm64": {
+      "file": "local-process-bin/linux-arm64/launcher",
+      "sha256": "c59bf87805d0887cd142f04eff5047146f5ec5d594d400042bda3ce40984b670",
+      "bytes": 132376,
+      "compiler": "cc (Alpine 14.2.0) 14.2.0",
+      "image": "docker.m.daocloud.io/library/alpine@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412"
+    }
+  }
+}

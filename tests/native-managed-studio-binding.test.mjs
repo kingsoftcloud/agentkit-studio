@@ -27,15 +27,15 @@ import { createModelService } from '../src/model-service.mjs';
 
 import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
 
-import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
+import { createStudioManagedNativeBinding } from './fixtures/retired-native/host/services/native-managed-binding.mjs';
 
 import { buildExecutionEngine } from '../src/build-engine.mjs';
-import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
+import { createManagedNativeKernel } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel';
 import { command as serverCommand, permitIssuer, configuration as serverConfiguration, response as serverResponse } from './fixtures/native-managed-kernel.mjs';
 import { NATIVE_DSH_MANAGED_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-managed-ownership';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
-import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
-import { managedNativeOwnerProjection } from '../src/host/services/native-managed-execution.mjs';
+import { createStudioManagedNativeSessionControl } from './fixtures/native-managed-kernel.mjs';
+import { managedNativeOwnerProjection } from './fixtures/retired-native/host/services/native-managed-execution.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');

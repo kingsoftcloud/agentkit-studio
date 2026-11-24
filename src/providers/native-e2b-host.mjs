@@ -3,29 +3,18 @@
  * transportOptions is a trusted supervisor-construction port, never a tool.
  */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, scopeKey } from '@kingsoftcloud/agentkit-harness-core';
-import { createNativeE2BSandboxOwner, createDshE2BSandboxOwner } from '@kingsoftcloud/agentkit-harness-node/native/e2b-sandbox-owner';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { createDshE2BSandboxOwner } from './dsh-e2b-sandbox-owner.mjs';
 import { buildCloudHeaders, resolveTrafficSource } from '../cloud-headers.mjs';
 import { createNativeE2BSdkLifecycle, createNativeE2BSdkTransport, createNativeE2BSdkFileSession, describeNativeE2BSdkLifecycle, NATIVE_E2B_SDK_TRANSPORT } from './native-e2b-sdk-transport.mjs';
 
-export const STUDIO_NATIVE_E2B_HOST = 'agentkit.studio-native-e2b-host/v1';
+import { nativeCommandBackend } from './native-command-backend.mjs';
 export const STUDIO_DSH_E2B_HOST = 'agentkit.studio-dsh-e2b-host/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const nonempty = value => typeof value === 'string' && !!value.trim();
 const types = new Map([['', 'aio'], ['aio', 'aio'], ['allinone', 'aio'], ['code', 'code'],
   ['codeinterpreter', 'code'], ['codesandbox', 'code'], ['browser', 'browser'],
   ['browsersandbox', 'browser'], ['private', 'private'], ['custom', 'private']]);
-
-/** Studio keeps its existing local workspace default. An explicit KsADK E2B
- * selection must never silently fall back to local process execution. */
-export function nativeCommandBackend(env = {}) {
-  const raw = env.KSADK_SANDBOX_BACKEND;
-  invariant(raw == null || typeof raw === 'string', 'studio_native_sandbox_backend_invalid');
-  const selected = raw?.trim().toLowerCase() || 'local_process';
-  if (selected === 'local' || selected === 'local_process') return 'local_process';
-  invariant(selected === 'e2b', 'studio_native_sandbox_backend_unsupported');
-  return 'e2b';
-}
 
 function configuration(env, sandboxEnvironment) {
   invariant(nativeCommandBackend(env) === 'e2b', 'studio_native_e2b_not_selected');
@@ -59,13 +48,10 @@ function configuration(env, sandboxEnvironment) {
 
 /** Preset-wide immutable configuration. Validation and the public Build pin
  * happen synchronously, before registration, approval or an SDK import. */
-export function prepareNativeE2BHost(options = {}) {
-  return prepareE2BHost(options, STUDIO_NATIVE_E2B_HOST, createNativeE2BHostBinding);
-}
 export function prepareDshE2BHost(options = {}) {
   return prepareE2BHost(options, STUDIO_DSH_E2B_HOST, createDshE2BHostBinding);
 }
-function prepareE2BHost({ env = {}, sandboxEnvironment = {}, loadSdk }, contract, bind) {
+export function prepareE2BHost({ env = {}, sandboxEnvironment = {}, loadSdk }, contract, bind) {
   const fixedEnv = { ...env }, fixedEnvironment = copy(sandboxEnvironment);
   const fixed = configuration(fixedEnv, fixedEnvironment);
   const lifecycle = describeNativeE2BSdkLifecycle({ connection: fixed.connection, template: fixed.template,
@@ -79,17 +65,12 @@ function prepareE2BHost({ env = {}, sandboxEnvironment = {}, loadSdk }, contract
       sandboxEnvironment: fixedEnvironment, ...(loadSdk ? { loadSdk } : {}) }) });
 }
 
-export function createNativeE2BHostBinding(options = {}) {
-  scopeKey(options.scope);
-  return createE2BHostBinding({ ...options, ownership: { contract: STUDIO_NATIVE_E2B_HOST,
-    fields: { scope: copy(options.scope) }, create: createNativeE2BSandboxOwner, runtime: 'agentkit' } });
-}
 export function createDshE2BHostBinding(options = {}) {
   invariant(nonempty(options.agentId), 'studio_dsh_e2b_agent_required');
   return createE2BHostBinding({ ...options, deferLifecycle: true, ownership: { contract: STUDIO_DSH_E2B_HOST,
     fields: { agentId: options.agentId }, create: createDshE2BSandboxOwner, runtime: 'agentkit-dsh' } });
 }
-async function createE2BHostBinding({ env, ownership, sessionId, workspaceRoot, stateRoot,
+export async function createE2BHostBinding({ env, ownership, sessionId, workspaceRoot, stateRoot,
   assertAuthority, assertReconciliationAuthority = null, sandboxEnvironment = {}, loadSdk, deferLifecycle = false } = {}) {
   invariant(nonempty(sessionId) && typeof assertAuthority === 'function', 'studio_native_e2b_host_authority_required');
   invariant(assertReconciliationAuthority === null || typeof assertReconciliationAuthority === 'function',

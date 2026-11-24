@@ -9,9 +9,9 @@ import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
 import { memoryDigest } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
-import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
-import { bindStudioNativeMemoryFlush } from '../src/providers/native-memory.mjs';
-import { bindStudioNativeMemoryTurn, completedTurnMemoryEligible, explicitMemoryTaskOwned, perCallOperationKey } from '../src/providers/native-memory-turn.mjs';
+import { nativeRecoveryBinding } from './fixtures/retired-native/providers/native-recovery-binding.mjs';
+import { bindStudioNativeMemoryFlush } from './fixtures/retired-native/providers/native-memory.mjs';
+import { bindStudioNativeMemoryTurn, completedTurnMemoryEligible, explicitMemoryTaskOwned, perCallOperationKey } from './fixtures/retired-native/providers/native-memory-turn.mjs';
 
 const finish = text => ({ kind: 'final_candidate', text, toolCalls: [], usage: emptyUsage() });
 const manageMemoryTool = { name: 'manage_memory', description: 'Manage durable memory',

@@ -3,10 +3,11 @@
  * identities; the shared transport owns process supervision and output.
  */
 import { join } from 'node:path';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { createLocalCommandTransport, localCommandToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/local-command-tools';
-import { buildScriptEnvironment, localControlSettings } from '@kingsoftcloud/agentkit-harness-node/native/local-process';
-import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
+import { toolInputRejection } from '../contracts/tool-input.mjs';
+import { canonical, copy, invariant } from '../contracts/native-values.mjs';
+import { createLocalCommandTransport, localCommandToolDefinitions } from './studio-local-command/local-command-tools.mjs';
+import { buildScriptEnvironment, localControlSettings } from './studio-local-command/local-process.mjs';
+import { createStudioWorkspaceTools } from './studio-workspace/workspace-tools.mjs';
 import { DshNodeCommandLedger, commandDigest, commandStateRoot } from './dsh-node-command-ledger.mjs';
 import { createDshNodeToolOutputStore } from './dsh-node-tool-output-store.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
@@ -49,7 +50,7 @@ export function createDshNodeCommandTools({ ctx, workspaceRoot, stateDir, agentI
   function sessionFor(sessionId) {
     if (!sessions.has(sessionId)) sessions.set(sessionId, {
       ledger: new DshNodeCommandLedger({ root: state.root, agentId, sessionId, assertRoot: state.guard }),
-      workspace: createNativeWorkspaceTools({ workspaceRoot, stateDir: join(state.root, 'capture'), sessionId }),
+      workspace: createStudioWorkspaceTools({ workspaceRoot, stateDir: join(state.root, 'capture'), sessionId }),
     });
     return sessions.get(sessionId);
   }
@@ -89,8 +90,7 @@ export function createDshNodeCommandTools({ ctx, workspaceRoot, stateDir, agentI
         await abortable(authorizeNativeBuiltin(ctx, exec, definition), request.signal); assertCurrent();
         const { ledger, workspace } = sessionFor(original.sessionId);
         const transport = createLocalCommandTransport({ workspaceRoot, stateRoot: join(state.root, 'processes'),
-          sessionId: original.sessionId, settings: policy, sourceEnv: environment, durableForeground: true,
-          assertAuthority: assertCurrent, authorize: async () => { assertCurrent(); return 'allow'; },
+          sessionId: original.sessionId, settings: policy, sourceEnv: environment, assertAuthority: assertCurrent,
           captureWorkspace: value => workspace.capture(value),
           resolveOwnedCommand: (value, taskId) => ledger.resolveOwned(value, taskId, binding),
           artifacts: { async write(value) {
@@ -100,8 +100,7 @@ export function createDshNodeCommandTools({ ctx, workspaceRoot, stateDir, agentI
           } } });
         const dispatch = async () => {
           assertCurrent(); dispatched = definition.readOnly !== true;
-          const { launchedCommand: _, ...result } = await transport.execute(request);
-          return result;
+          return transport.execute(request);
         };
         // Read output remains a live safe read. Only mutations are deduplicated.
         const result = definition.readOnly === true ? await dispatch() : await ledger.execute({ request, binding,

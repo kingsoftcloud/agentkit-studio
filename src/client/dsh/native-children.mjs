@@ -1,4 +1,4 @@
-import { createNativeChildPanel as createPanel } from '@kingsoftcloud/agentkit-harness-ui/host/native-run-panel';
+import { createNativeChildPanel as createPanel } from './native-run-panel.mjs';
 import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
 import { createDshA2aPanel } from './dsh-a2a.mjs';
 import { HARNESS_SERVICE_PRESET_SUFFIX } from '../../harness-service-preset.mjs';

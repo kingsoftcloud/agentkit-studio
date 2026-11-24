@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { permitIssuer, command, target, scope, managedProcessLeaseMs } from './fixtures/native-managed-kernel.mjs';
-import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
+import { createManagedNativeKernel } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 
@@ -103,7 +103,7 @@ test('a paused whole-Run worker observes another process delivering its durable 
   const subscription = { ...query, authorization_ref: randomUUID(), after_seq: 0 };
   const common = { directory, publicKeyPem: issuer.publicKeyPem, sessionId: cmd.session_id, query, readPermit: issuer.issue(query, 'get_status'),
     subscription, subscribePermit: issuer.issue(subscription, 'subscribe_events') };
-  const { managedNativeRunId } = await import('../src/providers/native-managed-kernel.mjs');
+  const { managedNativeRunId } = await import('@kingsoftcloud/agentkit-harness-node/native/managed-kernel');
   const runId = managedNativeRunId(cmd), pause = command({ command_type: 'pause', payload: { run_id: runId } });
   const owner = worker(t, { ...common, command: cmd, permit: issuer.issue(cmd), withExecution: true, boundary: 'paused',
     controls: [{ command: pause, permit: issuer.issue(pause) }] });

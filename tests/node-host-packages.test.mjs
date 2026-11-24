@@ -42,6 +42,8 @@ test('maintained archives control direct and transitive npm resolution without l
 test('a matching version cannot substitute a foreign source tree or incomplete/duplicate Host package set', async t => {
   const h = await fixture(t), original = structuredClone(h.manifest);
   h.manifest.source.tree = 'd'.repeat(40); await assert.rejects(h.load(), /Host source tree/);
+  Object.assign(h.manifest, structuredClone(original)); h.manifest.packages[0].version = '0.1.2';
+  await assert.rejects(h.load(), /version differs from its release family/);
   Object.assign(h.manifest, structuredClone(original)); h.manifest.packages[0] = structuredClone(h.manifest.packages[1]);
   await assert.rejects(h.load(), /Duplicate Host package/);
   Object.assign(h.manifest, structuredClone(original)); h.manifest.packages[0].name = '@deepseek-ai/dsh-other';

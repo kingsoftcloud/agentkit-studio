@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
-import { NATIVE_ENGINE, NATIVE_SCHEMA, NATIVE_JSON_CODEC } from '@kingsoftcloud/agentkit-harness-core';
-import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
+import { NATIVE_JSON_CODEC } from './contracts/native-json.mjs';
+import { NATIVE_ENGINE, NATIVE_SCHEMA } from './contracts/native-dsh.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from './contracts/native-dsh.mjs';
 
 export const BUILD_ENGINE_CONTRACT = 'agentkit.build-engine/v1';
 const unsupported = () => Object.assign(new Error('STUDIO_BUILD_ENGINE_UNSUPPORTED'), { code: 'STUDIO_BUILD_ENGINE_UNSUPPORTED' });

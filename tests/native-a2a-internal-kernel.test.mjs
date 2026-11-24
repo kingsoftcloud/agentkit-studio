@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { NativeKernel, emptyUsage, canonical } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { internalPeer, spec, scope, taskId } from './fixtures/native-a2a-internal-peer.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 for (const lost of [false, true]) test(`actual Native turn ${lost ? 'retains unknown effect after lost Bind' : 'completes through the internal managed A2A transport'}`, async t => {
