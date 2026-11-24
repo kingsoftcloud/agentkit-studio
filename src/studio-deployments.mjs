@@ -1,4 +1,5 @@
 /** Node orchestration for Studio-owned ManagedRuntime deployments. */
+import { ksxcAgentPreference } from './host/services/ksxc.mjs';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { stringify } from 'yaml';
 import { createDeploymentStore } from './deployment-store.mjs';
@@ -12,7 +13,7 @@ import { resolveMcpConnection } from './local-resource-adapters.mjs';
 import { managedRuntimeModelConfig } from './managed-runtime-model.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
 import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, probeDeploymentVersion, deploymentVersionId,
-  cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
+  readyKsxcDeployment, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymentStorage } from './deployment-storage.mjs';
 import { validManagedMcpCredential, validateManagedResources } from './managed-resource-contract.mjs';
@@ -81,7 +82,7 @@ async function managedManifestSnapshot(definition, models) {
   const bindings = definition?.spec?.bindings || definition?.bindings || {};
   const ids = [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds || [])].filter(Boolean).map(String))];
   const profiles = [];
-  for (const id of ids) {
+  for (const id of definition.spec?.runtime?.type === 'ksxc' ? [] : ids) {
     const profile = await models?.profile?.(id);
     if (!profile) continue;
     profiles.push({ id, modelName: profile.modelName, default: profiles.length === 0 });
@@ -152,19 +153,20 @@ async function buildManagedRuntimeDelivery({ frozen, definition, manifest, runti
   catch { throw portableError('MANAGED_RESOURCE_INVALID', '云部署资源配置无效，请检查 MCP 地址、Header 名称及资源数量（每个 MCP 最多 16 个 Header）'); }
 
   const primaryProfile = manifest.resources.profiles.find(profile => profile.default) || manifest.resources.profiles[0];
-  if (!primaryProfile?.modelName) throw portableError('MANAGED_RUNTIME_MODEL_INVALID', 'ManagedRuntime 运行包缺少默认模型');
+  const modelName = runtime === 'ksxc' ? ksxcAgentPreference(frozen.spec) : primaryProfile?.modelName;
+  if (!modelName) throw portableError('MANAGED_RUNTIME_MODEL_INVALID', 'ManagedRuntime 运行包缺少默认模型');
   const declaration = {
     artifact_type: 'ManagedRuntime', framework: runtime,
     name: frozen.metadata.name || frozen.metadata.id,
     ...(frozen.metadata.description ? { description: frozen.metadata.description } : {}),
     runtime: { name: runtime, version: image.version },
-    model: primaryProfile.modelName,
+    model: modelName,
     prompt: frozen.spec?.instructions?.system || 'You are a helpful assistant.',
     ...(Object.keys(resources).length ? { resources } : {}),
   };
   return {
     manifest: stringify(declaration, { sortMapEntries: true, lineWidth: 10_000 }),
-    modelConfig: managedRuntimeModelConfig(primaryProfile.modelName),
+    modelConfig: runtime === 'ksxc' ? { Mode: 'ksxc', Model: modelName } : managedRuntimeModelConfig(modelName),
     componentConfig: Object.keys(componentConfig).length ? componentConfig : undefined,
     environment: [...environment.entries()].map(([Key, Value]) => ({ Key, Value, IsSensitive: true })),
     resourceCounts: { models: manifest.resources.profiles.length, mcps: mcpServers.length, skills: manifest.resources.skills.length, remote: manifest.resources.remote.length },
@@ -189,7 +191,11 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     const managed = deploymentType === 'ManagedRuntime';
     const frozen = await build.resolve(agentId, buildId);
     if (!/^ar-local-[a-f0-9]{16}$/.test(agentId) || frozen.metadata.local === false) throw portableError('DEPLOYMENT_AGENT_UNSUPPORTED', '仅支持本地创建的 Agent Build 部署');
+    const runtime = frozen.spec.runtime.type;
     const bundleRequired = !managed || managedBundleRequired(frozen);
+    if (runtime === 'ksxc' && (!managed || bundleRequired)) {
+      throw portableError('KSXC_DEPLOYMENT_UNSUPPORTED', 'KSXC 仅支持声明式托管部署，请移除需打包本地文件的绑定。');
+    }
     let bundleId = null, zip = null, manifest, definition;
     if (bundleRequired) {
       bundleId = prepareBundle ? (await portableBundles.prepare(agentId, buildId)).bundleId : input.bundleId;
@@ -199,7 +205,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       definition = frozen;
       manifest = await managedManifestSnapshot(frozen, models);
     }
-    const runtime = frozen.spec.runtime.type, { catalog, image } = await images.resolve(runtime, input.releaseId);
+    const { catalog, image } = await images.resolve(runtime, input.releaseId);
     const identity = await client.inspectIdentity(), { values } = await configuration.resolve();
     if (identity.kind !== 'subaccount') throw portableError('CLOUD_SUBACCOUNT_REQUIRED', '部署需要已核验的子账号 AK/SK，请在设置中更新云端凭证；不会使用主账号创建资源');
     // Match AgentEngine's account-scoped storage rule, using IAM-verified
@@ -312,7 +318,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
         Region: record.plan.region, DeploymentType: 'ManagedRuntime',
         ManagedRuntimeConfig: { Manifest: record.plan.managedManifest, RuntimeName: runtime, RuntimeVersion: record.plan.runtimeVersion,
           ...(record.plan.bundleArtifact ? { StudioBundleArtifact: record.plan.bundleArtifact } : {}) },
-        ModelConfig: record.plan.managedModelConfig,
+        ...(record.plan.managedModelConfig ? { ModelConfig: record.plan.managedModelConfig } : {}),
         ...(record.plan.managedComponentConfig ? { ComponentConfig: record.plan.managedComponentConfig } : {}),
         Resource: { Cpu: resources.cpu, Memory: resources.memoryGiB }, Scaling: { MinReplicas: 1, MaxReplicas: 1, QpsPerInstance: 10 },
         ...(deploymentStorage(resources) ? { Storage: deploymentStorage(resources) } : {}),
@@ -391,6 +397,13 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       }
       const rolloutState = await rollouts.refresh(record, remote, common);
       if (rolloutState) return publicRecord(rolloutState);
+      if (record.plan.runtime === 'ksxc' && record.plan.deploymentType === 'ManagedRuntime') {
+        const endpoint = endpointFor(remote, record);
+        const receipt = ['RUNNING', 'UPDATING'].includes(basic.Status) && common.readyReplicas > 0
+          && readyKsxcDeployment(remote, currentDeployment(record).plan);
+        const state = receipt ? (basic.Status === 'UPDATING' ? 'AVAILABLE_UPDATING' : 'READY') : 'STARTING';
+        return publicRecord(await store.update(id, { ...common, ...(endpoint ? { endpoint } : {}), state, tokenBound: false, ...receipt }));
+      }
       const key = remote.QuickAccess?.ApiKey;
       if (typeof key !== 'string' || key.length < 24 || key.includes('*')) return publicRecord(await store.update(id, { ...common, state: 'PROVISIONING' }));
       if (record.plan.deploymentType === 'ManagedRuntime') {
@@ -447,6 +460,9 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
           failure: CLOUD_AGENT_GONE_FAILURE }));
       }
       const lastCheckedAt = new Date().toISOString();
+      if (record.plan.runtime === 'ksxc' && error?.code === 'DEPLOYMENT_PROVENANCE_MISMATCH') {
+        return publicRecord(await store.update(id, { state: 'ACTION_REQUIRED', tokenBound: false, failure: failure(error), lastCheckedAt }));
+      }
       // Polling failures are retried by the next health check; reporting them
       // as a deployment failure makes a successful create look broken.
       if (transientRefreshError(error)) return publicRecord(await store.update(id, { lastCheckedAt }));

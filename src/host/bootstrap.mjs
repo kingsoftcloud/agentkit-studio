@@ -177,10 +177,20 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       directory: runtimeEnv.AGENTKIT_MANAGED_SESSIONS || join(runtimeEnv.AGENTKIT_HOME, 'managed-sessions'),
     })) : undefined;
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  const { createKsxcHost, KSXC_DESKTOP_USER, validateDesktopKsxcAgent } = await import('./services/ksxc.mjs');
+  const ksxc = await createKsxcHost({ storeDir: studioStoreDir,
+    // Managed Hosts keep KSXC connection cache in the Agent-scoped mounted
+    // home so accepted VersionId updates and Pod restarts reuse it. Desktop
+    // Profiles continue to use the Studio store.
+    ksxcStoreDir: managedRuntime ? join(runtimeEnv.AGENTKIT_USER_HOME || runtimeEnv.AGENTKIT_HOME || homedir(), '.agentkit', 'studio') : studioStoreDir,
+    env: runtimeEnv,
+    credentials: ctx.get('credentials'), managedRuntime, managedResourceContext, portableRuntime });
+  if (ksxc?.accounts) ctx.effect(() => () => ksxc.accounts.close(), 'agentkit-studio: KSXC account authorization');
   const cloudExecutionModes = createCloudExecutionModes({ directory: studioStoreDir });
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
     env: runtimeEnv, storeDir: studioStoreDir, portableRuntime: resourceBundleRuntime, managedRuntime, managedResourceContext, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
+    validateAgent: record => validateDesktopKsxcAgent(ksxc, record),
     getTemplateAuthoring: () => templateServices?.templateAuthoring, getAdmission: () => presetAdmission, getModels: () => models, getPortableBundles: () => portableBundles,
   });
   const {
@@ -258,6 +268,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // optional child-process boundary lazy so Studio can still load on hosts
   // without a Codex binary and report CODEX_PROVIDER_UNAVAILABLE only when a
   // Codex Agent is selected.
+  const { createKsxcModelAdapter } = await import('../providers/ksxc-runtime.mjs');
   const { createCodexRuntime } = await import('../providers/codex-runtime.mjs');
   const { createCodexModelCatalog, createCodexModelAdapter, CODEX_PROVIDER } = await import('../providers/codex-models.mjs');
   const { resolveConfiguredCodexModel, selectCodexAgentModel, listCodexAgentModels } = await import('../providers/codex-configured-models.mjs');
@@ -353,6 +364,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       permissionModeFor: agentId => cloudExecutionModes.get(agentId) }),
     localHandler: localRuntimeHandler,
     codexRuntime,
+    ksxcRuntime: ksxc?.runtime,
+    ksxcDesktopUser: KSXC_DESKTOP_USER,
     nativeEngineRuntime,
     // The permission picker (local, Studio cloud and Hosted UI) converges on the
     // Session preset; read it here so Codex's own sandbox follows the picker.
@@ -412,6 +425,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       'agentkit-studio: DSH runtime provider',
     );
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CODEX_PROVIDER], createCodexModelAdapter({ catalog: codexModels, runtime: dshRuntimeAdapter })), 'agentkit-studio: Codex model directory');
+    if (ksxc) llmCtx.effect(() => llmCtx.llm.registerAdapter(['ksxc'], createKsxcModelAdapter({
+      adapter: dshRuntimeAdapter, runtime: ksxc.runtime, desktopUser: ksxc.accounts ? KSXC_DESKTOP_USER : undefined,
+    })), 'agentkit-studio: KSXC model route');
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CLOUD_PROVIDER], createDeploymentModelAdapter({ agents: async () => (await deployments()).agents, runtime: dshRuntimeAdapter })), 'agentkit-studio: frozen cloud models');
     const serviceModels = () => [
       ...nativeEngineRuntime.serviceModels,
@@ -507,7 +523,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   }
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
   templateServices = await (await import('./services/templates.mjs')).createTemplateServices(ctx, {
-    ...services, storeDir: studioStoreDir, env: runtimeEnv, models, listCodexAgentModels, codexModels, getTeamTemplates: () => teamTemplates,
+    ...services, storeDir: studioStoreDir, env: runtimeEnv, models, listCodexAgentModels, codexModels, ksxc, getTeamTemplates: () => teamTemplates,
   });
   const syncModelCredential = models.sync;
   // The DSH loader awaits an async plugin apply. Do this before returning from
@@ -696,7 +712,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     // preset/model/permission initialization has completed. No timer retry or
     // Session prewarming substitutes for the native dependency lifecycle.
     readyService: resourceBundleRuntime || managedRuntime ? FROZEN_RUNTIME_READY : undefined,
-    start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, managedRuntime, managedResourceContext, nativeEngineRuntime, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
+    start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, managedRuntime, managedResourceContext, nativeEngineRuntime, ksxcRuntime: ksxc?.runtime, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
       admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } }, allowUnavailableResources: !strictResources, requireModelSelection: true, cwd: workspaceRoot }) }),
     onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),
   });
@@ -722,7 +738,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
-    getDshA2aControls: dshA2aControls, starHarness,
+    getDshA2aControls: dshA2aControls, starHarness, ksxc,
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   await registerControlPlaneRoutes(ctx, { ...services, models, dispatch });
@@ -733,7 +749,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // Prompt prediction is a Studio-owned auxiliary text request. It observes
   // native Session events but never enters the Session loop or mutates history.
   ctx.inject(['connection'], predictionCtx => {
-    const dispose = createPromptPredictionHost(predictionCtx, { models, env: runtimeEnv });
+    const dispose = createPromptPredictionHost(predictionCtx, { models, env: runtimeEnv, sessionAllowed: session => bridge.getRoute(session.id)?.runtime !== 'ksxc' && managedRuntime?.identity.runtimeName !== 'ksxc' });
     predictionCtx.effect(() => dispose, 'agentkit-studio: prompt prediction');
   });
   // Authoring tools need the in-process remote factory (cloud/resource data);

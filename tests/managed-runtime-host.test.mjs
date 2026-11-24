@@ -547,3 +547,42 @@ test('Codex tuning knobs reach the Host child so a long turn stays deployment-tu
   const bare = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v-other' } });
   assert.equal(bare.env.AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS, undefined);
 });
+
+test('the managed KSXC Host verifies payload and forwards only the private resolver binding', { skip: process.platform === 'win32' }, async t => {
+  const f = await fixture(t);
+  const raw = stringify({ ...parse(f.raw), framework: 'ksxc', runtime: { name: 'ksxc', version: 'ksxc-test.1' } });
+  await writeFile(f.manifest, raw);
+  const executable = join(f.root, 'ksxc');
+  const binary = '#!' + process.execPath + '\n' + `
+if (process.argv.includes('--version')) console.log('ksxc 1.7.1');
+else {
+  const lines = require('node:readline').createInterface({ input: process.stdin });
+  lines.on('line', line => {
+    const request = JSON.parse(line);
+    if (request.method === 'initialize') console.log(JSON.stringify({ id: request.id, result: { userAgent: 'fixture' } }));
+  });
+}
+`;
+  await writeFile(executable, binary, { mode: 0o700 });
+  const companyConfig = join(f.root, 'company.json');
+  await writeFile(companyConfig, JSON.stringify({ baseUrl: 'https://fixture.example', code: 'fixture', installerUrl: 'https://fixture.example/install' }));
+  const env = { ...f.env, AGENTENGINE_MANAGED_RUNTIME_NAME: 'ksxc', AGENTENGINE_MANAGED_RUNTIME_VERSION: 'ksxc-test.1',
+    AGENTENGINE_MANIFEST_SHA256: hash(raw), AGENTKIT_KSXC_EXECUTABLE: executable, AGENTKIT_KSXC_SHA256: hash(binary),
+    AGENTKIT_KSXC_VERSION: '1.7.1', AGENTKIT_KSXC_PROTOCOL_PROFILE: 'codex-app-server/v1',
+    AGENTKIT_KSXC_COMPANY_CONFIG_PATH: companyConfig, AGENTENGINE_RESOURCE_SERVER_URL: 'https://private.example',
+    KSXC_AUTH_TOKEN: 'fixture-ambient-key', KSXC_HOME: f.root };
+  const plan = await prepareManagedRuntimeHost({ ...f, env });
+  assert.deepEqual(plan.identity.ksxcPayload, { version: '1.7.1', sha256: hash(binary) });
+  for (const name of ['KSXC_AUTH_TOKEN', 'KSXC_HOME', 'AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME']) {
+    assert.equal(plan.env[name], undefined);
+  }
+  assert.equal(plan.env.AGENTENGINE_RESOURCE_SERVER_URL, env.AGENTENGINE_RESOURCE_SERVER_URL);
+  const runtime = await loadManagedRuntimeDefinition({ manifest: f.manifest, env: plan.env });
+  assert.equal(runtime.agent.spec.runtime.type, 'ksxc');
+  assert.equal(runtime.agent.spec.bindings.modelProfileId, 'fixture-model');
+  assert.deepEqual(runtime.modelProfiles, []);
+  await assert.rejects(prepareManagedRuntimeHost({ ...f, env: { ...env, AGENTENGINE_RESOURCE_SERVER_URL: 'http://private.example' } }),
+    { code: 'KSXC_CONNECTION_SERVICE_UNAVAILABLE' });
+  await assert.rejects(prepareManagedRuntimeHost({ ...f, env: { ...env, AGENTKIT_KSXC_SHA256: '0'.repeat(64) } }), { code: 'KSXC_PAYLOAD_INTEGRITY_FAILED' });
+  await assert.rejects(prepareManagedRuntimeHost({ ...f, env: { ...env, AGENTENGINE_MANIFEST_SHA256: '0'.repeat(64) } }), { code: 'MANAGED_MANIFEST_DIGEST_MISMATCH' });
+});

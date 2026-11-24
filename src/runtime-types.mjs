@@ -17,21 +17,23 @@
  *
  * | Set                 | Question                                                | Members                          |
  * | ------------------- | ------------------------------------------------------- | -------------------------------- |
- * | public              | may a user create it, and does it ship in a bundle?      | dsh-native, harness, codex       |
+ * | public              | may a user create it?                                    | dsh-native, harness, codex, ksxc |
+ * | portable            | can it be shipped as a Studio portable bundle?            | dsh-native, harness, codex       |
  * | experimental        | is it routable but deliberately not offered?             | native-engine                    |
  * | routable            | can the Host route a turn to it? (public ∪ experimental) | public + native-engine           |
- * | managed             | can it be deployed as a resident managed runtime?        | dsh-native, codex                |
+ * | managed             | can it be deployed as a resident managed runtime?        | dsh-native, codex, ksxc          |
  * | team                | may an expert-team role run on it?                       | dsh-native, harness              |
- * | process             | does it run in its own process behind the stream seam?   | codex, native-engine             |
+ * | process             | does it run in its own process behind the stream seam?   | codex, native-engine, ksxc       |
  * | nativeTurn          | does it use the native DSH turn port?                    | harness, native-engine           |
- * | invocationContext   | does it need a bound tool-invocation context?            | dsh-native, codex, native-engine |
+ * | invocationContext   | does it need a bound tool-invocation context?            | dsh-native, codex, native-engine, ksxc |
  *
  * Relations between the sets are asserted by `tests/runtime-registry.test.mjs`.
  * Adding a runtime means editing this block, not eleven files.
  */
 
-/** Publicly creatable runtimes: the Agent form offers them, portable bundles and deployments accept them. */
-export const STUDIO_RUNTIME_TYPES = Object.freeze(['dsh-native', 'harness', 'codex']);
+/** Publicly creatable runtimes. */
+export const STUDIO_RUNTIME_TYPES = Object.freeze(['dsh-native', 'harness', 'codex', 'ksxc']);
+export const STUDIO_PORTABLE_RUNTIME_TYPES = Object.freeze(['dsh-native', 'harness', 'codex']);
 
 /** Routable locally but not part of the frozen public runtime list: the Native
  * engine as its own process. Not offered in the Agent form, portable bundles
@@ -45,20 +47,20 @@ export const STUDIO_ROUTABLE_RUNTIME_TYPES = Object.freeze([...STUDIO_RUNTIME_TY
  *
  * `harness` is an npm plugin the Host mounts in-process, not a container image
  * the platform can keep running, so it is never a managed deployment target. */
-export const STUDIO_MANAGED_RUNTIME_TYPES = Object.freeze(['dsh-native', 'codex']);
+export const STUDIO_MANAGED_RUNTIME_TYPES = Object.freeze(['dsh-native', 'codex', 'ksxc']);
 
 /** Runtimes an expert-team role may run on. A team runs on the Host's own
  * session loop, so only the two in-process runtimes qualify. */
 export const STUDIO_TEAM_RUNTIME_TYPES = Object.freeze(['dsh-native', 'harness']);
 
 /** Runtimes that run in their own process behind the stream seam. */
-export const STUDIO_PROCESS_RUNTIME_TYPES = Object.freeze(['codex', 'native-engine']);
+export const STUDIO_PROCESS_RUNTIME_TYPES = Object.freeze(['codex', 'native-engine', 'ksxc']);
 
 /** Runtimes that use the native DSH turn port instead of Studio's own loop. */
 export const STUDIO_NATIVE_TURN_RUNTIME_TYPES = Object.freeze(['harness', 'native-engine']);
 
 /** Runtimes that need a bound tool-invocation context to attribute tool calls. */
-export const STUDIO_INVOCATION_CONTEXT_RUNTIME_TYPES = Object.freeze(['dsh-native', 'codex', 'native-engine']);
+export const STUDIO_INVOCATION_CONTEXT_RUNTIME_TYPES = Object.freeze(['dsh-native', 'codex', 'native-engine', 'ksxc']);
 
 /**
  * Every registry set, keyed by the question it answers.
@@ -70,6 +72,7 @@ export const STUDIO_RUNTIME_SETS = Object.freeze({
   public: STUDIO_RUNTIME_TYPES,
   experimental: STUDIO_EXPERIMENTAL_RUNTIME_TYPES,
   routable: STUDIO_ROUTABLE_RUNTIME_TYPES,
+  portable: STUDIO_PORTABLE_RUNTIME_TYPES,
   managed: STUDIO_MANAGED_RUNTIME_TYPES,
   team: STUDIO_TEAM_RUNTIME_TYPES,
   process: STUDIO_PROCESS_RUNTIME_TYPES,
@@ -80,6 +83,14 @@ export const STUDIO_RUNTIME_SETS = Object.freeze({
 /** True for a publicly creatable runtime type. */
 export function isStudioRuntimeType(value) {
   return STUDIO_RUNTIME_TYPES.includes(value);
+}
+
+export function isAppServerRuntimeType(value) {
+  return value === 'codex' || value === 'ksxc';
+}
+
+export function isPortableRuntimeType(value) {
+  return STUDIO_PORTABLE_RUNTIME_TYPES.includes(value);
 }
 
 /** True for any runtime type the Host can route a turn to. */

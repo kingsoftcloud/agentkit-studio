@@ -1,29 +1,29 @@
 ---
-title: The three runtimes
-description: A runtime type decides whose execution model serves a run. The three runtimes, their capabilities, when each becomes ready, and the execution policy.
+title: The four runtimes
+description: A runtime type decides whose execution model serves a run. The four runtimes, their capabilities, when each becomes ready, and the execution policy.
 status: new
 ---
 
-**A runtime type (`runtime.type`) decides whose execution model serves a run. There are exactly three: DSH Native, Star Harness, and Codex** (`STUDIO_RUNTIME_TYPES` in `src/runtime-contract.mjs:6`).
+**A runtime type (`runtime.type`) decides whose execution model serves a run. Studio supports DSH Native, Star Harness, Codex, and KSXC** (`STUDIO_RUNTIME_TYPES` in `src/runtime-contract.mjs:6`).
 
 This page covers each runtime's ownership and capabilities, what has to be true before each one is selectable, and the execution-policy layer that constrains what a run may write.
 
 ## Why a runtime is not an "engine option"
 
-Reading a runtime as "a different model backend" runs into an immediate contradiction: the same agent definition exposes different capabilities on the three runtimes — some support replay, some support child tasks, some neither. That is a difference in execution ownership, not in configuration.
+Reading a runtime as "a different model backend" runs into an immediate contradiction: the same agent definition exposes different capabilities across runtimes — some support replay, some support child tasks, some neither. That is a difference in execution ownership, not in configuration.
 
 | What you want to do | What it requires |
 | --- | --- |
 | Replay a past run | The runtime supports `replay` (Codex and DSH Native do; Star Harness does not) |
 | Have the agent split out child tasks | The runtime supports `child-tasks` (Star Harness only) |
 | Resume an unfinished turn from history | The runtime supports `resume` (Star Harness only) |
-| Deploy the agent as a resident managed runtime | The runtime is deployable (DSH Native and Codex only) |
+| Deploy the agent as a resident managed runtime | The runtime is deployable (DSH Native, Codex and a published KSXC release) |
 
 Choosing a runtime is therefore not a style preference; it decides what you can do later. **The runtime is locked at creation and cannot be changed** — switching runtimes means creating a new agent.
 
 ## Star Harness must be installed first
 
-Only Star Harness is **pluggable** among the three: it is delivered as three npm packages (`@kingsoftcloud/agentkit-harness-core` / `-node` / `-ui`, currently `0.0.25`), and Studio depends on them one-way — they do not depend on Studio in return.
+Star Harness is installed from the plugin page. It is delivered as three npm packages (`@kingsoftcloud/agentkit-harness-core` / `-node` / `-ui`, currently `0.0.25`), and Studio depends on them one-way — they do not depend on Studio in return.
 
 | Runtime | Ready when | What you see before that |
 | --- | --- | --- |
@@ -39,51 +39,55 @@ The check is `canCreate` from `starHarnessStatus()` (`creatableRuntime` in `src/
   Historical documentation also called Star Harness "AgentKit Harness" and "Native Harness". **Both are retired.** Write **Star Harness** (`harness`).
 </Callout>
 
-## The three runtimes
+## The four runtimes
 
-| Item | DSH Native | Star Harness | Codex |
-| --- | --- | --- | --- |
-| Value | `dsh-native` | `harness` | `codex` |
-| UI name | DSH Native Harness | Star Harness | Codex Agent |
-| Execution owner | DSH itself | The KSADK Harness native kernel | The Codex App Server adapter inside Studio |
-| Execution model | `native` | `native-kernel` | `codex-app-server` |
-| Contract | `agentkit.studio.runtime/v1` | The DSH native turn contract | `studio.codex.adapter/v1` |
-| Event owner | DSH session | The native run store | The Studio Codex adapter |
-| Stream owner | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
-| Default for new agents | **Yes** | No | No |
+| Item | DSH Native | Star Harness | Codex | KSXC |
+| --- | --- | --- | --- | --- |
+| Value | `dsh-native` | `harness` | `codex` | `ksxc` |
+| UI name | DSH Native Harness | Star Harness | Codex Agent | KSXC |
+| Execution owner | DSH itself | The KSADK Harness native kernel | The Codex App Server adapter inside Studio | The KSXC App Server adapter inside Studio |
+| Execution model | `native` | `native-kernel` | `codex-app-server` | `ksxc-app-server` |
+| Contract | `agentkit.studio.runtime/v1` | The DSH native turn contract | `studio.codex.adapter/v1` | `studio.ksxc.adapter/v1` |
+| Event owner | DSH session | The native run store | The Studio Codex adapter | The Studio KSXC adapter |
+| Stream owner | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` | `ksxc-turn/item` |
+| Default for new agents | **Yes** | No | No | No |
 
-<Diagram src="/assets/agentkit-runtime-ownership.en.png" alt="Ownership matrix for the three runtimes across the model and tool loop, session transcript, durable run state and Studio seam" />
+<Diagram src="/assets/agentkit-runtime-ownership.en.png" alt="Ownership matrix for three earlier runtimes across the model and tool loop, session transcript, durable run state and Studio seam" />
 
-*How to read this: the executor is not the transcript owner — within one runtime, "who runs the model loop" and "who persists the event log" are different entities. Across all four lanes only `cancel` is shared; every other capability belongs to one implementation and cannot be enabled by configuration.*
+*How to read this: the executor is not the transcript owner — within one runtime, "who runs the model loop" and "who persists the event log" are different entities. For KSXC, the Studio adapter supplies tool events and DSH owns the business transcript.*
+
+### KSXC desktop releases and accounts
+
+Open KSXC in Studio Settings to select, install, and enable an approved release. Studio verifies the archive digest and App Server handshake before switching versions. Connect the enterprise account with WPS to select a model. The Agent stores a preference and the Host checks the current caller's catalog for each run. Managed deployment uses a KSXC release published for the target environment.
 
 ## Capability matrix
 
-| Capability | DSH Native | Star Harness | Codex |
-| --- | :---: | :---: | :---: |
-| `session` | ✅ | — | ✅ |
-| `session-events` | ✅ | — | — |
-| `stream` | ✅ | — | ✅ |
-| `cancel` | ✅ | ✅ | ✅ |
-| `replay` | ✅ | — | ✅ |
-| `persistence` | ✅ | — | — |
-| `build-binding` | ✅ | — | ✅ |
-| `native-run` | — | ✅ | — |
-| `durable-receipts` | — | ✅ | — |
-| `tool-approval` | — | ✅ | — |
-| `resume` | — | ✅ | — |
-| `child-tasks` | — | ✅ | — |
+| Capability | DSH Native | Star Harness | Codex | KSXC |
+| --- | :---: | :---: | :---: | :---: |
+| `session` | ✅ | — | ✅ | ✅ |
+| `session-events` | ✅ | — | — | — |
+| `stream` | ✅ | — | ✅ | ✅ |
+| `cancel` | ✅ | ✅ | ✅ | ✅ |
+| `replay` | ✅ | — | ✅ | ✅ |
+| `persistence` | ✅ | — | — | — |
+| `build-binding` | ✅ | — | ✅ | ✅ |
+| `native-run` | — | ✅ | — | — |
+| `durable-receipts` | — | ✅ | — | — |
+| `tool-approval` | — | ✅ | — | — |
+| `resume` | — | ✅ | — | — |
+| `child-tasks` | — | ✅ | — | — |
 
-Only `cancel` is supported by all three. Capability entries are not feature flags and cannot be switched on by configuration — they are part of each runtime's implementation.
+All four runtimes support `cancel`. Capability entries are not feature flags and cannot be switched on by configuration — they are part of each runtime's implementation.
 
 ## Hard rules beyond the runtime
 
 | Rule | Allowed values | Out-of-range result |
 | --- | --- | --- |
-| Creating an agent | The 3 official values | `RUNTIME_UNSUPPORTED` |
+| Creating an agent | The 4 official values | `RUNTIME_UNSUPPORTED` |
 | Team template roles | DSH Native and Star Harness only | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
 | Team run members (runtime) | Local DSH Native and Star Harness only | `TEAM_AGENT_UNSUPPORTED` |
-| Managed deployment | DSH Native and Codex only | Never appears in the deployable list |
-| Managed manifest declaration | The 3 official values | `MANAGED_RUNTIME_IDENTITY_MISMATCH` |
+| Managed deployment | DSH Native, Codex and a published KSXC release | Never appears in the deployable list |
+| Managed manifest declaration | The 4 official values | `MANAGED_RUNTIME_IDENTITY_MISMATCH` |
 
 "Teams exclude Codex members" and "managed deployments exclude Star Harness" are two independent restrictions. Do not merge them into "some scenarios are limited".
 

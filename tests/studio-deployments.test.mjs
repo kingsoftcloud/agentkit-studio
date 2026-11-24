@@ -49,15 +49,24 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
   }
   const built = await build.build({ agentId, revision: 2, metadata: { id: agentId, name: 'Agent', local: true, revision: 2 }, spec: { runtime: { type: runtime }, bindings }, bindings });
   const portableBundles = createPortableBundles({ storeDir: root, build, models, adapters, configuration });
+  const ksxc = runtime === 'ksxc';
   const release = { id: '0.0.1-test', version: '0.0.1-test', label: 'Test', channel: 'preview', enabled: true, runtimeIdentity: true, image: `hub-vpc-cn-beijing-6.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`,
-    platform: 'linux/amd64', port: 8080, runtimes: ['harness', 'dsh-native', 'codex'], bundleFormat: 'agentkit.portable-bundle/v1', minimumStudioVersion: '0.0.1', notices: ['Preview'] };
+    platform: 'linux/amd64', port: 8080, runtimes: ksxc ? ['ksxc'] : ['harness', 'dsh-native', 'codex'], bundleFormat: ksxc ? 'agentengine.dsh-manifest/v1' : 'agentkit.portable-bundle/v1', minimumStudioVersion: '0.0.1', notices: ['Preview'] };
   const calls = [], remote = {}, key = 'platform-private-runtime-token', access = { ready: authReady, error: 'UNAUTHORIZED' };
   const control = { failNextDetail: null };
   let deleted = false;
+  const setKsxcReceipt = (config, version) => {
+    const Manifest = '# normalized by platform fixture\n' + config.Manifest;
+    Object.assign(remote.Deployment, { ManagedRuntimeConfig: { Manifest }, RuntimeConfig: {
+      Name: config.RuntimeName, Version: config.RuntimeVersion, ImageDigest: release.image,
+      ManifestFormat: 'agentengine.dsh-manifest/v1', ManifestSha256: sha256(Manifest),
+    } });
+    remote.DeploymentState = { Ready: true, ObservedVersionId: version, DesiredVersionId: version };
+  };
   const client = {
     inspectIdentity: async () => ({ kind: 'subaccount', accountId: deploymentType === 'ManagedRuntime' ? '123' : 'owner', userUuid: 'actor', userName: 'operator' }),
     getBootstrapConfig: async () => ({ data: { Product: 'agentkit-studio', ClientType: 'studio', Region: 'cn-beijing-6', Environment: 'pre-online',
-      Capabilities: { ContainerStorage: { Contract: 'agentengine.container-storage/v1', Frameworks: ['harness', 'codex'], MinSizeGi: 20, MaxSizeGi: 500, MaxReplicas: 1, PaymentType: 'Daily' } }, Configs: { 'studio.runtime.images.v1': {
+      Capabilities: { ContainerStorage: { Contract: 'agentengine.container-storage/v1', Frameworks: ksxc ? ['ksxc'] : ['harness', 'codex'], MinSizeGi: 20, MaxSizeGi: 500, MaxReplicas: 1, PaymentType: 'Daily' } }, Configs: { 'studio.runtime.images.v1': {
       format: 'agentkit.runtime-images/v1', environment: 'pre-online', region: 'cn-beijing-6', defaultReleaseId: release.id, releases: [release],
     } } } }),
     createAgent: async payload => {
@@ -69,6 +78,7 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
           ? { DeploymentType: 'ManagedRuntime', ArtifactPath: payload.ManagedRuntimeConfig && release.image, RuntimeConfig: { Name: payload.ManagedRuntimeConfig.RuntimeName, Version: payload.ManagedRuntimeConfig.RuntimeVersion, ...(payload.ManagedRuntimeConfig.StudioBundleArtifact ? { StudioBundleArtifact: { SHA256: payload.ManagedRuntimeConfig.StudioBundleArtifact.SHA256 } } : {}) }, Storage: payload.Storage }
           : { DeploymentType: 'Container', ArtifactPath: payload.ContainerConfig.ImageAddr, Storage: payload.Storage }, Advanced: { EnvironmentVariables: payload.Advanced.EnvironmentVariables },
         Network: { PublicEndpoint: `https://${cloudAgentId}.agent-pre.kspmas.ksyun.com` }, QuickAccess: { ApiKey: key } });
+      if (ksxc) setKsxcReceipt(payload.ManagedRuntimeConfig, 'v1');
       if (createError) throw createError;
       return { data: { AgentId: cloudAgentId } };
     },
@@ -84,6 +94,11 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
         update: async patch => {
           calls.push(['update', patch]);
           if (access.updateError && !access.responseLost) throw access.updateError;
+          if (ksxc) {
+            assert.equal(patch.ExpectedVersionId, 'v1');
+            setKsxcReceipt(patch.ManagedRuntimeConfig, 'v2');
+            return { data: {} };
+          }
           if (patch.ContainerConfig) remote.Deployment.ArtifactPath = patch.ContainerConfig.ImageAddr;
           const change = patch.EnvironmentVariablePatch;
           remote.Advanced.EnvironmentVariables = remote.Advanced.EnvironmentVariables.filter(row => !(change.Delete || []).includes(row.Key) && !change.Upsert.some(item => item.Key === row.Key));
@@ -105,7 +120,7 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
       return reference;
     } }),
     fetchImpl: async (url, init) => {
-      calls.push(['health', String(url)]); assert.equal(init.headers.Authorization, `Bearer ${key}`);
+      calls.push(['health', String(url)]); assert.equal(init.headers.Authorization || init.headers.authorization, `Bearer ${key}`);
       if (String(url).endsWith('/v1/agentkit/runtime')) return Response.json(access.runtimeIdentity || {
         format: 'agentkit.runtime-identity/v1', status: 'ready', agentId, buildId: built.id,
         bundleSha256: remote.Advanced?.EnvironmentVariables?.find(item => item.Key === 'AGENTKIT_BUNDLE_SHA256')?.Value,
@@ -826,4 +841,51 @@ test('logs and access repair retire the receipt when the cloud Agent is gone', a
   other.control.failNextDetail = cloudAgentGone();
   await assert.rejects(() => other.service.repairAccess(second.id), { code: 'DEPLOYMENT_CLOUD_DELETED' });
   assert.equal((await other.service.get(second.id)).state, 'DELETED');
+});
+
+
+test('Studio creates and updates KSXC using canonical manifest receipts, without portable or model secrets', async t => {
+  const f = await fixture(t, { runtime: 'ksxc', deploymentType: 'ManagedRuntime', health: false, bindings: { modelProfileId: 'ksxc-preference', mcpServers: [] } });
+  const creation = await f.service.create(f.request);
+  await f.settled();
+  const create = f.calls.find(([action]) => action === 'create')[1];
+  assert.equal(create.Framework, 'ksxc');
+  assert.equal(create.ManagedRuntimeConfig.RuntimeName, 'ksxc');
+  assert.equal(create.ManagedRuntimeConfig.RuntimeVersion, f.release.version);
+  assert.equal(create.ManagedRuntimeConfig.StudioBundleArtifact, undefined);
+  assert.deepEqual(create.ModelConfig, { Mode: 'ksxc', Model: 'ksxc-preference' });
+  assert.match(create.ManagedRuntimeConfig.Manifest, /^model: ksxc-preference$/m);
+  assert.notEqual(f.remote.Deployment.RuntimeConfig.ManifestSha256, sha256(create.ManagedRuntimeConfig.Manifest));
+  delete f.remote.Network;
+  delete f.remote.QuickAccess;
+  f.remote.DeploymentState.ObservedVersionId = 'stale-version';
+  assert.equal((await f.service.refresh(creation.id)).status, 'STARTING');
+  f.remote.DeploymentState.ObservedVersionId = f.remote.DeploymentState.DesiredVersionId;
+  const ready = await f.service.refresh(creation.id);
+  assert.equal(ready.status, 'READY', JSON.stringify(ready.failure));
+  const input = { agentId: f.input.agentId, revision: 3,
+    metadata: { id: f.input.agentId, name: 'Agent', local: true, revision: 3 },
+    spec: { runtime: { type: 'ksxc' }, instructions: { system: 'New behavior' }, bindings: { modelProfileId: 'ksxc-preference' } },
+  };
+  const built = await f.options.build.build({ ...input, bindings: input.spec.bindings });
+  const preview = await f.service.prepareUpdate({ deploymentId: creation.id, buildId: built.id });
+  await f.service.applyUpdate({ deploymentId: creation.id, buildId: built.id, releaseId: preview.releaseId,
+    previewId: preview.previewId, idempotencyKey: 'ksxc-update-fixture' });
+  await f.settled();
+  const update = f.calls.find(([action]) => action === 'update')[1];
+  assert.equal(update.DeploymentType, 'ManagedRuntime');
+  assert.equal(update.ExpectedVersionId, 'v1');
+  assert.match(update.ManagedRuntimeConfig.Manifest, /^prompt: New behavior$/m);
+  assert.equal(update.ManagedRuntimeConfig.RuntimeVersion, f.release.version);
+  assert.equal(update.ContainerConfig, undefined);
+  const updated = await f.service.refresh(creation.id);
+  assert.equal(updated.status, 'READY');
+  assert.equal(updated.rollout.status, 'SUCCEEDED');
+  assert.equal(updated.revision, 3);
+  assert.equal(f.calls.some(([action]) => action === 'upload' || action === 'health'), false);
+
+  f.remote.Deployment.RuntimeConfig.ManifestSha256 = 'b'.repeat(64);
+  const mismatched = await f.service.refresh(creation.id);
+  assert.equal(mismatched.status, 'ACTION_REQUIRED');
+  assert.equal(mismatched.failure.code, 'DEPLOYMENT_PROVENANCE_MISMATCH');
 });

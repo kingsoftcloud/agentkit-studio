@@ -72,7 +72,7 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
         draft[key] = [...new Set(value)];
       } else {
         if (typeof value !== 'string' || value.length > 32000) fail('INVALID_DRAFT', `${key} must be text of at most 32000 characters.`);
-        if (key === 'runtimeType' && !RUNTIMES.includes(value)) fail('RUNTIME_UNSUPPORTED', 'Choose dsh-native, harness or codex.');
+        if (key === 'runtimeType' && !RUNTIMES.includes(value)) fail('RUNTIME_UNSUPPORTED', 'Choose dsh-native, harness, codex or ksxc.');
         draft[key] = value.trim();
       }
     }

@@ -81,6 +81,7 @@ export function createPromptPredictionHost(ctx, {
   env = process.env,
   fetchImpl = hostFetch,
   config: rawConfig,
+  sessionAllowed = () => true,
 } = {}) {
   const config = studioConfig(env, rawConfig)
   const states = new Map()
@@ -119,7 +120,7 @@ export function createPromptPredictionHost(ctx, {
   }
 
   const schedule = (session, state, turnSeq) => {
-    if (disposed || !config.enabled || state.turnOpen || running >= MAX_CONCURRENT) return
+    if (disposed || !config.enabled || !sessionAllowed(session) || state.turnOpen || running >= MAX_CONCURRENT) return
     if (state.inflight !== null || state.candidateTurnSeq !== turnSeq) return
     const eligibility = sessionEligible(session)
     if (!eligibility.ok) {

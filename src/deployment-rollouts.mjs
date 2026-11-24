@@ -6,7 +6,7 @@ import { planKs3BundleUpload } from './ks3-bundle-store.mjs';
 import { createContainerDeploymentEnvironment } from './container-deployment-env.mjs';
 import { resolveDeploymentCredentials, PLATFORM_CREDENTIAL_NAMES } from './deployment-credentials.mjs';
 import { currentDeployment, deploymentVersions, deploymentVersionId, pendingRollout, publicDeployment,
-  verifyDeploymentRemote, probeDeploymentVersion, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
+  verifyDeploymentRemote, readyKsxcDeployment, probeDeploymentVersion, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 
 const managed = ['AGENTKIT_BUNDLE_SHA256', 'AGENTKIT_BUNDLE_SOURCE', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_DEPLOYMENT_VERSION', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL_NAME'];
 export function createDeploymentRollouts({ store, owned, detail, images, assemble, portableBundles, models, adapters,
@@ -44,6 +44,7 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
     }
     if (remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '云端实例当前不允许更新');
     await identity(record);
+    const ksxc = current.plan.runtime === 'ksxc' && current.plan.deploymentType === 'ManagedRuntime';
     let prepared;
     if (input.rollbackVersionId) {
       const version = deploymentVersions(record).find(item => item.id === input.rollbackVersionId);
@@ -52,21 +53,28 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
       if (image.image !== version.plan.image.image || catalog.region !== version.plan.region || catalog.environment !== version.plan.environment) {
         throw portableError('DEPLOYMENT_PREVIEW_STALE', '历史镜像目录已变化，不能回滚到未核验的镜像');
       }
-      const { zip } = await archive(version.plan), { values } = await configuration.resolve();
-      prepared = { plan: { ...version.plan, image, catalogRevision: catalog.revision }, zip, values,
-        resolved: await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env }) };
+      if (ksxc) {
+        prepared = await assemble({ deploymentType: 'ManagedRuntime', agentId: version.plan.agentId, buildId: version.plan.buildId,
+          releaseId: image.id, resources: version.plan.resources });
+      } else {
+        const { zip } = await archive(version.plan), { values } = await configuration.resolve();
+        prepared = { plan: { ...version.plan, image, catalogRevision: catalog.revision }, zip, values,
+          resolved: await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env }) };
+      }
     } else {
       const sameBuild = input.buildId === current.plan.buildId;
-      prepared = await assemble({ ...input, ...(sameBuild ? { bundleId: current.plan.bundleId } : {}),
+      prepared = await assemble({ ...input, ...(ksxc ? { deploymentType: 'ManagedRuntime' } : {}), ...(sameBuild ? { bundleId: current.plan.bundleId } : {}),
         releaseId: input.releaseId || (!input.useRecommendedImage && current.plan.image.runtimeIdentity ? current.plan.image.id : undefined),
         agentId: current.plan.agentId, resources: { ...current.plan.resources, storageGiB: current.plan.resources.storageGiB ?? 0 } }, exporting && !sameBuild);
     }
-    if (!prepared.plan.image.runtimeIdentity) throw portableError('DEPLOYMENT_IMAGE_UPGRADE_REQUIRED', '目标镜像尚未声明版本探测能力，请先发布支持升级回滚的 Studio 镜像');
+    if (!ksxc && !prepared.plan.image.runtimeIdentity) throw portableError('DEPLOYMENT_IMAGE_UPGRADE_REQUIRED', '目标镜像尚未声明版本探测能力，请先发布支持升级回滚的 Studio 镜像');
     prepared.plan = { ...prepared.plan, name: current.plan.name };
     for (const field of ['agentId', 'runtime', 'credentialScope', 'region', 'environment', 'bucket', 'storageEndpoint']) {
       if (prepared.plan[field] !== current.plan[field]) throw portableError('DEPLOYMENT_UPDATE_SCOPE_CHANGED', '升级须保留 Agent、运行时、账号和部署位置；其他场景请创建独立部署');
     }
-    if (prepared.plan.bundleSha256 === current.plan.bundleSha256 && prepared.plan.image.image === current.plan.image.image) {
+    const sameContent = ksxc ? prepared.plan.managedManifestSha256 === current.plan.managedManifestSha256
+      : prepared.plan.bundleSha256 === current.plan.bundleSha256;
+    if (sameContent && prepared.plan.image.image === current.plan.image.image) {
       throw portableError('DEPLOYMENT_VERSION_UNCHANGED', '所选冻结包和镜像已在运行');
     }
     const previewId = sha256(JSON.stringify([record.id, deploymentVersionId(record), input.rollbackVersionId || null, prepared.plan]));
@@ -94,8 +102,27 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
           await store.update(id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
           return;
         }
+        if (remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0)) {
+          throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '实例尚未就绪');
+        }
+        if (rollout.plan.runtime === 'ksxc') {
+          const receipt = readyKsxcDeployment(remote, currentDeployment(record).plan);
+          if (!receipt) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '云端当前运行版本尚未核对。');
+          const previousVersion = receipt.platformVersionId;
+          if (!await store.claim(id, `${attemptId}-apply`)) return;
+          rollout = { ...rollout, status: 'APPLYING', previousVersion };
+          await store.update(id, { rollout });
+          await client.forAgent(record.cloudAgentId).update({
+            DeploymentType: 'ManagedRuntime',
+            ExpectedVersionId: previousVersion,
+            ClientToken: rollout.requestId,
+            ManagedRuntimeConfig: { Manifest: rollout.plan.managedManifest, RuntimeName: 'ksxc', RuntimeVersion: rollout.plan.runtimeVersion },
+            ...(prepared.managedEnvironment.length ? { EnvironmentVariablePatch: { Upsert: prepared.managedEnvironment } } : {}),
+          }, { requestId: rollout.requestId });
+          return { deploymentId: id, summary: '更新已提交，等待 KSXC 版本生效' };
+        }
         const token = remote.QuickAccess?.ApiKey;
-        if (remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0) || typeof token !== 'string' || token.length < 24 || token.includes('*')) {
+        if (typeof token !== 'string' || token.length < 24 || token.includes('*')) {
           throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '实例或访问令牌尚未就绪');
         }
         const source = planKs3BundleUpload(prepared.zip, { endpoint: rollout.plan.storageEndpoint, bucket: rollout.plan.bucket, uploadId: randomUUID() });
@@ -166,6 +193,16 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
         return store.update(record.id, { ...common, state: 'ACTION_REQUIRED', rollout: { ...rollout, status: 'FAILED' },
           failure: { code: 'DEPLOYMENT_UPDATE_INTERRUPTED', message: '更新在提交云端前中断；刷新确认原实例状态后，可重新检查版本' } });
       }
+    }
+    if (rollout.plan.runtime === 'ksxc' && ['APPLYING', 'UNKNOWN'].includes(rollout.status)) {
+      const receipt = readyKsxcDeployment(remote, rollout.plan);
+      if (receipt && receipt.platformVersionId !== rollout.previousVersion
+        && remote.Basic.Status === 'RUNNING' && common.readyReplicas > 0) {
+        const version = { id: rollout.id, plan: rollout.plan, source: null, completedAt: new Date().toISOString(), ...receipt };
+        return store.update(record.id, { ...common, state: 'READY', activeVersion: version,
+          versions: [...deploymentVersions(record), version], rollout: { ...rollout, status: 'SUCCEEDED' }, endpoint, tokenBound: false });
+      }
+      return store.update(record.id, { ...common, state: rollout.status === 'UNKNOWN' ? 'UPDATE_UNKNOWN' : 'UPDATING', tokenBound: false });
     }
     let matches = false;
     try { verifyDeploymentRemote(remote, { ...record, plan: rollout.plan }); matches = true; } catch {}

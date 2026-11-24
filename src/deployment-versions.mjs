@@ -1,5 +1,7 @@
 /** A deployment's creation intent stays immutable; successful versions are append-only. */
-import { portableError } from './portable-resources.mjs';
+import { isDeepStrictEqual } from 'node:util';
+import { DSH_MANIFEST_FORMAT, parseManagedRuntimeManifest } from './managed-runtime-manifest.mjs';
+import { portableError, sha256 } from './portable-resources.mjs';
 
 export const pendingRollout = record => ['PREPARED', 'UPLOADING', 'APPLYING', 'UNKNOWN'].includes(record.rollout?.status);
 
@@ -45,6 +47,32 @@ export function publicDeployment(record) {
     ...(rollout ? { rollout: { id: rollout.id, kind: rollout.kind, status: rollout.status,
       buildId: rollout.plan.buildId, revision: rollout.plan.revision, startedAt: rollout.startedAt } } : {}) };
 }
+export function ksxcDeploymentReceipt(detail, plan) {
+  const deployment = detail.Deployment || {};
+  const runtime = deployment.RuntimeConfig || detail.RuntimeConfig || {};
+  const manifest = (deployment.ManagedRuntimeConfig || detail.ManagedRuntimeConfig)?.Manifest;
+  if (runtime.Name !== 'ksxc' || runtime.Version !== plan.runtimeVersion || runtime.ManifestFormat !== DSH_MANIFEST_FORMAT
+    || (runtime.ImageDigest || deployment.ArtifactPath) !== plan.image.image
+    || typeof manifest !== 'string' || runtime.ManifestSha256 !== sha256(manifest)) return null;
+  const options = { runtimeName: 'ksxc', runtimeVersion: plan.runtimeVersion };
+  try {
+    if (isDeepStrictEqual(parseManagedRuntimeManifest(manifest, options), parseManagedRuntimeManifest(plan.managedManifest, options))) {
+      return { manifestSha256: runtime.ManifestSha256, runtimeVersion: runtime.Version };
+    }
+  } catch { /* The platform receipt must contain the same declaration. */ }
+  return null;
+}
+
+// KSXC chat uses the signed RunAgent Action. Server's observed deployment
+// version and canonical receipt are the readiness proof for this path.
+export function readyKsxcDeployment(detail, plan) {
+  const state = detail.DeploymentState;
+  if (state?.Ready !== true || typeof state.ObservedVersionId !== 'string' || !state.ObservedVersionId
+    || state.ObservedVersionId !== state.DesiredVersionId) return null;
+  const receipt = ksxcDeploymentReceipt(detail, plan);
+  return receipt && { platformVersionId: state.ObservedVersionId, manifestSha256: receipt.manifestSha256 };
+}
+
 export function verifyDeploymentRemote(detail, record) {
   if (record.plan?.deploymentType === 'ManagedRuntime') {
     const runtime = detail.Deployment?.RuntimeConfig || detail.RuntimeConfig || {};
@@ -55,7 +83,8 @@ export function verifyDeploymentRemote(detail, record) {
       || runtime.Name && runtime.Name !== record.plan.runtime
       || runtime.Version && runtime.Version !== record.plan.runtimeVersion
       || artifact.SHA256 && artifact.SHA256 !== record.plan.bundleSha256
-      || record.plan.managedManifestSha256 && runtime.ManifestSha256 && runtime.ManifestSha256 !== record.plan.managedManifestSha256) {
+      || (record.plan.runtime === 'ksxc' ? !ksxcDeploymentReceipt(detail, record.plan)
+        : record.plan.managedManifestSha256 && runtime.ManifestSha256 && runtime.ManifestSha256 !== record.plan.managedManifestSha256)) {
       throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '云端 ManagedRuntime Agent 与冻结部署记录不一致，已停止管理操作');
     }
     return;

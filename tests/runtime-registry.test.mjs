@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 //
 // This gate makes the registry load-bearing:
 //
-//   1. the seven sets stay consistent with each other;
+//   1. the runtime sets stay consistent with each other;
 //   2. every member has a UI label;
 //   3. the capability matrix covers exactly the public set;
 //   4. no source module restates a runtime list.
@@ -67,6 +67,7 @@ const EXPECTED_SETS = {
   public: STUDIO_RUNTIME_TYPES,
   experimental: STUDIO_EXPERIMENTAL_RUNTIME_TYPES,
   routable: STUDIO_ROUTABLE_RUNTIME_TYPES,
+  portable: contract.STUDIO_PORTABLE_RUNTIME_TYPES,
   managed: STUDIO_MANAGED_RUNTIME_TYPES,
   team: STUDIO_TEAM_RUNTIME_TYPES,
   process: STUDIO_PROCESS_RUNTIME_TYPES,
@@ -77,6 +78,7 @@ const EXPECTED_SETS = {
 const PREDICATES = {
   public: contract.isStudioRuntimeType,
   routable: contract.isRoutableRuntimeType,
+  portable: contract.isPortableRuntimeType,
   managed: contract.isManagedRuntimeType,
   team: contract.isTeamRuntimeType,
   process: contract.isProcessRuntimeType,
@@ -102,7 +104,7 @@ test('the registry exposes exactly the documented sets', () => {
   }
 });
 
-test('the seven sets stay consistent with each other', () => {
+test('the runtime sets stay consistent with each other', () => {
   // Membership is not free-form: a runtime is in a set only when it has that
   // capability, so every relation below is a product invariant, not a style rule.
   assert.ok(contains(STUDIO_ROUTABLE_RUNTIME_TYPES, STUDIO_RUNTIME_TYPES), 'Every public runtime must be routable.');
@@ -117,6 +119,8 @@ test('the seven sets stay consistent with each other', () => {
     [],
     'A runtime cannot be both public and experimental.',
   );
+  assert.ok(contains(STUDIO_RUNTIME_TYPES, contract.STUDIO_PORTABLE_RUNTIME_TYPES), 'Portable runtimes must be public.');
+  assert.equal(contract.isPortableRuntimeType('ksxc'), false);
   assert.ok(contains(STUDIO_RUNTIME_TYPES, STUDIO_MANAGED_RUNTIME_TYPES), 'Only a public runtime can be deployed as a managed runtime.');
   assert.ok(contains(STUDIO_RUNTIME_TYPES, STUDIO_TEAM_RUNTIME_TYPES), 'Only a public runtime can back an expert-team role.');
   assert.ok(contains(STUDIO_ROUTABLE_RUNTIME_TYPES, STUDIO_PROCESS_RUNTIME_TYPES), 'A process runtime must be routable.');

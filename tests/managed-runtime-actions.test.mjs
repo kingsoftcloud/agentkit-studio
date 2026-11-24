@@ -18,7 +18,8 @@ const ownerHeaders = subject => ({ 'x-agentengine-identity-namespace': 'business
 const runtime = { identity: { agentId: 'ar-managed', versionId: 'version-1', manifestSha256: 'a'.repeat(64), runtimeName: 'dsh-native', runtimeVersion: 'studio-1' },
   declaration: { name: 'fixture' }, agent: {} };
 
-async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false, runLog, harnessFrames = [], harnessView } = {}) {
+async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false, runLog, harnessFrames = [], harnessView, ksxcRuntime } = {}) {
+  const deployed = ksxcRuntime ? { ...runtime, identity: { ...runtime.identity, runtimeName: 'ksxc' } } : runtime;
   const root = await mkdtemp(join(tmpdir(), 'managed-actions-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const stored = new Map(), live = new Map();
@@ -87,9 +88,9 @@ async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false
   };
   let server;
   const start = async () => {
-    const actions = await createManagedRuntimeActions({ ctx, runtime, model: 'model', models: ['model'], directory: root,
+    const actions = await createManagedRuntimeActions({ ctx, runtime: deployed, ksxcRuntime, model: 'model', models: ['model'], directory: root,
       admit: async () => ({ presetId: 'managed-preset' }) });
-    server = await startBuildRuntimeHttp({ agentId: runtime.identity.agentId, managedIdentity: runtime.identity, platformActions: actions, token, runner, withResourceContext, runLog, harnessView,
+    server = await startBuildRuntimeHttp({ agentId: runtime.identity.agentId, managedIdentity: deployed.identity, platformActions: actions, token, runner, withResourceContext, runLog, harnessView,
       model: 'model', port: 0, validatePrevious: async previous => {
         if (!stored.get(previous.sessionId)?.events.some(event => event.data?.source?.rpcId === previous.occurrenceId)) throw Object.assign(Error('absent'), { status: 404 });
       } });
@@ -535,14 +536,17 @@ test('CancelRun validates the subject and invocation, and waits for native durab
   } finally { bridge.close(); }
 });
 
-test('managed sessions stay visible and readable after an accepted version update', async t => {
+test('managed sessions stay readable and accept new turns after an accepted version update', async t => {
   const api = await setup(t);
-  await api.run('hello', 'update-run');
+  const first = await (await api.run('hello', 'update-run')).json();
   const before = await (await api.action('ListSessions', {})).json();
   assert.equal(before.Data.Total, 1);
   const previousVersion = runtime.identity.versionId;
+  const previousDigest = runtime.identity.manifestSha256;
   runtime.identity.versionId = 'version-2';
-  t.after(() => { runtime.identity.versionId = previousVersion; });
+  runtime.identity.manifestSha256 = 'b'.repeat(64);
+  t.after(() => { runtime.identity.versionId = previousVersion; runtime.identity.manifestSha256 = previousDigest; });
+  await api.restart();
   const listed = await (await api.action('ListSessions', {})).json();
   assert.equal(listed.Data.Total, 1);
   assert.equal(listed.Data.Sessions[0].VersionId, 'version-2');
@@ -555,4 +559,54 @@ test('managed sessions stay visible and readable after an accepted version updat
   assert.equal(messages.status, 200);
   const history = (await messages.json()).Data;
   assert(history.Messages.some(message => message.Content.text === 'hello'));
+  assert.equal((await api.post('/v1/responses', { input: 'stale', previous_response_id: first.id })).status, 404);
+  assert.equal((await api.run('continue', 'bob-cannot-resume', 'public-session', 'bob')).status, 404);
+  assert.equal((await api.action('CreateSession', { SessionId: 'public-session' })).status, 200);
+  const replay = await (await api.run('hello', 'update-run')).json();
+  assert.equal(replay.output_text, first.output_text);
+  assert.equal(api.counts().modelCalls, 1);
+  const response = await api.run('continue', 'after-update');
+  assert.equal(response.status, 200);
+  const continued = await response.json();
+  assert.equal(continued.output_text, 'answer:continue');
+  assert.equal(continued.conversation.id.split('_')[1], first.conversation.id.split('_')[1]);
+  assert.notEqual(continued.conversation.id, first.conversation.id);
+  const linked = await api.post('/v1/responses', { input: 'same native history', session_id: 'public-session',
+    previous_response_id: continued.id, request_id: 'linked-after-update' });
+  assert.equal(linked.status, 200);
+  assert.equal(api.counts().creates, 1);
+  assert.equal(api.counts().modelCalls, 3);
+});
+
+
+test('managed KSXC bootstrap, model list and both run endpoints use only the authenticated account', async t => {
+  const alice = managedRuntimePrincipal(ownerHeaders('alice')).userId;
+  const bob = managedRuntimePrincipal(ownerHeaders('bob')).userId;
+  const calls = [];
+  const api = await setup(t, {
+    ksxcRuntime: { listModels: async ({ userId }) => {
+      if (userId === alice) return [{ id: 'model', name: 'Alice model' }];
+      if (userId === bob) return [{ id: 'bob-model', name: 'Bob model' }];
+      throw Object.assign(Error('connection missing'), { code: 'KSXC_CONNECTION_REQUIRED', status: 403 });
+    } },
+    onRun: request => calls.push(request.model),
+  });
+  const [aliceList, bobList] = await Promise.all(['alice', 'bob'].map(async who =>
+    (await (await api.action('ListAgentModels', { UserId: 'spoof' }, who)).json()).Data));
+  assert.deepEqual(aliceList.Models.map(item => item.id), ['model']);
+  assert.deepEqual(bobList.Models.map(item => item.id), ['bob-model']);
+  assert.equal(bobList.Current, null);
+  const bootstrap = (await (await api.action('GetAgentUiBootstrap', {}, 'bob')).json()).Data;
+  assert.equal(bootstrap.Model, null);
+  assert.deepEqual(bootstrap.Models.map(item => item.id), ['bob-model']);
+  assert.equal((await api.action('ListAgentModels', {}, 'unconnected')).status, 403);
+  assert.equal((await api.action('ListAgentModels', {}, 'alice', { 'x-agentengine-subject-type': 'account' })).status, 401);
+  assert.equal((await api.post('/v1/responses', { session_id: 'denied', input: 'hidden', model: 'model', user: 'alice' }, 'bob')).status, 403);
+  assert.equal((await api.action('RunAgent', { SessionId: 'denied', UserId: 'alice', Messages: 'hidden', Model: 'model' }, 'bob')).status, 403);
+  assert.deepEqual(calls, []);
+  const permitted = await api.action('RunAgent', { SessionId: 'bob-session', Messages: 'hello', Model: 'bob-model' }, 'bob');
+  assert.equal(permitted.status, 200);
+  assert.equal((await api.post('/v1/responses', { session_id: 'alice-session', input: 'hello' }, 'alice')).status, 200);
+  assert.deepEqual(calls, ['bob-model', 'model']);
+  assert.equal((await api.action('GetSession', { SessionId: 'bob-session' }, 'alice')).status, 404);
 });

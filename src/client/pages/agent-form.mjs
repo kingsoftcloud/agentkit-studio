@@ -1,3 +1,4 @@
+import { KSXC_CHANGED } from './ksxc-settings.mjs';
 import { STAR_HARNESS_CHANGED } from './star-harness.mjs';
 import { memorySourceContext, readAgentMemoryConfig, writeAgentMemoryConfig, validateAgentMemoryConfig, memoryRequiresCloudBinding, clampInt, clampFloat, MEMORY_WRITE_MODES, MEMORY_ROLLOUTS, MEMORY_PROVIDER_CLOUD } from '../state/agent-memory-config.mjs';
 import { createNativeRoleFields, readNativeRoleDrafts, validateNativeRoleDrafts } from './native-role-fields.mjs';
@@ -7,7 +8,8 @@ import { NATIVE_AGENT_POLICY_CONTRACT, normalizeNativeAgentPolicy } from '../../
 import { NATIVE_CAPABILITY_PRESETS, nativeCapabilitySummary } from '../state/native-capabilities.mjs';
 import { createFormKit } from '../components/form-kit.mjs';
 
-const RUNTIME_DESCRIPTIONS = { 'dsh-native': '本地原生循环，按需使用工具与资源。', codex: '面向代码与工程任务的运行环境。', harness: '多角色协作与可配置的工具循环。' };
+const RUNTIME_DESCRIPTIONS = { 'dsh-native': '本地原生循环，按需使用工具与资源。', codex: '面向代码与工程任务的运行环境。', ksxc: '使用当前 WPS 企业账号授权的 KSXC 模型。', harness: '多角色协作与可配置的工具循环。' };
+const runtimeSetupHint = type => type === 'ksxc' ? '在 Studio 设置中安装并启用 KSXC' : '在插件页安装并启用 Star Harness';
 const NATIVE_TOOL_HELP = 'Native 自动配备可用的文件、命令和网页工具，Agent 按需调用；写入与命令仍遵循会话审批，企业资源按授权使用。';
 const POLICY_HELP = '规则随 Agent 版本固定；会话权限和 Host 审批仍可进一步拒绝。';
 const RECALL_HELP = '本地按词项覆盖率检索，置信度非语义相关度；关闭后不再自动召回已有事实。';
@@ -77,7 +79,22 @@ export function createAgentForm({
         window?.removeEventListener(STAR_HARNESS_CHANGED, load);
       };
     }, [editing, allowHarnessRuntime]);
-    const creatableRuntime = type => type !== 'harness' || editing || allowHarnessRuntime || starHarnessReady;
+    const [ksxcReady, setKsxcReady] = useState(false);
+    const [ksxcRevision, refreshKsxc] = useState(0);
+    useEffect(() => {
+      const changed = () => refreshKsxc(value => value + 1);
+      window?.addEventListener(KSXC_CHANGED, changed);
+      return () => window?.removeEventListener(KSXC_CHANGED, changed);
+    }, []);
+    useEffect(() => {
+      if (editing || !hostRemote.ksxcStatus) return;
+      const controller = new AbortController();
+      hostRemote.ksxcStatus(controller.signal).then(value => {
+        if (!controller.signal.aborted) setKsxcReady(value.release?.ready === true);
+      }, () => { if (!controller.signal.aborted) setKsxcReady(false); });
+      return () => controller.abort();
+    }, [editing, ksxcRevision]);
+    const creatableRuntime = type => type === 'ksxc' ? editing || ksxcReady : type !== 'harness' || editing || allowHarnessRuntime || starHarnessReady;
     const runtimeOptions = [
       ...ALLOWED_RUNTIME_TYPES.filter(type => !creatableRuntime(type) || !creationSeed?.runtimes || creationSeed.runtimes.includes(type)).map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] })),
       // A cloud Agent's server-owned framework is not a local authoring
@@ -110,7 +127,8 @@ export function createAgentForm({
         return () => { alive = false; };
       }
       setCatalogStatus('loading');
-      Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => kind === 'model' && form.runtime === 'codex' && !cloudEditing ? hostRemote.codexModels() : hostRemote.resources(kind === 'tool' ? { kind, runtimeType: form.runtime } : kind)))
+      Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => kind === 'model' && form.runtime === 'ksxc' ? hostRemote.ksxcModels()
+        : kind === 'model' && form.runtime === 'codex' && !cloudEditing ? hostRemote.codexModels() : hostRemote.resources(kind === 'tool' ? { kind, runtimeType: form.runtime } : kind)))
         .then(results => {
           if (!alive) return;
           const next = {};
@@ -122,7 +140,11 @@ export function createAgentForm({
           if (!editing && form.runtime === 'harness' && !Object.hasOwn(originalBindings, 'tools'))
             setSelectedTools(nativeDefaultToolsFromCatalog(next.tool));
           const defaultId = results[0]?.value?.defaultModel || next.model?.[0]?.resourceId || '';
-          if (!editing || form.runtime === 'codex') {
+          if (form.runtime === 'ksxc') {
+            setSelectedModel(current => next.model.some(item => item.resourceId === current) ? current : editing ? '' : results[0]?.value?.defaultModel || '');
+            setSelectedModels([]);
+            if (next.model.length) setError('');
+          } else if (!editing || form.runtime === 'codex') {
             setSelectedModel(current => next.model.some(item => item.resourceId === current) ? current : defaultId);
             setSelectedModels(current => { const valid = current.filter(id => next.model.some(item => item.resourceId === id)); return valid.length ? valid : (defaultId ? [defaultId] : []); });
           }
@@ -130,11 +152,11 @@ export function createAgentForm({
           else {
             setCatalogStatus('error');
             const failed = results.find(result => result.status === 'rejected');
-            setError(failed?.reason?.message || '模型资源目录读取失败');
+            setError(failed?.reason?.message || (form.runtime === 'ksxc' ? '这个 KSXC 账号还没有可用模型。' : '模型资源目录读取失败'));
           }
         });
       return () => { alive = false; };
-    }, [form.runtime]);
+    }, [form.runtime, ksxcRevision]);
 
     const boundKinds = platformBindings.filter(item => item.enabled !== false).map(item => item?.config?.binding?.resource?.kind);
     const selectedCounts = { model: selectedModel ? 1 : 0, tool: selectedTools.length, mcp: selectedMcp.length, skill: selectedSkills.length };
@@ -158,7 +180,7 @@ export function createAgentForm({
       : cloudEditing || (catalogStatus === 'ready' && Boolean(selectedModel) && bindingReady));
 
     const create = async () => {
-      if (!creatableRuntime(form.runtime)) { setError('请先在插件页启用 Star Harness。'); setStep(0); return; }
+      if (!creatableRuntime(form.runtime)) { setError(`请先${runtimeSetupHint(form.runtime)}。`); setStep(0); return; }
       if (!cloudEditing && !bindingReady) { setError(requiresCloudBinding && !memoryInstanceBound ? '启用云记忆前，请在「绑定能力」步骤选择记忆库。' : (missingRequirements.map(item => item.label).join('、') || '启用长期记忆前请选择记忆库')); setStep(1); return; }
       const memoryValidation = validateAgentMemoryConfig({ ...memoryConfig, source: effectiveMemorySource });
       if (!memoryValidation.ok) { setError(memoryValidation.errors.map(item => item.message).join('；')); setStep(2); return; }
@@ -197,7 +219,7 @@ export function createAgentForm({
           security: editing ? originalSpec.security : { toolPolicy: 'deny-by-default', allowedPermissions },
           bindings: {
             ...originalBindings,
-            ...(!cloudEditing ? { modelProfileId: selectedModel, modelProfileIds: selectedModels.length ? selectedModels : [selectedModel] } : {}),
+            ...(!cloudEditing ? { modelProfileId: selectedModel, modelProfileIds: form.runtime === 'ksxc' ? [selectedModel] : selectedModels.length ? selectedModels : [selectedModel] } : {}),
             ...(boundPolicy ? { policyTemplate: policy, nativeAgentPolicy: boundPolicy } : {}),
             tools: selectedTools.map(resourceId => (originalBindings.tools || []).find(item => item.resourceId === resourceId) || { resourceId }),
             mcpServers: selectedMcp.map(resourceId => {
@@ -295,9 +317,10 @@ export function createAgentForm({
         h('div', { className: 'af-runtime-options', role: 'radiogroup', 'aria-label': '运行时' }, runtimeOptions.map(item => {
           const unavailable = !creatableRuntime(item.runtimeType);
           const disabled = editing || unavailable;
+          const selected = form.runtime === item.runtimeType;
           const tabRuntime = runtimeOptions.some(option => option.runtimeType === form.runtime && creatableRuntime(option.runtimeType)) ? form.runtime : runtimeOptions.find(option => creatableRuntime(option.runtimeType))?.runtimeType;
-          return Button({ key: item.runtimeType, role: 'radio', 'data-runtime': item.runtimeType, 'aria-label': item.displayName || item.runtimeType, 'aria-checked': form.runtime === item.runtimeType, disabled, tabIndex: !disabled && item.runtimeType === tabRuntime ? 0 : -1,
-            className: 'af-runtime-option', title: unavailable ? '在插件页安装并启用 Star Harness' : undefined,
+          return Button({ key: item.runtimeType, role: 'radio', 'data-runtime': item.runtimeType, 'aria-label': item.displayName || item.runtimeType, 'aria-checked': selected, disabled, tabIndex: !disabled && item.runtimeType === tabRuntime ? 0 : -1,
+            variant: selected ? 'primary' : undefined, className: 'af-runtime-option', title: unavailable ? runtimeSetupHint(item.runtimeType) : undefined,
             onClick: () => { if (!disabled) update('runtime', item.runtimeType); },
             onKeyDown: event => {
               if (disabled || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
@@ -315,10 +338,12 @@ export function createAgentForm({
       !cloudEditing ? Field({ label: '任务说明（可选）' }, TextArea({ value: taskPrompt, onChange: event => setTaskPrompt(event.target.value), rows: 3 })) : null,
     ) : step === 1 ? h(Fragment, null,
       cloudEditing ? Note({ role: 'status' }, '当前是云端 Agent。模型、MCP、本地 Skill 和 Tool 由 AgentEngine Runtime 自身管理；本页只保存知识库、记忆库和 Skill Center 这三类云端 ComponentConfig。') : null,
+      !cloudEditing && form.runtime === 'ksxc' ? Row({ title: '企业模型目录', desc: '使用 Studio 设置中已连接的 WPS 企业账号。' },
+        Button({ size: 'sm', onClick: () => refreshKsxc(value => value + 1) }, '刷新目录')) : null,
       !cloudEditing && form.runtime === 'codex' ? Note({ role: 'status' }, '可选 Codex 账户模型或已配置的网关模型；网关模型使用对应提供商的凭证和 API 设置。导出运行包时只支持网关模型。') : null,
       !cloudEditing ? Section({ title: '模型' },
         Row({ title: '默认模型' }, Select({ 'aria-label': '默认模型', value: selectedModel, onChange: event => { setSelectedModel(event.target.value); setSelectedModels(current => current.includes(event.target.value) ? current : [event.target.value, ...current]); } }, h('option', { value: '' }, catalogStatus === 'loading' ? '正在读取模型…' : '请选择模型'), catalog.model.map(resource => h('option', { key: resource.resourceId, value: resource.resourceId }, resource.displayName || resource.name || resource.resourceId)))),
-        Row({ title: '可用模型', help: '对话中可切换到这些模型；默认模型始终可用。' },
+        form.runtime === 'ksxc' ? null : Row({ title: '可用模型', help: '对话中可切换到这些模型；默认模型始终可用。' },
           h('div', { className: 'af-selected-chips' }, catalog.model.filter(resource => selectedModels.includes(resource.resourceId)).map(resource => h('span', { key: resource.resourceId, className: 'af-runtime-tag' }, resource.displayName || resource.name || resource.resourceId))),
           Collapsible({ summary: '添加', className: 'af-binding-picker' }, h('div', { className: 'af-choices' }, catalog.model.map(resource => CheckCard({ key: resource.resourceId, checked: selectedModels.includes(resource.resourceId), title: resource.displayName || resource.name || resource.resourceId,
           onChange: event => setSelectedModels(current => event.target.checked ? [...current, resource.resourceId] : current.filter(id => id !== resource.resourceId)) })))))) : null,

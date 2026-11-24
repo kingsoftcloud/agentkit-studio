@@ -39,6 +39,7 @@
     "scripts/start-agent-bundle.mjs",
     "scripts/verify-agent-manifest.mjs",
     "scripts/start-agent-manifest.mjs",
+    "scripts/probe-ksxc-app-server.mjs",
     "scripts/native-package-pins.json",
     "scripts/native-package-integrity.mjs",
     "scripts/verify-native-dependencies.mjs"

@@ -14,7 +14,7 @@ const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
 // CHANNEL codes are this host's own uppercase tokens (session and request
 // history); surfacing them keeps run logs identical to the client-facing code.
-const CLIENT_ERROR_CODE = /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED|CHANNEL)_[A-Z0-9_]{1,80}$/;
+const CLIENT_ERROR_CODE = /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED|CHANNEL|KSXC)_[A-Z0-9_]{1,80}$/;
 const DIAGNOSTIC_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
 /** Client-facing codes stay inside the documented families. */
 const safeClientCode = code => (typeof code === 'string' && CLIENT_ERROR_CODE.test(code) ? code : 'RUNTIME_RUN_FAILED');
@@ -63,7 +63,8 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
   const allowedPermissionModes = executionModesUpTo(ceiling);
   const scope = managed ? JSON.stringify([managedIdentity.versionId, managedIdentity.manifestSha256]) : buildId;
   const tokenHash = hash(token);
-  const responses = createRuntimeResponsesContract({ agentId, buildId, definitionId: managedIdentity?.manifestSha256, versionId: managedIdentity?.versionId, token, model, models, allowImages });
+  const ksxc = managedIdentity?.runtimeName === 'ksxc';
+  const responses = createRuntimeResponsesContract({ agentId, buildId, definitionId: managedIdentity?.manifestSha256, versionId: managedIdentity?.versionId, token, model, models, dynamicModels: ksxc, allowImages });
   const active = new Map();
   platformActions?.setRunControl({ cancelRun: (runId, sessionId, principalDigest) => {
     const target = active.get(runId);
@@ -100,7 +101,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       if (req.method === 'GET' && url.pathname === '/v1/agentkit/runtime') {
         const owner = managed ? { format: 'agentengine.managed-runtime/v1', ...managedIdentity }
           : { format: 'agentkit.runtime-identity/v1', agentId, buildId, bundleSha256, deploymentVersion };
-        json(res, 200, { ...owner, status: 'ready', model, models, ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), ...(declaredPolicy && allowedPermissionModes.length ? { allowedPermissionModes } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(harnessView ? ['harness-task-view'] : []), ...(declaredPolicy && allowedPermissionModes.length ? [CLOUD_EXECUTION_POLICY_CAPABILITY] : [])] }); return;
+        json(res, 200, { ...owner, status: 'ready', ...(ksxc ? {} : { model, models }), ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), ...(declaredPolicy && allowedPermissionModes.length ? { allowedPermissionModes } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(harnessView ? ['harness-task-view'] : []), ...(declaredPolicy && allowedPermissionModes.length ? [CLOUD_EXECUTION_POLICY_CAPABILITY] : [])] }); return;
       }
       if (managed && (req.headers['x-agentengine-target-version-id'] !== managedIdentity.versionId
         || req.headers['x-agentengine-manifest-sha256'] !== managedIdentity.manifestSha256)) throw fail('RUNTIME_DEPLOYMENT_CHANGED', 409);

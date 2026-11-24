@@ -1,17 +1,17 @@
 ---
 title: "控制协议"
-description: "139 个 operation id 的完整清单，按 25 个域分组，每条给出 Host 侧处理器位置。"
+description: "143 个 operation id 的完整清单，按 26 个域分组，每条给出 Host 侧处理器位置。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 传输约定
 
-控制通道固定为 `/agentkit`，共 139 个 operation id，分布在 25 个域。
+控制通道固定为 `/agentkit`，共 143 个 operation id，分布在 26 个域。
 
 | 约定 | 值 | 源码 |
 | --- | --- | --- |
-| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:144` |
+| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:152` |
 | 请求信封 | `{ operationId, payload }`，payload 必须是可序列化 JSON | `src/contracts/wire.mjs` |
 | 响应信封 | `{ ok: true, value }` 或 `{ ok: false, error }` | `src/contracts/wire.mjs` |
 | 取消 | 第四个参数 `AbortSignal`；取消后只回一个终态信封，不重试未知副作用 | `src/contracts/definitions.mjs:8` |
@@ -19,7 +19,7 @@ description: "139 个 operation id 的完整清单，按 25 个域分组，每�
 
 ## 域摘要
 
-25 个域，按 operation 数量降序。`sessions` 与 `agents` 承担了大部分交互面。
+26 个域，按 operation 数量降序。`sessions` 与 `agents` 承担了大部分交互面。
 
 | 域 | 条数 | 说明 |
 | --- | --- | --- |
@@ -32,13 +32,14 @@ description: "139 个 operation id 的完整清单，按 25 个域分组，每�
 | `team-templates` | 2 | 专家团模板的列表与详情。 |
 | `sessions` | 24 | 会话导出、原生恢复、子任务、A2A、审批与命令输出。最大的一个域。 |
 | `agents` | 11 | Agent 的本地与云端生命周期、执行策略与会话视图。 |
-| `models` | 5 | 模型目录、凭证同步与 Codex 模型目录。 |
+| `models` | 8 | 模型目录、凭证同步与 Codex 模型目录。 |
 | `resources` | 2 | 资源目录的列出与删除。 |
 | `mcp` | 4 | MCP Server 的创建、更新、探测与删除。 |
 | `credentials` | 1 | 凭证写入。 |
 | `settings` | 2 | 全局设置的读取与更新。 |
 | `skills` | 5 | Skill 的发现、预览、提交与安装预览。 |
-| `plugins` | 12 | DSH 与 Codex 插件的安装、启用、禁用与移除。 |
+| `plugins` | 4 | DSH 与 Codex 插件的安装、启用、禁用与移除。 |
+| `ksxc` | 9 |  |
 | `star-harness` | 5 | 本机 Star Harness 的安装、启用与工作区绑定。只有 Studio 宿主所有者可调用。 |
 | `builds` | 4 | 构建创建、列出、下载与可移植导出。 |
 | `operations` | 2 | 长操作的列出与取消。 |
@@ -110,11 +111,11 @@ description: "139 个 operation id 的完整清单，按 25 个域分组，每�
 | `agents` | `agents/list` | 列出 | `src/host/routes/agents.mjs:94` |
 | `agents` | `agents/create-local` | 创建本地 | `src/host/routes/agents.mjs:21` |
 | `agents` | `agents/update-cloud` | 更新云端 | `src/host/routes/agents.mjs:49` |
-| `agents` | `agents/ensure-preset` | 确保预设存在 | `src/host/routes/agents.mjs:123` |
+| `agents` | `agents/ensure-preset` | 确保预设存在 | `src/host/routes/agents.mjs:124` |
 | `agents` | `agents/managed-delete` | 删除托管资源 | `src/host/routes/agents.mjs:67` |
 | `agents` | `agents/execution-policy` | 读取执行策略 | `src/host/routes/agents.mjs:97` |
-| `agents` | `agents/execution-policy-set` | 设置执行策略 | `src/host/routes/agents.mjs:107` |
-| `agents` | `agents/conversation-surface` | 读取对话视图 | `src/host/routes/agents.mjs:146` |
+| `agents` | `agents/execution-policy-set` | 设置执行策略 | `src/host/routes/agents.mjs:108` |
+| `agents` | `agents/conversation-surface` | 读取对话视图 | `src/host/routes/agents.mjs:147` |
 | `agents` | `agents/local-get` | 读取本地 | `src/host/routes/agents.mjs:21` |
 | `agents` | `agents/update-local` | 更新本地 | `src/host/routes/agents.mjs:21` |
 | `agents` | `agents/local-delete` | 删除本地 | `src/host/routes/agents.mjs:8` |
@@ -122,13 +123,16 @@ description: "139 个 operation id 的完整清单，按 25 个域分组，每�
 | `models` | `models/credential-status` | 查询凭证状态 | `src/host/routes/models.mjs:6` |
 | `models` | `models/create` | 创建 | `src/host/routes/models.mjs:8` |
 | `models` | `models/catalog` | 读取目录 | `src/host/routes/models.mjs:14` |
-| `models` | `models/codex` | 读取 Codex 目录 | `src/host/routes/models.mjs:18` |
+| `models` | `models/probe` | 探测 | `src/host/routes/models.mjs:16` |
+| `models` | `models/wire` | wire | `src/host/routes/models.mjs:18` |
+| `models` | `models/efforts` | efforts | `src/host/routes/models.mjs:20` |
+| `models` | `models/codex` | 读取 Codex 目录 | `src/host/routes/models.mjs:22` |
 | `resources` | `resources/list` | 列出 | `src/host/routes/resources.mjs:8` |
 | `resources` | `resources/delete` | 删除 | `src/host/routes/resources.mjs:36` |
 | `mcp` | `mcp/create` | 创建 | `src/host/routes/resources.mjs:23` |
 | `mcp` | `mcp/update` | 更新 | `src/host/routes/resources.mjs:27` |
 | `mcp` | `mcp/probe` | 探测 | `src/host/routes/resources.mjs:32` |
-| `mcp` | `mcp/delete` | 删除 | `src/host/routes/resources.mjs:36` |
+| `mcp` | `mcp/delete` | 删除 | `src/host/routes/resources.mjs:40` |
 | `credentials` | `credentials/put` | 写入 | `src/host/routes/credentials.mjs:2` |
 | `settings` | `settings/get` | 读取 | `src/host/routes/models.mjs:10` |
 | `settings` | `settings/update` | 更新 | `src/host/routes/models.mjs:12` |
@@ -137,18 +141,19 @@ description: "139 个 operation id 的完整清单，按 25 个域分组，每�
 | `skills` | `skills/commit-discovered` | 提交已发现项 | `src/host/routes/skills.mjs:4` |
 | `skills` | `skills/list` | 列出 | `src/host/routes/skills.mjs:4` |
 | `skills` | `skills/preview-installed` | 预览已安装项 | `src/host/routes/skills.mjs:4` |
-| `plugins` | `plugins/dsh-list` | 列出 DSH 插件 | `src/host/routes/plugins.mjs:7` |
-| `plugins` | `plugins/dsh-discover` | 发现 DSH 插件 | `src/host/routes/plugins.mjs:9` |
-| `plugins` | `plugins/dsh-index-refresh` | 刷新远程索引 | `src/host/routes/plugins.mjs:11` |
-| `plugins` | `plugins/dsh-install` | 安装 DSH 插件 | `src/host/routes/plugins.mjs:13` |
-| `plugins` | `plugins/dsh-remove` | 移除 DSH 插件 | `src/host/routes/plugins.mjs:15` |
-| `plugins` | `plugins/dsh-enable` | 启用 DSH 插件 | `src/host/routes/plugins.mjs:17` |
-| `plugins` | `plugins/dsh-disable` | 禁用 DSH 插件 | `src/host/routes/plugins.mjs:17` |
-| `plugins` | `plugins/dsh-update` | 更新 DSH 插件 | `src/host/routes/plugins.mjs:21` |
-| `plugins` | `plugins/codex-list` | 列出 Codex 插件 | `src/host/routes/plugins.mjs:32` |
-| `plugins` | `plugins/codex-inspect` | 检查 Codex 插件 | `src/host/routes/plugins.mjs:32` |
-| `plugins` | `plugins/codex-install` | 安装 Codex 插件 | `src/host/routes/plugins.mjs:25` |
-| `plugins` | `plugins/codex-remove` | 移除 Codex 插件 | `src/host/routes/plugins.mjs:25` |
+| `plugins` | `plugins/codex-list` | 列出 Codex 插件 | `src/host/routes/plugins.mjs:17` |
+| `plugins` | `plugins/codex-inspect` | 检查 Codex 插件 | `src/host/routes/plugins.mjs:17` |
+| `plugins` | `plugins/codex-install` | 安装 Codex 插件 | `src/host/routes/plugins.mjs:10` |
+| `plugins` | `plugins/codex-remove` | 移除 Codex 插件 | `src/host/routes/plugins.mjs:10` |
+| `ksxc` | `ksxc/status` | 查询状态 | `src/host/routes/ksxc.mjs:7` |
+| `ksxc` | `ksxc/activate` | activate | `src/host/routes/ksxc.mjs:14` |
+| `ksxc` | `ksxc/enable` | 启用 | `src/host/routes/ksxc.mjs:15` |
+| `ksxc` | `ksxc/rollback` | rollback | `src/host/routes/ksxc.mjs:16` |
+| `ksxc` | `ksxc/login` | login | `src/host/routes/ksxc.mjs:17` |
+| `ksxc` | `ksxc/login-result` | login-result | `src/host/routes/ksxc.mjs:18` |
+| `ksxc` | `ksxc/login-cancel` | login-cancel | `src/host/routes/ksxc.mjs:19` |
+| `ksxc` | `ksxc/disconnect` | disconnect | `src/host/routes/ksxc.mjs:20` |
+| `ksxc` | `ksxc/models` | models | `src/host/routes/ksxc.mjs:21` |
 | `star-harness` | `star-harness/status` | 查询状态 | `src/host/routes/star-harness.mjs:4` |
 | `star-harness` | `star-harness/install` | 安装 | `src/host/routes/star-harness.mjs:8` |
 | `star-harness` | `star-harness/enable` | 启用 | `src/host/routes/star-harness.mjs:9` |
@@ -209,8 +214,8 @@ description: "139 个 operation id 的完整清单，按 25 个域分组，每�
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| operation id 数 | `139` | 新增或删除都是破坏性变更 |
-| 域数 | `25` | 新增域需要同步本页与路由 |
+| operation id 数 | `143` | 新增或删除都是破坏性变更 |
+| 域数 | `26` | 新增域需要同步本页与路由 |
 | 通道 | `/agentkit` | 客户端硬编码，不可配置 |
 
 ## 开发者入口
@@ -227,9 +232,9 @@ description: "139 个 operation id 的完整清单，按 25 个域分组，每�
 
 | 测试文件 | 位置 |
 | --- | --- |
-| host-compatibility.test.mjs | `tests/host-compatibility.test.mjs` |
-| host-route-contracts.test.mjs | `tests/host-route-contracts.test.mjs` |
-| studio-wire-contracts.test.mjs | `tests/studio-wire-contracts.test.mjs` |
+| control-endpoint-registration.test.mjs | `tests/control-endpoint-registration.test.mjs` |
 | host-dispatcher.test.mjs | `tests/host-dispatcher.test.mjs` |
 | host-route-contracts.test.mjs | `tests/host-route-contracts.test.mjs` |
 | local-agent-edit-conflicts.test.mjs | `tests/local-agent-edit-conflicts.test.mjs` |
+| studio-wire-contracts.test.mjs | `tests/studio-wire-contracts.test.mjs` |
+| host-compatibility.test.mjs | `tests/host-compatibility.test.mjs` |

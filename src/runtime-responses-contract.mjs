@@ -47,7 +47,7 @@ function userInput(input, allowImages) {
   return { input: text, ...(images.length ? { images } : {}) };
 }
 
-export function createRuntimeResponsesContract({ agentId, buildId, definitionId, versionId, token, model = '', models = [model], allowImages = false }) {
+export function createRuntimeResponsesContract({ agentId, buildId, definitionId, versionId, token, model = '', models = [model], dynamicModels = false, allowImages = false }) {
   // Handles carry only scoped hashes. Their signature binds Agent, Build and
   // principal without a second transcript/response store beside DSH.
   const scope = buildId || JSON.stringify([versionId, definitionId]);
@@ -60,6 +60,55 @@ export function createRuntimeResponsesContract({ agentId, buildId, definitionId,
   };
   const responseHandle = (session, run, principal) => { const value = `resp_${session}_${run}`; return `${value}_${sign(value, principal)}`; };
   const sessionHandle = (session, principal) => { const value = `conv_${session}`; return `${value}_${sign(value, principal)}`; };
+  function readRequest(input, headers, verifiedPrincipal) {
+    const allowed = ['input', 'stream', 'session_id', 'conversation', 'previous_response_id', 'request_id', 'model', 'user', 'account_id', 'metadata'];
+    if (!object(input) || Object.keys(input).some(key => !allowed.includes(key))) throw runtimeError('RESPONSES_UNSUPPORTED_FIELD');
+    if (input.stream !== undefined && typeof input.stream !== 'boolean') throw runtimeError('RESPONSES_INPUT_INVALID');
+    if (input.model !== undefined && (dynamicModels
+      ? typeof input.model !== 'string' || !/^[^\s\x00-\x1f\x7f]{1,512}$/.test(input.model)
+      : !models.includes(input.model))) throw runtimeError('RESPONSES_FROZEN_MODEL_MISMATCH');
+    for (const field of ['session_id', 'user', 'account_id', 'request_id']) if (input[field] !== undefined && !identity(input[field])) throw runtimeError('RESPONSES_INPUT_INVALID');
+    if (input.metadata !== undefined && (!object(input.metadata) || Object.entries(input.metadata).some(([key, value]) => key !== 'agentengine' && (key.length > 64 || typeof value !== 'string' || value.length > 512))
+      || Object.keys(input.metadata).length > 17)) throw runtimeError('RESPONSES_METADATA_INVALID');
+    const principal = verifiedPrincipal ?? JSON.stringify([input.account_id || '', input.user || '']);
+    let conversation = input.conversation;
+    if (object(conversation) && Object.keys(conversation).length === 1) conversation = conversation.id;
+    if (conversation !== undefined && !identity(conversation)) throw runtimeError('RESPONSES_INPUT_INVALID');
+    if ((conversation && input.session_id && conversation !== input.session_id) || (conversation && input.previous_response_id)) throw runtimeError('RESPONSES_SESSION_CONFLICT');
+    const ids = [input.request_id, headers['idempotency-key'], input.metadata?.agentengine?.invocation_id].filter(value => value !== undefined);
+    if (ids.some(value => !identity(value)) || new Set(ids).size > 1) throw runtimeError('RESPONSES_REQUEST_ID_INVALID');
+    const requestId = ids[0] || randomUUID();
+    const label = conversation || input.session_id;
+    const conversationSession = label?.startsWith('conv_') ? checked(label, 'conv', principal)[0] : undefined;
+    let prior;
+    if (input.previous_response_id !== undefined) {
+      if (typeof input.previous_response_id !== 'string') throw runtimeError('RESPONSES_INPUT_INVALID');
+      prior = checked(input.previous_response_id, 'resp', principal);
+    }
+    return { label, conversationSession, prior, principal,
+      request: { ...userInput(input.input, allowImages), requestId, stream: input.stream === true,
+        ...(verifiedPrincipal === undefined ? {} : { sessionLabel: label || requestId }),
+        model: input.model ?? model, createdAt: Math.floor(Date.now() / 1000), metadata: { ...(input.metadata || {}), agentkit: metadataIdentity } } };
+  }
+  function bindRequest({ label, conversationSession, prior, principal, request }, nativeSessionId) {
+    const { requestId } = request;
+    let session = conversationSession ?? digest(JSON.stringify([agentId, scope, principal, label || requestId]));
+    if (nativeSessionId !== undefined) {
+      const registered = /^runtime-([a-f0-9]{32})$/.exec(nativeSessionId);
+      if (!registered) throw runtimeError('RUNTIME_SESSION_METADATA_INVALID', 503);
+      session = registered[1];
+    }
+    let previous;
+    if (prior) {
+      const [priorSession, priorRun] = prior;
+      if (label && session !== priorSession) throw runtimeError('RESPONSES_SESSION_CONFLICT');
+      session = priorSession;
+      previous = { sessionId: `runtime-${session}`, occurrenceId: `run_${priorRun}` };
+    }
+    const run = digest(JSON.stringify([session, requestId]));
+    return { ...request, sessionId: `runtime-${session}`, runId: `run_${run}`,
+      responseId: responseHandle(session, run, principal), conversationId: sessionHandle(session, principal), previous };
+  }
   return {
     cancellation(responseId) {
       // Cancellation holds the Agent bearer, but has no body carrying a user.
@@ -67,37 +116,16 @@ export function createRuntimeResponsesContract({ agentId, buildId, definitionId,
       if (!/^resp_[a-f0-9]{32}_[a-f0-9]{32}_[a-f0-9]{32}$/.test(responseId)) throw runtimeError('RESPONSES_HANDLE_INVALID', 404);
       return `run_${responseId.split('_')[2]}`;
     },
-    parse(input, headers = {}, { principal: verifiedPrincipal } = {}) {
-      const allowed = ['input', 'stream', 'session_id', 'conversation', 'previous_response_id', 'request_id', 'model', 'user', 'account_id', 'metadata'];
-      if (!object(input) || Object.keys(input).some(key => !allowed.includes(key))) throw runtimeError('RESPONSES_UNSUPPORTED_FIELD');
-      if (input.stream !== undefined && typeof input.stream !== 'boolean') throw runtimeError('RESPONSES_INPUT_INVALID');
-      if (input.model !== undefined && !models.includes(input.model)) throw runtimeError('RESPONSES_FROZEN_MODEL_MISMATCH');
-      for (const field of ['session_id', 'user', 'account_id', 'request_id']) if (input[field] !== undefined && !identity(input[field])) throw runtimeError('RESPONSES_INPUT_INVALID');
-      if (input.metadata !== undefined && (!object(input.metadata) || Object.entries(input.metadata).some(([key, value]) => key !== 'agentengine' && (key.length > 64 || typeof value !== 'string' || value.length > 512))
-        || Object.keys(input.metadata).length > 17)) throw runtimeError('RESPONSES_METADATA_INVALID');
-      const principal = verifiedPrincipal ?? JSON.stringify([input.account_id || '', input.user || '']);
-      let conversation = input.conversation;
-      if (object(conversation) && Object.keys(conversation).length === 1) conversation = conversation.id;
-      if (conversation !== undefined && !identity(conversation)) throw runtimeError('RESPONSES_INPUT_INVALID');
-      if ((conversation && input.session_id && conversation !== input.session_id) || (conversation && input.previous_response_id)) throw runtimeError('RESPONSES_SESSION_CONFLICT');
-      const ids = [input.request_id, headers['idempotency-key'], input.metadata?.agentengine?.invocation_id].filter(value => value !== undefined);
-      if (ids.some(value => !identity(value)) || new Set(ids).size > 1) throw runtimeError('RESPONSES_REQUEST_ID_INVALID');
-      const requestId = ids[0] || randomUUID();
-      const label = conversation || input.session_id;
-      let session = label?.startsWith('conv_') ? checked(label, 'conv', principal)[0] : digest(JSON.stringify([agentId, scope, principal, label || requestId]));
-      let previous;
-      if (input.previous_response_id !== undefined) {
-        if (typeof input.previous_response_id !== 'string') throw runtimeError('RESPONSES_INPUT_INVALID');
-        const [priorSession, priorRun] = checked(input.previous_response_id, 'resp', principal);
-        if (label && session !== priorSession) throw runtimeError('RESPONSES_SESSION_CONFLICT');
-        session = priorSession;
-        previous = { sessionId: `runtime-${session}`, occurrenceId: `run_${priorRun}` };
-      }
-      const run = digest(JSON.stringify([session, requestId]));
-      return { ...userInput(input.input, allowImages), requestId, stream: input.stream === true, sessionId: `runtime-${session}`, runId: `run_${run}`,
-        responseId: responseHandle(session, run, principal), conversationId: sessionHandle(session, principal), previous,
-        ...(verifiedPrincipal === undefined ? {} : { sessionLabel: label || requestId }),
-        model: input.model ?? model, createdAt: Math.floor(Date.now() / 1000), metadata: { ...(input.metadata || {}), agentkit: metadataIdentity } };
+    parse(input, headers = {}, { principal } = {}) {
+      return bindRequest(readRequest(input, headers, principal));
+    },
+    async parseManaged(input, headers, { principal, findNativeSession }) {
+      const parsed = readRequest(input, headers, principal);
+      // Public session labels can survive deployment updates. Signed handles
+      // still belong to the version that issued them.
+      const { label, conversationSession, prior, request } = parsed;
+      const nativeSessionId = !conversationSession && (label || !prior) ? await findNativeSession(label || request.requestId) : undefined;
+      return bindRequest(parsed, nativeSessionId);
     },
   };
 }

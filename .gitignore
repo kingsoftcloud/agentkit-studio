@@ -96,3 +96,6 @@ skills/
 /card-mock/
 /designs/
 /.scratch/
+
+# Local and generated documentation, never part of the public PR
+/docs/

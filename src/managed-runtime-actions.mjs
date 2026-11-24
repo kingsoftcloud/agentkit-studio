@@ -1,4 +1,5 @@
 /** AgentEngine metadata Actions over one installed DSH runtime. */
+import { assertKsxcCatalogModel } from './providers/ksxc-runtime.mjs';
 import { randomUUID } from 'node:crypto';
 import { createManagedSessionRegistry, managedSessionKey } from './managed-session-registry.mjs';
 import { managedRuntimePrincipal } from './managed-runtime-identity.mjs';
@@ -22,7 +23,8 @@ function approvalResponseItem(value) {
   return { requestId: item.approval_request_id, approve: item.approve };
 }
 
-export async function createManagedRuntimeActions({ ctx, runtime, admit, model, models, directory, approval, executionPolicy, allowedPermissionModes, env = process.env }) {
+export async function createManagedRuntimeActions({ ctx, runtime, admit, model, models, ksxcRuntime, managedResourceContext, directory, approval, executionPolicy, allowedPermissionModes, env = process.env }) {
+  const ksxc = runtime.identity.runtimeName === 'ksxc';
   const registry = await createManagedSessionRegistry(directory);
   const controller = ctx.get('sessionController'), sessions = ctx.get('sessions'), persistence = ctx.get('sessionPersistence');
   if (!controller || !sessions || !persistence) throw runtimeError('RUNTIME_SESSION_PERSISTENCE_REQUIRED', 503);
@@ -37,6 +39,19 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
     if ((input.AgentId && input.AgentId !== runtime.identity.agentId) || (headers['x-auth-agent-id'] && headers['x-auth-agent-id'] !== runtime.identity.agentId)) throw runtimeError('RUNTIME_AGENT_NOT_FOUND', 404);
     return managedRuntimePrincipal(headers);
   }
+  async function ksxcModels(owner, headers, signal) {
+    if (owner.subjectType !== 'user') throw runtimeError('KSXC_CALLER_REQUIRED', 401);
+    if (!ksxcRuntime) throw runtimeError('KSXC_HOST_UNAVAILABLE', 503);
+    const read = () => ksxcRuntime.listModels({ userId: owner.userId, signal });
+    try { return await (managedResourceContext ? managedResourceContext.run({ headers, subjectDigest: owner.digest, signal }, read) : read()); }
+    catch (error) {
+      if (['KSXC_CONNECTION_REQUIRED', 'KSXC_CONNECTION_EXPIRED', 'KSXC_MODEL_FORBIDDEN', 'KSXC_CALLER_REQUIRED',
+        'KSXC_CALLER_PERMIT_REQUIRED', 'KSXC_CALLER_PERMIT_STALE', 'KSXC_RELEASE_DISABLED', 'KSXC_TARGET_VERSION_UNAVAILABLE'].includes(error?.code)) {
+        throw runtimeError(error.code, error.status || 403);
+      }
+      throw runtimeError('KSXC_CATALOG_UNAVAILABLE', 503);
+    }
+  }
   async function requireSession(id, owner, { deleting = false } = {}) {
     const record = await registry.read(id);
     // Session identity is Agent-scoped, not Version-scoped: an accepted
@@ -47,6 +62,12 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
     if (record.phase === 'deleted') throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
     if (!deleting && (retiring.has(record.nativeSessionId) || record.phase !== 'ready')) throw runtimeError('RUNTIME_SESSION_UNAVAILABLE', 409);
     return record;
+  }
+  function parseForOwner(responses, input, headers, owner) {
+    return responses.parseManaged(input, headers, { principal: owner.key, findNativeSession: async label => {
+      const record = await registry.read(label);
+      return record?.owner === owner.digest ? record.nativeSessionId : undefined;
+    } });
   }
   async function flush(nativeId) {
     const live = sessions.get(nativeId);
@@ -102,7 +123,7 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
         const admission = await admit(runtime.identity.agentId, runtime.agent);
         const created = await controller.create({ sessionId: nativeId, agentPreset: admission.presetId });
         if (created.sessionId !== nativeId) throw runtimeError('RUNTIME_SESSION_ID_CONFLICT', 409);
-        if (admission.modelSelection) await controller.selectModel({ sessionId: nativeId, ...admission.modelSelection, saveDefault: false });
+        if (!ksxc && admission.modelSelection) await controller.selectModel({ sessionId: nativeId, ...admission.modelSelection, saveDefault: false });
       });
       await flush(nativeId);
       const stat = await persistence.stat(nativeId, { signal });
@@ -164,9 +185,9 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
         const platformId = inputPayload?.session_id ?? inputPayload?.conversation;
         if (typeof platformId !== 'string' || !managedSessionKey(platformId)) throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
         const record = await requireSession(platformId, owner);
-        const decided = responses.parse({ input: 'approval decision', stream: inputPayload.stream,
+        const decided = await parseForOwner(responses, { input: 'approval decision', stream: inputPayload.stream,
           session_id: record.sessionId, request_id: inputPayload.request_id ?? `approval-${approvalInput.requestId}`,
-          ...(inputPayload.model === undefined ? {} : { model: inputPayload.model }) }, headers, { principal: owner.key });
+          ...(inputPayload.model === undefined ? {} : { model: inputPayload.model }) }, headers, owner);
         // Resume replays the binding the original RunAgent established and omits
         // business attribution that call never named. The invocation id is a
         // platform correlation id, so it is always present.
@@ -177,7 +198,12 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
         if (requiresBusinessIdentity && !businessInvocation?.userId) throw runtimeError('RUNTIME_BUSINESS_ID_REQUIRED');
         return { ...decided, input: '', approval: approvalInput, platformSession: record, principalDigest: owner.digest, businessInvocation };
       }
-      const input = responses.parse(inputPayload, headers, { principal: owner.key });
+      const input = await parseForOwner(responses, inputPayload, headers, owner);
+      if (ksxc) {
+        const catalog = await ksxcModels(owner, headers, signal);
+        try { assertKsxcCatalogModel(catalog, input.model); }
+        catch (error) { throw runtimeError(error.code, 403); }
+      }
       const attribution = { businessUserId, businessSessionId, requireBusinessUser: requiresBusinessIdentity };
       let record;
       if (input.previous || input.sessionLabel.startsWith('conv_')) {
@@ -229,12 +255,26 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
       }[action];
       if (!fields) throw runtimeError('RUNTIME_ACTION_UNSUPPORTED', 404);
       if (Object.keys(request).some(key => !['AgentId', 'UserId', ...fields].includes(key))) throw runtimeError('RUNTIME_ACTION_INPUT_UNSUPPORTED');
+      if (ksxc && (action === 'GetAgentUiBootstrap' || action === 'ListAgentModels')) {
+        if (action === 'GetAgentUiBootstrap' && request.SessionId) await requireSession(request.SessionId, owner);
+        let entries, connectionStatus = 'connected';
+        try { entries = await ksxcModels(owner, headers, signal); }
+        catch (error) {
+          if (action !== 'GetAgentUiBootstrap' || !['KSXC_CALLER_REQUIRED', 'KSXC_CONNECTION_REQUIRED', 'KSXC_CONNECTION_EXPIRED'].includes(error.code)) throw error;
+          entries = [];
+          connectionStatus = 'required';
+        }
+        const current = entries.find(item => item.id === model) || null;
+        if (action === 'ListAgentModels') return { Models: entries, Current: current?.id ?? null, Source: 'ksxc' };
+        return { ...managedRuntimeBootstrap(runtime, model, { executionPolicy, allowedPermissionModes }),
+          Model: current, Models: entries, ModelConnection: { Status: connectionStatus, Provider: 'ksxc' } };
+      }
       if (action === 'GetAgentUiBootstrap') return managedRuntimeBootstrap(runtime, model, { executionPolicy, allowedPermissionModes });
       if (action === 'ListAgentModels') return { Models: models.map(name => ({ id: name, name, source: 'managed-manifest' })), Current: model, Source: 'managed-manifest' };
       if (action === 'CreateSession') {
         const id = request.SessionId || `sess-${randomUUID()}`;
         if (!managedSessionKey(id)) throw runtimeError('RUNTIME_SESSION_ID_INVALID');
-        const parsed = responses.parse({ input: 'session creation', session_id: id, request_id: 'session-create' }, {}, { principal: owner.key });
+        const parsed = await parseForOwner(responses, { input: 'session creation', session_id: id, request_id: 'session-create' }, {}, owner);
         return { Session: await sessionPayload(await ensure(id, parsed.sessionId, owner, signal), signal), RuntimeSync: 'synced' };
       }
       if (action === 'ListSessions') {
@@ -273,7 +313,7 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
       }
       if (action === 'CancelRun') {
         if (!managedSessionKey(request.InvocationId)) throw runtimeError('RUNTIME_REQUEST_ID_INVALID');
-        const parsed = responses.parse({ input: 'cancellation', session_id: record.sessionId, request_id: request.InvocationId }, {}, { principal: owner.key });
+        const parsed = await parseForOwner(responses, { input: 'cancellation', session_id: record.sessionId, request_id: request.InvocationId }, {}, owner);
         if (request.ResponseId && request.ResponseId !== parsed.responseId) throw runtimeError('RUNTIME_RUN_NOT_ACTIVE', 404);
         if (!cancelRun(parsed.runId, record.nativeSessionId, owner.digest)) throw runtimeError('RUNTIME_RUN_NOT_ACTIVE', 404);
         return { SessionId: record.sessionId, InvocationId: request.InvocationId, Cancelled: true, CancellationRequested: true };

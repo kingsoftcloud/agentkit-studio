@@ -96,7 +96,7 @@ export function createDeploymentStore({ storeDir, clock = Date.now, fs = nodeFs 
     return exclusive(id, async () => {
       const record = await get(id);
       if (!record) throw portableError('DEPLOYMENT_NOT_FOUND', '部署记录不存在');
-      const allowed = new Set(['state', 'cloudAgentId', 'source', 'failure', 'cloudStatus', 'cloudPhase', 'readyReplicas', 'endpoint', 'tokenBound', 'lastCheckedAt', 'activeVersion', 'versions', 'rollout', 'rolloutHistory']);
+      const allowed = new Set(['state', 'cloudAgentId', 'source', 'failure', 'cloudStatus', 'cloudPhase', 'readyReplicas', 'platformVersionId', 'manifestSha256', 'endpoint', 'tokenBound', 'lastCheckedAt', 'activeVersion', 'versions', 'rollout', 'rolloutHistory']);
       if (Object.keys(patch).some(key => !allowed.has(key))) throw portableError('DEPLOYMENT_PATCH_INVALID', '部署记录只允许更新执行状态');
       const next = { ...record, ...patch, updatedAt: timestamp() };
       if (next.state !== record.state) next.events = [...record.events, { at: next.updatedAt, state: next.state }].slice(-200);

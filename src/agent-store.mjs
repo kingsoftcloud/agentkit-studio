@@ -66,7 +66,7 @@ function bindNewNativePolicy(record) {
   record.bindings = record.spec.bindings;
 }
 
-export function createAgentStore({ storeDir } = {}) {
+export function createAgentStore({ storeDir, validateAgent } = {}) {
   const root = storeDir;
 
   async function ensureDir() { await mkdir(root, { recursive: true, mode: 0o700 }); }
@@ -156,6 +156,7 @@ export function createAgentStore({ storeDir } = {}) {
       bindings: normalizedBindings,
     };
     bindNewNativePolicy(record);
+    await validateAgent?.(record);
     const target = pathFor(agentId);
     await captureRevision(record);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
@@ -221,6 +222,10 @@ export function createAgentStore({ storeDir } = {}) {
     guard();
     if (patch.name) record.metadata.name = String(patch.name);
     if (patch.description !== undefined) record.metadata.description = String(patch.description);
+    if (patch.spec?.runtime && patch.spec.runtime.type !== record.spec?.runtime?.type
+      && [patch.spec.runtime.type, record.spec?.runtime?.type].includes('ksxc')) {
+      throw new AgentStoreError('KSXC_RUNTIME_IMMUTABLE', '请选择 KSXC 运行时创建新的 Agent。');
+    }
     if (patch.spec) record.spec = { ...record.spec, ...patch.spec, runtime: patch.spec?.runtime || record.spec?.runtime || { type: 'dsh-native' } };
     if (patch.bindings) record.bindings = { ...record.bindings, ...patch.bindings };
     if (patch.spec?.bindings) record.bindings = patch.spec.bindings;
@@ -229,6 +234,7 @@ export function createAgentStore({ storeDir } = {}) {
     record.spec.bindings = normalized;
     record.bindings = normalized;
     bindNewNativePolicy(record);
+    await validateAgent?.(record);
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
     // No await between the final live-authority check and durable publication.

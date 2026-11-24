@@ -4,8 +4,8 @@ import { DSH_ASSISTANT_STREAM_FRAME_TYPES, DSH_SESSION_EVENT_TYPES } from '../sr
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { STUDIO_CANONICAL_IDENTIFIERS, STUDIO_ENTITY_CONTRACT, STUDIO_RUNTIME_CAPABILITY_MATRIX, STUDIO_RUNTIME_TYPES, assertStudioRunBinding, studioRunIdentity, studioRuntimeContract } from '../src/runtime-contract.mjs';
 
-test('P0-0 freezes the three runtime names and shared identity fields', () => {
-  assert.deepEqual(STUDIO_RUNTIME_TYPES, ['dsh-native', 'harness', 'codex']);
+test('P0-0 freezes the public runtime names and shared identity fields', () => {
+  assert.deepEqual(STUDIO_RUNTIME_TYPES, ['dsh-native', 'harness', 'codex', 'ksxc']);
   assert.deepEqual(STUDIO_CANONICAL_IDENTIFIERS, ['agentId', 'revision', 'buildId', 'sessionId', 'runId']);
   assert.equal(STUDIO_ENTITY_CONTRACT.Run.build, 'buildId');
   assert.equal(STUDIO_RUNTIME_CAPABILITY_MATRIX.harness.contract, NATIVE_DSH_TURN_CONTRACT);

@@ -13,6 +13,8 @@ import { STUDIO_RUNTIME_TYPES, isRoutableRuntimeType } from './runtime-types.mjs
  */
 export {
   STUDIO_RUNTIME_TYPES,
+  STUDIO_PORTABLE_RUNTIME_TYPES,
+  isPortableRuntimeType,
   STUDIO_EXPERIMENTAL_RUNTIME_TYPES,
   STUDIO_ROUTABLE_RUNTIME_TYPES,
   STUDIO_MANAGED_RUNTIME_TYPES,
@@ -49,6 +51,11 @@ export const STUDIO_RUNTIME_CAPABILITY_MATRIX = Object.freeze({
     owner: 'ksadk-harness', execution: 'native-kernel', contract: NATIVE_DSH_TURN_CONTRACT,
     capabilities: Object.freeze(['native-run', 'durable-receipts', 'tool-approval', 'cancel', 'resume', 'child-tasks']),
     eventOwner: 'native-run-store', streamOwner: 'native-model-port',
+  }),
+  ksxc: Object.freeze({
+    owner: 'studio', execution: 'ksxc-app-server', contract: 'studio.ksxc.adapter/v1',
+    capabilities: Object.freeze(['session', 'stream', 'cancel', 'replay', 'build-binding']),
+    eventOwner: 'studio-ksxc-adapter', streamOwner: 'ksxc-turn/item',
   }),
   codex: Object.freeze({
     owner: 'studio', execution: 'codex-app-server', contract: 'studio.codex.adapter/v1',

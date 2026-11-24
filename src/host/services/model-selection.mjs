@@ -1,3 +1,5 @@
+import { ksxcAgentPreference } from './ksxc.mjs';
+
 /** Resolve a new Session's model without changing persisted Session projections. */
 export function createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }) {
   return async agent => {
@@ -21,6 +23,7 @@ export function createAgentModelSelection({ models, agentStorePromise, codexMode
       const identity = String(agent?.metadata?.id || '');
       const syntheticTeamIdentity = /^team-role-[a-f0-9]{24}$/.test(identity);
       if (!syntheticTeamIdentity && !agent.buildId && !agent.managedRuntime) await (await agentStorePromise).captureRevision(agent);
+      if (agent?.spec?.runtime?.type === 'ksxc') return { provider: 'ksxc', model: ksxcAgentPreference(agent.spec) };
       if (local && agent?.spec?.runtime?.type === 'codex') return selectCodexAgentModel(agent, { models, catalog: codexModels });
       const settings = { values: await models.settings() };
       const configured = dshModelSelection(agent, settings);

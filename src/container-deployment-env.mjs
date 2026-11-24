@@ -2,7 +2,7 @@
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256, validatePortableCredentialNames } from './portable-resources.mjs';
 import { validateKs3BundleReference } from './ks3-bundle-store.mjs';
-import { isStudioRuntimeType } from './runtime-contract.mjs';
+import { isPortableRuntimeType } from './runtime-contract.mjs';
 
 export function createContainerDeploymentEnvironment({ zip, expectedSha256, runtimeToken, credentials = {}, bundleSource }) {
   if (!/^[a-f0-9]{64}$/.test(expectedSha256 || '') || sha256(zip) !== expectedSha256) {
@@ -10,7 +10,7 @@ export function createContainerDeploymentEnvironment({ zip, expectedSha256, runt
   }
   const { manifest, definition } = verifyPortableBundle(zip);
   validatePortableCredentialNames(manifest.requirements);
-  if (!isStudioRuntimeType(definition.spec?.runtime?.type)) {
+  if (!isPortableRuntimeType(definition.spec?.runtime?.type)) {
     throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '此运行包的运行时不受支持');
   }
   if (typeof runtimeToken !== 'string' || runtimeToken.length < 24 || /[\r\n\0]/.test(runtimeToken)) {

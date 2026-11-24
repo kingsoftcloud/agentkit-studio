@@ -1,5 +1,6 @@
 /** Only local deployment receipts establish Studio cloud Agent lineage. */
 import { CLOUD_EXECUTION_POLICY_CAPABILITY, EXECUTION_MODES, readExecutionMode, readExecutionPolicy } from './execution-policy.mjs';
+import { ksxcAgentPreference } from './host/services/ksxc.mjs';
 import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDeploymentVersion,
   cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
@@ -53,7 +54,10 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     record = currentDeployment(record);
     const frozen = await build.resolve(record.plan.agentId, record.plan.buildId);
     let models, profile;
-    if (record.plan.bundleId) {
+    if (record.plan.runtime === 'ksxc') {
+      profile = { id: ksxcAgentPreference(frozen.spec) };
+      models = [];
+    } else if (record.plan.bundleId) {
       const zip = Buffer.from((await portableBundles.download(record.plan.agentId, record.plan.buildId, record.plan.bundleId)).base64, 'base64');
       if (sha256(zip) !== record.plan.bundleSha256) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包与部署记录不一致');
       const { manifest } = verifyPortableBundle(zip);
@@ -69,7 +73,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     return { source: 'studio-deployment', metadata: { ...frozen.metadata, id: record.cloudAgentId, local: false,
       name: record.plan.agentName, createdAt: record.createdAt }, spec: frozen.spec,
       deployment: { id: record.id, versionId: deploymentVersionId(record), agentId: record.plan.agentId, buildId: record.plan.buildId, bundleId: record.plan.bundleId,
-        state: record.state, available: available.has(record.state), model: profile.id, models: models.map(item => item.id),
+        state: record.state, available: available.has(record.state), ...(record.plan.runtime === 'ksxc' ? {} : { model: profile.id }), models: models.map(item => item.id),
         environment: record.plan.environment, region: record.plan.region } };
   }
   async function getRecord(agentId) {
