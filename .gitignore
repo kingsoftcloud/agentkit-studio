@@ -97,5 +97,5 @@ skills/
 /designs/
 /.scratch/
 
-# Local KSXC handoff notes and M4 evidence, never part of the public PR
-/docs/ksxc-*
+# Local and generated documentation, never part of the public PR
+/docs/

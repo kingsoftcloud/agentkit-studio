@@ -23,7 +23,6 @@ import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 const ROUTE = 'agentkit-studio';
-
 /**
  * Agent preset scopes dispatch `agent/request` before the root Agent loop
  * calls `llm.stream`. Keep the selected scope's transport context across that
@@ -77,7 +76,6 @@ export function setDshResourceToolExecutor(executor, owner) {
 export async function executeDshResourceTool(input = {}, owner) {
   return resolveRuntimeBridge(owner).executeResourceTool(input);
 }
-
 export function streamDshRuntime(options, { agentId, runtime, local, buildId, agentRevision, cloudVersionId, toolAdapter, nativeTools } = {}, owner) {
   const id = String(agentId || '').trim();
   if (!id) throw new Error('AgentKit Studio runtime bridge is unavailable');
@@ -105,7 +103,6 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
     ...(nativeTools ? { studioNativeTools: true } : {}),
   }));
 }
-
 /** A single Host waterfall owns transport selection; unrelated LLM calls
  * (including titles) retain their original adapter and credentials. */
 export function routeDshRuntime(options, next, owner, requestOrigin) {
@@ -116,7 +113,6 @@ export function routeDshRuntime(options, next, owner, requestOrigin) {
   if (!route || (requestOrigin && !requestOrigin(options))) return next();
   return streamDshRuntime(options, route, owner);
 }
-
 function textOf(message) {
   if (!message || typeof message !== 'object') return '';
   const content = message.content;
@@ -125,7 +121,6 @@ function textOf(message) {
   return content.filter(part => part?.type === 'text' || part?.kind === 'text')
     .map(part => String(part.text || part.value || '')).join('');
 }
-
 function nativeInboxGuidance(agent, messages) {
   if (!agent?.inbox || !agent.session || typeof agent.session.append !== 'function') return {};
   const { inbox, session } = agent;
