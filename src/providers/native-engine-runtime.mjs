@@ -23,8 +23,10 @@ import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs'
 import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGINE_TOOL_RECEIPT } from './engine-service-client.mjs';
 import { nativeEngineApprovalReply } from './native-host-approval.mjs';
 import { nativeEngineVerification } from './native-engine-verification.mjs';
-import { canonicalEngineWorkspace, engineServiceWorkspaces } from './engine-service-workspaces.mjs';
+import { canonicalEngineWorkspace, engineServiceWorkspaces, HARNESS_SERVICE_MODEL_PROVIDER } from './engine-service-workspaces.mjs';
 import { startDesktopRun } from '../telemetry/host-run.mjs';
+import { dshModelRoute } from '../model-route.mjs';
+import { harnessModelEndpoint } from '../model-endpoint.mjs';
 export { HARNESS_SERVICE_MODEL_PROVIDER } from './engine-service-workspaces.mjs';
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
@@ -80,12 +82,32 @@ export function createHarnessServiceModelAdapter(AdapterBase, models, describeMo
     async resolveModel(provider, model) {
       if (!catalog().has(model)) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
       const capabilities = await describeModel?.(model);
-      return { provider, id: model, name: model, modalities: capabilities?.images ? ['text', 'image'] : ['text'] };
+      const contextWindow = capabilities?.contextWindow;
+      return { provider, id: model, name: model, modalities: capabilities?.images ? ['text', 'image'] : ['text'],
+        ...(Number.isSafeInteger(contextWindow) && contextWindow > 0 ? { context: { contextWindow } } : {}) };
     }
     async *stream() {
       throw failure('NATIVE_ENGINE_AGENT_LOOP_REQUIRED', '托管 Harness 仅接受绑定的 Agent 会话调用。');
     }
   }();
+}
+
+/** DSH can summarize a committed Harness conversation before switching to a
+ * smaller model. Use the profile's model-only adapter, outside the Agent loop. */
+export function routeHarnessCompaction(options, next, { resolveSession, resolveProfile, stream }) {
+  if (options.provider !== HARNESS_SERVICE_MODEL_PROVIDER || options.purpose !== 'compaction') return next();
+  const session = resolveSession(options.sessionId);
+  const previous = typeof session?.requestHeader === 'function' ? session.requestHeader()?.config : undefined;
+  if (previous?.provider !== options.provider || previous.model !== options.model) return next();
+  const profile = resolveProfile(session.header.cwd, options.model);
+  if (!profile) return (async function* () {
+    throw failure('NATIVE_ENGINE_SUMMARY_MODEL_UNAVAILABLE', '找不到上一次 Harness 模型对应的唯一 Studio 配置。请先配置该模型，或选择可容纳当前会话的模型。');
+  })();
+  const provider = dshModelRoute(profile);
+  if (provider === HARNESS_SERVICE_MODEL_PROVIDER) return (async function* () {
+    throw failure('NATIVE_ENGINE_SUMMARY_MODEL_ROUTE_COLLISION', '摘要模型的配置 ID 与 Star Harness 内部路由冲突。请使用不同 ID 配置该模型并重新绑定。');
+  })();
+  return stream({ ...options, provider, model: profile.modelName });
 }
 
 /** Local engine executable installed and updated independently of Studio. */
@@ -128,15 +150,23 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         const request = Promise.all([...routes.values()].filter(route => route.modelSelection.model === model).map(async route => {
           const engine = connectEngineService({ endpoint: route.endpoint, token: route.token, fetchImpl: route.fetchImpl,
             sessionId: 'studio-model-' + createHash('sha256').update(model).digest('hex'), observeOnly: true });
-          try { return (await engine.initialize()).capabilities?.inputImages; }
+          try {
+            const hello = await engine.initialize();
+            return { inputImages: hello.capabilities?.inputImages, contextWindow: hello.engine?.model?.contextWindow };
+          }
           finally { await engine.close(); }
-        })).then(results => ({ images: results.some(limits => Number.isSafeInteger(limits?.maxCount) && limits.maxCount > 0
-          && Number.isSafeInteger(limits?.maxEncodedBytes) && limits.maxEncodedBytes > 0) }));
+        }));
         modelCapabilities.set(model, request);
         request.catch(() => modelCapabilities.delete(model));
       }
       const external = await modelCapabilities.get(model);
-      return { images: external.images || starHarness?.modelInfo(model).images === true };
+      const managed = await starHarness?.modelInfo(model);
+      const images = managed?.images === true || external.some(({ inputImages }) =>
+        Number.isSafeInteger(inputImages?.maxCount) && inputImages.maxCount > 0
+        && Number.isSafeInteger(inputImages?.maxEncodedBytes) && inputImages.maxEncodedBytes > 0);
+      const windows = [...external.map(route => route.contextWindow), managed?.contextWindow]
+        .filter(value => Number.isSafeInteger(value) && value > 0);
+      return { images, ...(windows.length ? { contextWindow: Math.min(...windows) } : {}) };
     },
     serviceWorkspace(cwd) {
       const route = cwd === undefined ? onlyRoute() : routeFor(cwd);
@@ -158,7 +188,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         finally { signal?.removeEventListener('abort', abort); await engine.close(); }
       } finally { lease?.release(); }
     },
-    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance } = {}) {
+    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, expectedServiceModel, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
       const workspaceRoot = canonicalEngineWorkspace(cwd);
@@ -166,6 +196,8 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const useService = Boolean(route);
       if (!workspaceRoot || routes.size && !route)
         throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '该会话的工作区没有绑定到配置的 Harness 服务。');
+      if (route?.managed && expectedServiceModel && route.modelSelection.model !== expectedServiceModel)
+        throw failure('STAR_HARNESS_MODEL_CHANGED', `工作区当前使用 ${route.modelSelection.model}，请在会话中选择该模型后继续。`);
       if (!useService && (!text(model) || !text(modelProvider?.baseUrl))) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '所选模型缺少可用的接口地址，请检查模型设置。');
       const session = text(sessionId) ? sessionId : 'studio-session';
       const stateDir = join(stateRoot, createHash('sha256').update(JSON.stringify([workspaceRoot, session])).digest('hex').slice(0, 32));
@@ -237,8 +269,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           token: service.token, sessionId: createHash('sha256').update(session).digest('hex'),
           runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify, requiredToolPolicy: policy?.contract,
           requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: service.fetchImpl }) : spawnEngine({ command, args: [...args, '--workspace', workspaceRoot, '--state-dir', stateDir, '--session', session, '--approval', standing],
-          env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
+          env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: harnessModelEndpoint(modelProvider.baseUrl, modelProvider.protocol),
             AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
+            ...(modelProvider.protocol ? { AGENTKIT_ENGINE_MODEL_PROTOCOL: modelProvider.protocol } : {}),
             ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
             ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),
             ...(env.KSADK_MODEL_COMPAT_RULE ? { AGENTKIT_ENGINE_MODEL_COMPAT_RULE: env.KSADK_MODEL_COMPAT_RULE } : {}) },

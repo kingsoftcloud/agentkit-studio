@@ -12,7 +12,7 @@ import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.
 import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
-import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
+import { HARNESS_SERVICE_MODEL_PROVIDER, NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
 /** Runtimes that run in their own process behind the stream seam. */
 import { dshModelFailure } from '../model-failure.mjs';
 import { startDesktopRun } from '../telemetry/host-run.mjs';
@@ -734,6 +734,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               ...(typeof permissionModeForSession === 'function' && toolAgent?.session
                 ? { sandbox: permissionModeForSession(toolAgent.session) } : {}),
               ...selected,
+              ...(serviceOwnsModel && selection.provider === HARNESS_SERVICE_MODEL_PROVIDER ? { expectedServiceModel: selection.model } : {}),
               ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]
                 ? { reasoningEffort: studioCodexReasoningWire(options.reasoningEffort) }
                 : {}),

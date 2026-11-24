@@ -44,6 +44,14 @@ test('an explicit configured Codex API reaches the runtime without changing its 
   }
 });
 
+test('the shared runtime lookup preserves the Harness wire separately from the Codex API', async () => {
+  const { models, profiles } = services();
+  Object.assign(profiles[1], { protocol: 'anthropic-messages', contextWindow: 1_048_576, codexApi: 'responses' });
+  const { modelProvider } = await resolveConfiguredCodexModel({ provider: 'agentkit-studio-b', model: 'same-model' }, models);
+  assert.deepEqual(modelProvider, { baseUrl: 'https://b.example/v1', apiKey: 'key-b', api: 'responses',
+    protocol: 'anthropic-messages', contextWindow: 1_048_576 });
+});
+
 test('gateway-bound Codex admission does not require the native account catalog', async () => {
   const { models } = services();
   const catalog = { list: () => { throw new Error('should not read native account'); } };

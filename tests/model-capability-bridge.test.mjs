@@ -27,3 +27,18 @@ test('unavailable model catalogs expose unknown maxima and a bounded operating f
   assert.equal(fact.catalogState,'unavailable');assert.equal(fact.advertisedMaxOutputTokens,null);assert.equal(fact.maxOutputTokens,8192);
   assert.equal(JSON.stringify(fact).includes('private'),false);
 });
+
+test('Anthropic profiles omit OpenAI-only compatibility options when synchronizing the model directory', async () => {
+  const namespaces = [{ ns: DSH_MODEL_SETTINGS_NS, value: { providers: {} } }, { ns: DSH_DEFAULT_MODEL_SETTINGS_NS, value: {} }];
+  const writes = [];
+  const bridge = createModelBridge({ hostRemote: { modelCatalog: async () => ({ items: [] }) } }).createDshModelBridge({
+    remote: { settings: {
+      describe: async () => ({ ok: true, value: { namespaces } }),
+      mutate: async (ns, operations) => { writes.push({ ns, operations }); return { ok: true }; },
+    } },
+  });
+  await bridge.applyProfiles({ profiles: [{ ...profile, protocol: 'anthropic-messages' }] });
+  const provider = writes.find(write => write.ns === DSH_MODEL_SETTINGS_NS).operations[0].value;
+  assert.equal(provider.api, 'anthropic-messages');
+  assert.equal(Object.hasOwn(provider, 'compat'), false);
+});

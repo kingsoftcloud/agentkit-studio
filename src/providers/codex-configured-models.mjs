@@ -20,6 +20,8 @@ export async function resolveConfiguredCodexModel({ provider, model }, models) {
   return { model,
     ...(reasoning ? { reasoningEfforts: reasoning.efforts } : {}),
     modelProvider: { baseUrl: profile.baseUrl, apiKey: profile.apiKey,
+      ...(profile.protocol ? { protocol: profile.protocol } : {}),
+      ...(profile.contextWindow ? { contextWindow: profile.contextWindow } : {}),
       ...(profile.headers ? { headers: profile.headers } : {}),
       ...(profile.parameters ? { parameters: profile.parameters } : {}),
       ...(profile.maxOutputTokens ? { maxOutputTokens: profile.maxOutputTokens } : {}),

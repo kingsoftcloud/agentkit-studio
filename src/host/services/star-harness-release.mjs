@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { connectEngineService, ENGINE_COMMAND_VERIFIER, ENGINE_VERIFICATION } from '../../providers/engine-service-client.mjs';
 import { ENGINE_PROTOCOL } from '../../providers/engine-protocol-client.mjs';
 import { verifyPackageFiles } from '@kingsoftcloud/agentkit-harness-node/package-integrity';
+import { harnessModelEndpoint } from '../../model-endpoint.mjs';
 
 import { fetchStarHarnessProof, verifyStarHarnessProof, STAR_HARNESS_PACKAGE, STAR_HARNESS_CORE, STAR_HARNESS_UI,
   STAR_HARNESS_CLIENT_FILE, starHarnessVersion } from './star-harness-catalog.mjs';
@@ -252,7 +253,7 @@ export async function startStarHarness({ packageDirectory, version, workspaceRoo
     '--agent', agentId], {
     execPath, execArgv, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     env: { ...childEnvironment(env), ...search, ...(process.versions.electron && !useDesktopNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
-      AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_MODEL_BASE_URL: profile.baseUrl,
+      AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_MODEL_BASE_URL: harnessModelEndpoint(profile.baseUrl, profile.protocol),
       AGENTKIT_ENGINE_MODEL_API_KEY: profile.apiKey, AGENTKIT_ENGINE_MODEL_NAME: profile.modelName,
       AGENTKIT_ENGINE_MODEL_PROTOCOL: profile.protocol || 'openai-chat',
       ...(profile.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),

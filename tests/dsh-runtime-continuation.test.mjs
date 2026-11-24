@@ -4,6 +4,7 @@ import { apply as applyDshRuntimePlugin } from '../src/providers/dsh-runtime-plu
 import { createDshRuntimeAdapter, unbindDshAgentRoutes, routeDshRuntime, setDshRuntimeAdapter } from '../src/providers/dsh-runtime.mjs';
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { createManagedApprovalRegistry } from '../src/managed-runtime-approval.mjs';
+import { HARNESS_SERVICE_MODEL_PROVIDER } from '../src/model-route.mjs';
 
 const event = item => `data: ${JSON.stringify({ conversationItem: item })}\n\n`;
 const completed = `data: ${JSON.stringify({ runtimeEvent: { event_type: 'run.completed' } })}\n\n`;
@@ -297,6 +298,7 @@ test('managed approval runs lift the Codex thread policy and route App Server as
 });
 
 test('a Native engine service owns model selection at the Studio entry point', async () => {
+  const expectedModels = [];
   const adapter = createDshRuntimeAdapter({
     resolveCodexModel: () => assert.fail('the host must not resolve service model credentials'),
     nativeEngineRuntime: {
@@ -304,13 +306,17 @@ test('a Native engine service owns model selection at the Studio entry point', a
       async *stream(options) {
         assert.equal(options.modelProvider, undefined);
         assert.equal(options.sessionId, 'native-service-session');
+        expectedModels.push(options.expectedServiceModel);
         yield { type: 'text', text: 'Harness service response' };
       },
     },
   });
-  const chunks = await Array.fromAsync(adapter.stream({ ...prompt, provider: 'studio-gateway',
-    model: 'local:native-agent', studioRuntime: 'native-engine', sessionId: 'native-service-session' }));
-  assertContinuousBlocks(chunks, [[0, 'text', 'Harness service response']]);
+  for (const provider of ['studio-gateway', HARNESS_SERVICE_MODEL_PROVIDER]) {
+    const chunks = await Array.fromAsync(adapter.stream({ ...prompt, provider,
+      model: 'local:native-agent', studioSelectedModel: 'wide', studioRuntime: 'native-engine', sessionId: 'native-service-session' }));
+    assertContinuousBlocks(chunks, [[0, 'text', 'Harness service response']]);
+  }
+  assert.deepEqual(expectedModels, [undefined, 'wide']);
 });
 
 test('an unbound workspace uses its own model even while a managed Harness is enabled', async t => {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
@@ -27,6 +27,29 @@ test('Native model options survive save/reopen and malformed options fail before
     await assert.rejects(config.update({ modelProfiles: [{ ...profile, ...invalid }] }), { code: 'CONFIGURATION_INVALID' });
     assert.equal(await readFile(join(home, 'config.yaml'), 'utf8'), expected);
   }
+});
+
+test('reserves the normalized Star Harness service route when saving enabled model profiles', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-reserved-model-route-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home }, inheritLegacy: false });
+  const profile = { id: 'ordinary', provider: 'custom', modelName: 'wide', baseUrl: 'https://model.invalid/v1' };
+  const updates = [];
+  const unsubscribe = config.onChange(({ modelProfiles }) => updates.push(modelProfiles[0].id));
+  await config.update({ modelProfiles: [profile] });
+  for (const id of ['harness-service', 'Harness_Service', 'harness.service']) {
+    await assert.rejects(config.update({ modelProfiles: [{ ...profile, id }] }), {
+      code: 'CONFIGURATION_INVALID', message: /Star Harness/,
+    });
+  }
+  assert.deepEqual(updates, ['ordinary']);
+  assert.equal((await config.describe()).modelProfiles[0].id, 'ordinary');
+  // An existing conflicting profile can be disabled when repairing settings.
+  await config.update({ modelProfiles: [{ ...profile, id: 'harness-service', enabled: false }] });
+  assert.deepEqual(updates, ['ordinary', 'harness-service']);
+  unsubscribe();
+  await config.update({ modelProfiles: [profile] });
+  assert.deepEqual(updates, ['ordinary', 'harness-service']);
 });
 
 test('clearing every request header removes the field instead of freezing an empty record', async () => {

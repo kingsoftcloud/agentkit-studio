@@ -1,3 +1,5 @@
+export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
+
 export function dshModelRoute(profile = {}, index = 0) {
   const provider = String(profile?.provider || 'ksyun').trim() || 'ksyun';
   const model = String(profile?.modelName || '').trim() || `model-${index + 1}`;
