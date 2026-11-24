@@ -152,6 +152,20 @@ export function createResourcePages({
       const canDelete = localSkill || localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
       const displayStatus = resourceStatusPresentation(resource, resourceKind);
       const needsFix = displayStatus.tone === 'signal' || resource.status === 'credential-missing' || (resourceKind === 'mcp' && displayStatus.label === '已配置，未探测');
+      // Platform catalog rows (knowledge base, memory, Skill Space) and cloud
+      // Skill Spaces own no lifecycle action here, so the menu carries the
+      // read-only declaration and a catalog refresh instead of an empty card.
+      const lifecycleItems = [
+        localMcp && !needsFix ? h(MenuItemButton, { key: 'edit-credential', onSelect: () => openMcpEdit(resource) }, '编辑凭证') : null,
+        resourceKind === 'mcp' && (!needsFix || localMcp) ? h(MenuItemButton, { key: 'reprobe', onSelect: () => void probeMcp(resource) }, '重新探测') : null,
+        resourceKind === 'mcp' ? h(MenuItemButton, { key: 'tools', onSelect: () => setMcpPreview(resource) }, '查看工具') : null,
+        resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h(MenuItemButton, { key: 'files', onSelect: () => void previewInstalledSkill(resource) }, '查看文件') : null,
+        canDelete ? h(MenuItemButton, { key: 'delete', disabled: deleting, danger: true, onSelect: () => void remove(resource) }, localSkill ? '移除本地 Skill' : localMcp ? '移除配置' : '删除云端 MCP') : null,
+      ].filter(Boolean);
+      const menuItems = lifecycleItems.length ? lifecycleItems : [
+        h(MenuItemButton, { key: 'detail', onSelect: () => setResourcePreview(resource) }, '查看详情'),
+        h(MenuItemButton, { key: 'refresh', onSelect: () => void reloadCatalog() }, '刷新目录'),
+      ];
       return h('article', { key: id, 'data-studio-resource-card': id, title: displayStatus.detail, className: 'resource-row studio-row' },
         h('div', { 'aria-hidden': 'true', className: 'resource-row-icon studio-tile' }, resourceKind === 'mcp' ? '⌘' : resourceKind === 'skill' ? '✦' : resourceKind === 'model' ? '◌' : '◈'),
         h('div', { className: 'resource-row-main studio-row-main' },
@@ -161,13 +175,10 @@ export function createResourcePages({
         h('div', { className: 'resource-row-actions studio-row-actions' },
           needsFix && localMcp ? h('button', { type: 'button', className: 'af-btn', 'data-size': 'sm', onClick: () => openMcpEdit(resource) }, '编辑凭证') : null,
           needsFix && resourceKind === 'mcp' && !localMcp ? h('button', { type: 'button', className: 'af-btn', 'data-size': 'sm', onClick: () => void probeMcp(resource) }, '重新探测') : null,
-          h('button', { type: 'button', className: 'studio-hover-action', onClick: () => setResourcePreview(resource), style: ghostButtonStyle() }, '查看'),
-          h(Menu, { open: resourceMenu === id, onClose: () => setResourceMenu(''), align: 'end', portal: true, compact: true, listClassName: 'studio-menu', anchor: h('button', { type: 'button', 'aria-label': `更多资源操作 ${name}`, 'aria-haspopup': 'menu', 'aria-expanded': resourceMenu === id, onClick: () => setResourceMenu(resourceMenu === id ? '' : id), style: ghostButtonStyle() }, '⋯') },
-            localMcp && !needsFix ? h(MenuItemButton, { onSelect: () => openMcpEdit(resource) }, '编辑凭证') : null,
-            resourceKind === 'mcp' && (!needsFix || localMcp) ? h(MenuItemButton, { onSelect: () => void probeMcp(resource) }, '重新探测') : null,
-            resourceKind === 'mcp' ? h(MenuItemButton, { onSelect: () => setMcpPreview(resource) }, '查看工具') : null,
-            resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h(MenuItemButton, { onSelect: () => void previewInstalledSkill(resource) }, '查看文件') : null,
-            canDelete ? h(MenuItemButton, { disabled: deleting, danger: true, onSelect: () => void remove(resource) }, localSkill ? '移除本地 Skill' : localMcp ? '移除配置' : '删除云端 MCP') : null)));
+          // Rows with their own lifecycle actions keep the inline view button;
+          // fallback rows reach the same declaration through 查看详情.
+          lifecycleItems.length ? h('button', { type: 'button', className: 'studio-hover-action', onClick: () => setResourcePreview(resource), style: ghostButtonStyle() }, '查看') : null,
+          h(Menu, { open: resourceMenu === id, onClose: () => setResourceMenu(''), align: 'end', portal: true, compact: true, listClassName: 'studio-menu', anchor: h('button', { type: 'button', 'aria-label': `更多资源操作 ${name}`, 'aria-haspopup': 'menu', 'aria-expanded': resourceMenu === id, onClick: () => setResourceMenu(resourceMenu === id ? '' : id), style: ghostButtonStyle() }, '⋯') }, menuItems)));
     });
     const table = rows.length ? h('div', { 'data-studio-resource-grid': resourceKind, className: 'resource-list', style: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 } }, tableRows) : null;
     const platformTable = platformCatalog ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },

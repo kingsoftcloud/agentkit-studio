@@ -30,9 +30,17 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
   }
   const raw = data.Configs?.[STUDIO_IMAGE_CONFIG_KEY];
   if (!raw) fail('DEPLOYMENT_CATALOG_MISSING', `${data.Environment === 'online' ? '线上' : data.Environment === 'pre-online' ? '预发' : data.Environment}环境（${data.Region}）尚未发布 Studio 运行镜像。请在设置中核对云端环境，或由管理员发布该环境的镜像目录。`);
-  if (!object(raw) || raw.format !== FORMAT || !Array.isArray(raw.releases) || raw.releases.length > 100
-    || raw.environment !== data.Environment || raw.region !== data.Region) {
+  if (!object(raw) || raw.format !== FORMAT || !Array.isArray(raw.releases) || raw.releases.length > 100) {
     fail('DEPLOYMENT_CATALOG_INVALID', 'Studio 镜像目录格式或目标环境无效');
+  }
+  // A catalogue copied from another environment keeps that environment
+  // inside its JSON. Report the mismatched scope instead of a generic
+  // format error so the operator knows which field needs repair.
+  if (raw.environment !== data.Environment) {
+    fail('SCOPE_ENVIRONMENT_MISMATCH', `Studio 镜像目录的环境（${raw.environment || '未声明'}）与服务端环境（${data.Environment}）不一致；请由管理员按环境重新发布该目录，或修复目录内层 environment`);
+  }
+  if (raw.region !== data.Region) {
+    fail('SCOPE_REGION_MISMATCH', `Studio 镜像目录的区域（${raw.region || '未声明'}）与服务端区域（${data.Region}）不一致；请由管理员按区域重新发布该目录，或修复目录内层 region`);
   }
   const releases = [], ids = new Set(), incompatible = new Map(), retired = new Map(), outdated = new Map();
   for (const item of raw.releases) {
