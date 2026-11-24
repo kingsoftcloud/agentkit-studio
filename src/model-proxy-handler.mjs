@@ -7,6 +7,7 @@ import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 import { requestHeaders } from './model-profile-contract.mjs';
+import { harnessModelEndpoint } from './model-endpoint.mjs';
 import { anthropicRequestHeaders, anthropicResponseToChat, chatToAnthropicRequest, createAnthropicStreamTransformer } from './anthropic-messages.mjs';
 import { applyReasoningFallback, dropCarrierlessReasoningTurns, dropOrphanToolReceipts, isReasoningEffortRejection, isReasoningReplayRejection, logReasoningFallback, normalizeEmptyAssistantTurns, normalizeReasoningContent, reasoningFallbackAllowed, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
@@ -137,7 +138,8 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
           instructionsChars: (body.instructions ? chars(body.instructions) : 0) + messages.filter(message => ['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0),
           conversationChars: messages.filter(message => !['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0) });
       }
-      const upstreamUrl = `${profile.baseUrl}/${nativeResponses ? 'responses' : nativeAnthropic ? 'messages' : 'chat/completions'}`;
+      const upstreamRoot = nativeAnthropic ? harnessModelEndpoint(profile.baseUrl, 'anthropic-messages') : profile.baseUrl;
+      const upstreamUrl = `${upstreamRoot}/${nativeResponses ? 'responses' : nativeAnthropic ? 'messages' : 'chat/completions'}`;
       const headers = nativeAnthropic ? anthropicRequestHeaders(profile) : upstreamRequestHeaders(profile);
       const requestUpstream = serializedBody => fetchImpl(upstreamUrl, {
         method: 'POST', headers,

@@ -45,6 +45,20 @@ test('only a 404 proves the gateway is Chat-only', async () => {
   } finally { await server.close(); }
 });
 
+test('an Anthropic gateway keeps its provider-specific version path', async () => {
+  const requests = [];
+  const wire = await probeModelWire({ baseUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk', modelName: 'deepseek-chat', fetchImpl: async (url, options) => {
+    requests.push({ url: String(url), headers: Object.fromEntries(options.headers), body: JSON.parse(options.body) });
+    return String(url).endsWith('/messages')
+      ? Response.json({ type: 'message', content: [{ type: 'text', text: 'OK' }] })
+      : Response.json({ error: { message: 'no route' } }, { status: 404 });
+  } });
+  assert.equal(wire, 'anthropic-messages');
+  assert.deepEqual(requests.map(request => new URL(request.url).pathname), ['/anthropic/responses', '/anthropic/v1/messages']);
+  assert.equal(requests[1].headers['x-api-key'], 'sk');
+  assert.equal(requests[1].headers['anthropic-version'], '2023-06-01');
+});
+
 test('a rejected request proves nothing and stays unknown', async () => {
   // 400/401/429/500 all mean "the route may exist, but this model did not
   // answer" — promoting any of them to a wire would write a guess into a profile.

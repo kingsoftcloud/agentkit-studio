@@ -138,6 +138,26 @@ test('a long history summarizes once and then switches to the new model', async 
   assert.equal(summaries.length, 2);
 });
 
+test('compaction consumes one generated summary for the committed model route', async () => {
+  const previous = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'wide' };
+  const options = { ...previous, purpose: 'compaction', sessionId: 'session-1', messages: [{}], maxTokens: 64 };
+  let dispatched = 0;
+  let generated = 0;
+  const dependency = {
+    resolveSession: () => ({ header: { cwd: '/workspace' }, requestHeader: () => ({ config: previous }) }),
+    resolveProfile: () => ({ id: 'wide-profile', modelName: 'wide' }),
+    stream: async function* request() {
+      dispatched += 1;
+      generated += 1;
+      yield { type: 'text', text: 'one summary' };
+    },
+  };
+  const chunks = await collect(routeHarnessCompaction(options, () => assert.fail('compaction should use the committed model route'), dependency));
+  assert.deepEqual(chunks, [{ type: 'text', text: 'one summary' }]);
+  assert.equal(dispatched, 1);
+  assert.equal(generated, 1);
+});
+
 test('compaction rejects a legacy conflicting summary route without dispatching it', async () => {
   const config = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'wide' };
   const options = { ...config, purpose: 'compaction' };

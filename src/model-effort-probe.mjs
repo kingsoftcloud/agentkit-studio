@@ -1,3 +1,5 @@
+import { harnessModelEndpoint } from './model-endpoint.mjs';
+
 /**
  * Which reasoning-effort levels a model accepts.
  *
@@ -52,7 +54,7 @@ async function probeOnce({ baseUrl, modelName, level, wire = 'openai-chat', apiK
   const anthropic = wire === 'anthropic-messages';
   const path = responses ? '/responses' : anthropic ? '/messages' : '/chat/completions';
   let url;
-  try { url = new URL(`${root}${path}`); } catch { return NO_RESULT; }
+  try { url = new URL(`${anthropic ? harnessModelEndpoint(root, 'anthropic-messages') : root}${path}`); } catch { return NO_RESULT; }
   if (!['http:', 'https:'].includes(url.protocol)) return NO_RESULT;
   const messages = [{ role: 'user', content: PROBE_PROMPT }];
   const chatLimit = modernChatLimit ? 'max_completion_tokens' : 'max_tokens';

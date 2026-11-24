@@ -9,6 +9,7 @@ import { chatCompletionUsage } from './chat-usage.mjs';
 import { checkedResource } from './resource-checks.mjs';
 import { boundSkillResources, loadBoundSkills } from './skill-bindings.mjs';
 import { dshModelRoute } from './model-route.mjs';
+import { harnessModelEndpoint } from './model-endpoint.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, reasoningFallbackAllowed, studioReasoningFallbackWire } from './model-reasoning.mjs';
 import { hasConfiguredAuthentication, providerWireApi, requestHeaders } from './model-profile-contract.mjs';
@@ -300,7 +301,8 @@ function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signa
           const body = anthropic
             ? chatToAnthropicRequest({ model: profile.modelName || profile.id, messages, tools, ...(tools.length ? { tool_choice: 'auto' } : {}), stream: true, ...parameters }, { parameters, reasoningWire: wire, maxOutputTokens: profile.maxOutputTokens })
             : { model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...parameters, ...(profile.maxOutputTokens ? { max_tokens: profile.maxOutputTokens } : {}), ...(wire ? { reasoning_effort: wire } : {}) };
-          return await fetchImpl(`${profile.baseUrl}/${anthropic ? 'messages' : 'chat/completions'}`, {
+          const endpoint = anthropic ? harnessModelEndpoint(profile.baseUrl, 'anthropic-messages') : profile.baseUrl;
+          return await fetchImpl(`${endpoint}/${anthropic ? 'messages' : 'chat/completions'}`, {
             method: 'POST',
             headers,
             body: JSON.stringify(body),

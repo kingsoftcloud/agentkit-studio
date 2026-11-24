@@ -1,3 +1,5 @@
+import { harnessModelEndpoint } from './model-endpoint.mjs';
+
 /**
  * Which wire a model gateway speaks for one model.
  *
@@ -43,7 +45,7 @@ export async function probeModelWire({ baseUrl, modelName, apiKey, headers = {},
   if (!model || !root || signal?.aborted) return 'unknown';
   const request = async (path, body, auth = 'bearer') => {
     let url;
-    try { url = new URL(`${root}${path}`); } catch { return { status: 0, body: null }; }
+    try { url = new URL(`${path === '/messages' ? harnessModelEndpoint(root, 'anthropic-messages') : root}${path}`); } catch { return { status: 0, body: null }; }
     if (!['http:', 'https:'].includes(url.protocol)) return { status: 0, body: null };
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
     const requestHeaders = new Headers({ 'content-type': 'application/json' });
