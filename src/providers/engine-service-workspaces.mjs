@@ -1,8 +1,9 @@
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { engineServiceEndpoint, engineServiceFetch } from './engine-service-client.mjs';
+import { HARNESS_SERVICE_MODEL_PROVIDER } from '../model-route.mjs';
 
-export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
+export { HARNESS_SERVICE_MODEL_PROVIDER } from '../model-route.mjs';
 
 export function canonicalEngineWorkspace(cwd) {
   if (typeof cwd !== 'string' || !isAbsolute(cwd)) return null;

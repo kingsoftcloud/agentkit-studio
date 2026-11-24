@@ -2,13 +2,14 @@
 // against a local model fixture. Studio code under test imports no engine module.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createNativeEngineRuntime, HARNESS_SERVICE_MODEL_PROVIDER, resolveEngineCommand, routeHarnessCompaction } from '../src/providers/native-engine-runtime.mjs';
+import { startStarHarness } from '../src/host/services/star-harness-release.mjs';
 import { nativeEngineVerification } from '../src/providers/native-engine-verification.mjs';
 
 const installedEngine = fileURLToPath(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
@@ -69,22 +70,66 @@ test('the spawned engine uses the saved Anthropic Messages protocol', async t =>
   assert.deepEqual(f.model.paths, ['/anthropic/v1/messages']);
 });
 
+test('the managed worker receives the normalized DeepSeek Anthropic endpoint', async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-managed-deepseek-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const engine = pathToFileURL(installedEngine);
+  const release = join(root, 'release');
+  const native = join(release, 'src', 'native');
+  const workspaceRoot = join(root, 'workspace');
+  mkdirSync(native, { recursive: true });
+  mkdirSync(workspaceRoot);
+  const { version } = JSON.parse(readFileSync(new URL('../../package.json', engine), 'utf8'));
+  writeFileSync(join(native, 'engine-server.mjs'), `
+    import assert from 'node:assert/strict';
+    assert.equal(process.env.AGENTKIT_ENGINE_MODEL_BASE_URL, 'https://api.deepseek.com/anthropic/v1');
+    assert.equal(process.env.AGENTKIT_ENGINE_MODEL_PROTOCOL, 'anthropic-messages');
+    export { engineStartupFromArgs } from ${JSON.stringify(engine.href)};
+  `);
+  writeFileSync(join(native, 'engine-service.mjs'),
+    `export { createEngineService } from ${JSON.stringify(new URL('engine-service.mjs', engine).href)};`);
+  const worker = await startStarHarness({ packageDirectory: release, version, workspaceRoot, stateDir: join(root, 'state'),
+    profile: { baseUrl: 'https://api.deepseek.com/anthropic', protocol: 'anthropic-messages', modelName: 'fixture', apiKey: 'fixture-only' },
+  });
+  try { assert.equal(worker.version, version); } finally { await worker.stop(); }
+});
+
 test('only compaction of the committed Harness model uses the bound model-only adapter', async () => {
   const previous = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'wide' };
   const options = { ...previous, purpose: 'compaction', sessionId: 'session-1', messages: [{}], maxTokens: 64 };
-  let forwarded;
+  const forwarded = [];
   const dependency = {
     resolveSession: id => id === 'session-1' ? { header: { cwd: '/workspace' }, requestHeader: () => ({ config: previous }) } : undefined,
     resolveProfile: (cwd, model) => cwd === '/workspace' && model === 'wide' ? { id: 'old-profile', modelName: 'wide' } : undefined,
-    stream: request => { forwarded = request; return 'model-only stream'; },
+    stream: request => { forwarded.push(request); return 'model-only stream'; },
   };
   const next = () => 'original stream';
   assert.equal(routeHarnessCompaction(options, next, dependency), 'model-only stream');
-  assert.deepEqual(forwarded, { ...options, provider: 'agentkit-studio-old-profile' });
   assert.equal(routeHarnessCompaction({ ...options, purpose: 'title' }, next, dependency), 'original stream');
   assert.equal(routeHarnessCompaction({ ...options, model: 'unexpected' }, next, dependency), 'original stream');
   await assert.rejects(collect(routeHarnessCompaction(options, next, { ...dependency, resolveProfile: () => undefined })),
     { code: 'NATIVE_ENGINE_SUMMARY_MODEL_UNAVAILABLE' });
+  assert.deepEqual(forwarded, [{ ...options, provider: 'agentkit-studio-old-profile' }]);
+});
+
+test('compaction rejects a legacy conflicting summary route without dispatching it', async () => {
+  const config = { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: 'wide' };
+  const options = { ...config, purpose: 'compaction' };
+  const dependencies = {
+    resolveSession: () => ({ header: { cwd: '/workspace' }, requestHeader: () => ({ config }) }),
+    resolveProfile: () => ({ id: 'Harness_Service', modelName: 'wide' }),
+    stream: () => assert.fail('summary must not dispatch to the Harness service route'),
+  };
+  await assert.rejects(collect(routeHarnessCompaction(options, () => assert.fail('conflict must be diagnosed'), dependencies)), {
+    code: 'NATIVE_ENGINE_SUMMARY_MODEL_ROUTE_COLLISION',
+  });
+  for (const session of [{}, { requestHeader: {} }, { requestHeader: () => undefined }]) {
+    assert.equal(routeHarnessCompaction(options, () => 'downstream', {
+      ...dependencies,
+      resolveSession: () => session,
+      resolveProfile: () => assert.fail('no previous model was recorded'),
+    }), 'downstream');
+  }
 });
 
 test('Studio forwards the configured search binding to its independent engine process', async t => {

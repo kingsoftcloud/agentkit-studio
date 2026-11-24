@@ -96,6 +96,35 @@ test('an automatic model stays pinned during a lease and cutover leaves one work
   } finally { await manager.close(); }
 });
 
+test('stale explicit bindings do not hide the minimum context capacity of working bindings', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-harness-capacity-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const plugin = join(root, 'plugin');
+  const profiles = [
+    { id: 'large', modelName: 'wide', contextWindow: 1048576 },
+    { id: 'small', modelName: 'wide', contextWindow: 256000 },
+  ];
+  const bindings = profiles.map(({ id }) => ({
+    workspace: join(root, id), profileId: id, model: 'wide', images: id === 'small',
+  }));
+  await Promise.all([plugin, ...bindings.map(binding => binding.workspace)].map(path => mkdir(path)));
+  await writeFile(join(plugin, 'settings.json'), JSON.stringify({ version: '0.0.31', previousVersion: null, enabled: true, bindings }));
+  const manager = createStarHarnessManager({
+    root: plugin, externalRoutes: new Map(), modelProfiles: profiles, releases: {},
+    settings: async () => ({ modelProfiles: profiles }),
+  });
+  t.after(() => manager.close());
+  const runtime = createNativeEngineRuntime({ stateRoot: join(root, 'studio'), externalRoutes: new Map(), starHarness: manager });
+  assert.deepEqual(await runtime.serviceModelInfo('wide'), { images: true, contextWindow: 256000 });
+  for (const stale of [[], [{ ...profiles[1], enabled: false }], [{ ...profiles[1], modelName: 'renamed' }]]) {
+    manager.refreshModelProfiles([profiles[0], ...stale]);
+    assert.deepEqual(await runtime.serviceModelInfo('wide'), { images: false, contextWindow: 1048576 });
+    assert.equal((await manager.status()).workspaces.find(row => row.workspace === bindings[1].workspace).profileId, 'small');
+  }
+  manager.refreshModelProfiles([]);
+  assert.deepEqual(await runtime.serviceModelInfo('wide'), { images: false });
+});
+
 const oldVersion = '0.0.26';
 const newVersion = '0.0.27';
 const sha256 = data => createHash('sha256').update(data).digest('hex');

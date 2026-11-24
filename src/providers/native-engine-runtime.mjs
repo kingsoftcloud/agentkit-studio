@@ -97,13 +97,17 @@ export function createHarnessServiceModelAdapter(AdapterBase, models, describeMo
 export function routeHarnessCompaction(options, next, { resolveSession, resolveProfile, stream }) {
   if (options.provider !== HARNESS_SERVICE_MODEL_PROVIDER || options.purpose !== 'compaction') return next();
   const session = resolveSession(options.sessionId);
-  const previous = session?.requestHeader()?.config;
+  const previous = typeof session?.requestHeader === 'function' ? session.requestHeader()?.config : undefined;
   if (previous?.provider !== options.provider || previous.model !== options.model) return next();
   const profile = resolveProfile(session.header.cwd, options.model);
   if (!profile) return (async function* () {
     throw failure('NATIVE_ENGINE_SUMMARY_MODEL_UNAVAILABLE', '找不到上一次 Harness 模型对应的唯一 Studio 配置。请先配置该模型，或选择可容纳当前会话的模型。');
   })();
-  return stream({ ...options, provider: dshModelRoute(profile), model: profile.modelName });
+  const provider = dshModelRoute(profile);
+  if (provider === HARNESS_SERVICE_MODEL_PROVIDER) return (async function* () {
+    throw failure('NATIVE_ENGINE_SUMMARY_MODEL_ROUTE_COLLISION', '摘要模型的配置 ID 与 Star Harness 内部路由冲突。请使用不同 ID 配置该模型并重新绑定。');
+  })();
+  return stream({ ...options, provider, model: profile.modelName });
 }
 
 /** Local engine executable installed and updated independently of Studio. */

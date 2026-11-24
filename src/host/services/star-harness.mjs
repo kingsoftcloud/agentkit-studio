@@ -179,19 +179,21 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       return profiles.length === 1 ? profiles[0] : undefined;
     },
     modelInfo(model) {
-      const bindings = activeBindings().filter(row => row.model === model);
-      if (!bindings.length) return { images: false };
-      const windows = bindings.map(binding => {
-        if (binding.automatic && binding.profileId) return binding.contextWindow ?? 128000;
-        const selected = configuredProfiles.find(row => row.enabled !== false && row.id === binding.profileId);
-        // The worker uses the same profile and defaults to 128,000 tokens
-        // when its provider window has not been configured.
-        return selected?.modelName === model ? selected.contextWindow ?? 128000 : undefined;
+      const capabilities = activeBindings().filter(binding => binding.model === model).flatMap(binding => {
+        const { automatic, profileId, images, contextWindow } = binding;
+        // Automatic bindings can use a worker's pinned profile while leased.
+        if (automatic && profileId) return [{ images, window: contextWindow ?? 128000 }];
+        // A legacy binding without a profile has no known capacity.
+        if (!profileId) return [{ images, window: undefined }];
+        const selected = configuredProfiles.find(row => row.enabled !== false && row.id === profileId);
+        // Keep stale bindings visible in settings, but exclude them from the
+        // shared catalog entry's capabilities.
+        return selected?.modelName === model ? [{ images, window: selected.contextWindow ?? 128000 }] : [];
       });
-      // The desktop catalog has one entry even when several workspaces bind
-      // the same model name through different providers.
-      return { images: bindings.some(row => row.images),
-        ...(windows.every(value => Number.isSafeInteger(value) && value > 0) ? { contextWindow: Math.min(...windows) } : {}) };
+      const windows = capabilities.map(row => row.window);
+      return { images: capabilities.some(row => row.images),
+        ...(windows.length && windows.every(value => Number.isSafeInteger(value) && value > 0)
+          ? { contextWindow: Math.min(...windows) } : {}) };
     },
     async acquire(workspace) {
       if (mutation) throw codes.busy();
