@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.23 - 2026-11-25
+
+### 修复
+- 从源码 checkout 加载 Studio 时，公共 Host 模块改从正在运行的 Host 入口解析：`@deepseek-ai/dsh-app-boot` 不再因不在 Studio 依赖图里而抛错，`dsh-llm` 也不再解析到第二份副本，`STUDIO_HOST_INCOMPATIBLE: DSH baseline` 误判消失。
+- Anthropic 网关版本路径归一化补齐：本地 runtime 调用、Codex loopback proxy 和诊断 probe 不再把 `/messages` 直接拼到 `https://api.deepseek.com/anthropic` 上。
+- 模型 transport follow-up：Anthropic Messages 协议、Codex commentary phase、DSH 凭证先写再启路由、legacy binding 不再拖掉整个模型的上下文窗口、不可读的 session header 回落到原 stream。
+- Star Harness 与 Studio 解耦：生产路径不再打包 Harness 实现，改走签名插件通道；插件更新和重启保留 workspace 模型选择与原对话。
+- 打包镜像的 Star Harness release 改从安装目录旁的共享目录解析，离线 smoke 与 Agent 首次启动都能找到已验签的 release。
+
 ## 0.0.22 - 2026-11-20
 
 - 移除桌面端启动时的统计弹窗，在设置中提供基础运行、崩溃和本地 Run 统计的独立开关。升级时保留相同统计接收端和策略下的已有选择。
