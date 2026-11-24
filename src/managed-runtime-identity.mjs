@@ -21,5 +21,5 @@ export function managedRuntimePrincipal(headers) {
   // Match Server/KsADK ensure_ascii=False, sort_keys=True compact JSON exactly.
   const canonical = JSON.stringify(Object.fromEntries(Object.keys(values).sort().map(key => [key, values[key]])));
   const digest = createHash('sha256').update(canonical).digest('hex');
-  return { key: JSON.stringify(Object.values(values)), digest, userId: `aeu_${digest}` };
+  return { key: JSON.stringify(Object.values(values)), digest, subjectType: values.subject_type, userId: `aeu_${digest}` };
 }

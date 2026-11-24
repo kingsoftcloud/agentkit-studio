@@ -48,3 +48,22 @@ test('runtimes without memory retain their existing execution path', async () =>
   const context = createManagedResourceContext({ ...runtime, declaration: { resources: {} } });
   assert.equal(await context.run({}, () => 'unchanged'), 'unchanged');
 });
+
+test('KSXC uses the current caller permit even on a declaration without memory', async () => {
+  const context = createManagedResourceContext({ identity: { ...runtime.identity, runtimeName: 'ksxc' }, declaration: {} });
+  const subjectDigest = 'b'.repeat(64);
+  const user = `aeu_${subjectDigest}`;
+  const claims = { format: 'agentengine.ksxc-caller/v1', agent_id: 'ar-test', version_id: 'version-test',
+    manifest_sha256: 'a'.repeat(64), memory_id: null, subject_digest: subjectDigest, expires_at: expires };
+  const permit = `drp1.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.${'f'.repeat(64)}`;
+  const headers = { 'x-agentengine-resource-permit': permit };
+  for (const voice of [{ headers: {}, subjectDigest }, { headers, subjectDigest: 'c'.repeat(64) }]) {
+    await assert.rejects(context.run(voice, () => assert.fail('invalid request executed')), { code: 'KSXC_CALLER_PERMIT_REQUIRED' });
+  }
+  await context.run({ headers, subjectDigest }, async () => {
+    assert.equal(context.ksxcPermit(user), permit);
+    assert.throws(() => context.ksxcPermit(`aeu_${'c'.repeat(64)}`), { code: 'KSXC_CALLER_PERMIT_REQUIRED' });
+    assert.throws(() => context.permit(), { code: 'MANAGED_RESOURCE_PERMIT_REQUIRED' });
+  });
+  assert.throws(() => context.ksxcPermit(user), { code: 'KSXC_CALLER_PERMIT_REQUIRED' });
+});

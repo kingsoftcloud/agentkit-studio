@@ -1,4 +1,5 @@
 /** The Server must preserve explicit storage before Studio creates a stateful container. */
+import { isAppServerRuntimeType } from './runtime-types.mjs';
 import { portableError } from './portable-resources.mjs';
 
 /** The mounted home is the Agent's persistence root: state, ~/.codex and workspace. */
@@ -7,7 +8,7 @@ export const RUNTIME_HOME = '/home/node';
 export function containerStorageCapability(data) {
   const value = data?.Capabilities?.ContainerStorage;
   if (value?.Contract !== 'agentengine.container-storage/v1') return null;
-  if (!Array.isArray(value.Frameworks) || value.Frameworks.some(item => !['harness', 'codex'].includes(item))
+  if (!Array.isArray(value.Frameworks) || value.Frameworks.some(item => item !== 'harness' && !isAppServerRuntimeType(item))
     || value.MinSizeGi !== 20 || value.MaxSizeGi !== 500 || value.MaxReplicas !== 1 || value.PaymentType !== 'Daily') {
     throw portableError('DEPLOYMENT_CATALOG_INVALID', '云端持久化能力声明无效');
   }
@@ -27,7 +28,7 @@ export function deploymentStorage(resources) {
 
 export function admitDeploymentStorage(resources, catalog, runtime) {
   if (!deploymentStorage(resources)) return;
-  if (!catalog.containerStorage?.Frameworks.includes(runtime === 'codex' ? 'codex' : 'harness')) {
+  if (!catalog.containerStorage?.Frameworks.includes(isAppServerRuntimeType(runtime) ? runtime : 'harness')) {
     throw portableError('DEPLOYMENT_STORAGE_UNAVAILABLE', '当前云端未声明支持持久化部署，请先升级 Server；不会创建缺少所选存储的实例');
   }
 }

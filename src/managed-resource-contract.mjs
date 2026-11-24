@@ -7,6 +7,18 @@ const mapping = value => value !== null && typeof value === 'object' && !Array.i
 const fail = () => { throw Object.assign(new Error('Invalid managed resource references'), { code: 'MANAGED_RESOURCE_INVALID' }); };
 const blockedHeaders = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept', 'content-type', 'mcp-protocol-version', 'mcp-session-id', '__proto__', 'constructor', 'prototype']);
 
+function validateMcpEnvRefs(envRefs) {
+  if (!mapping(envRefs) || Object.keys(envRefs).length > 16) fail();
+  const names = new Set();
+  for (const [header, name] of Object.entries(envRefs)) {
+    const key = header.toLowerCase();
+    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(header) || blockedHeaders.has(key) || names.has(key)) fail();
+    // Only caller-supplied MCP credentials cross into the managed Host.
+    if (typeof name !== 'string' || !/^MCP_[A-Z0-9_]{1,124}$/.test(name) || !/(KEY|TOKEN|SECRET|PASSWORD)/.test(name)) fail();
+    names.add(key);
+  }
+}
+
 function directMcp(item) {
   if (Object.keys(item).some(key => !['id', 'endpoint', 'transport', 'env_refs'].includes(key))) fail();
   if (typeof item.endpoint !== 'string' || item.endpoint.length > 2048 || !/^[\x21-\x7e]+$/.test(item.endpoint)
@@ -15,17 +27,7 @@ function directMcp(item) {
   try { endpoint = new URL(item.endpoint); } catch { fail(); }
   if (!endpoint.hostname || !/^[A-Za-z0-9_.:[\]-]+$/.test(endpoint.hostname) || endpoint.username || endpoint.password || endpoint.port === '0') fail();
   if (Object.hasOwn(item, 'transport') && !['http', 'sse'].includes(item.transport)) fail();
-  if (!Object.hasOwn(item, 'env_refs')) return;
-  if (!mapping(item.env_refs) || Object.keys(item.env_refs).length > 16) fail();
-  const names = new Set();
-  for (const [header, name] of Object.entries(item.env_refs)) {
-    const key = header.toLowerCase();
-    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(header) || blockedHeaders.has(key) || names.has(key)) fail();
-    // Only caller-supplied MCP credentials; never expose platform/model keys.
-    // The existing API also recognizes these names as sensitive variables.
-    if (typeof name !== 'string' || !/^MCP_[A-Z0-9_]{1,124}$/.test(name) || !/(KEY|TOKEN|SECRET|PASSWORD)/.test(name)) fail();
-    names.add(key);
-  }
+  if (Object.hasOwn(item, 'env_refs')) validateMcpEnvRefs(item.env_refs);
 }
 
 export function validateManagedResources(value) {
@@ -44,6 +46,14 @@ export function validateManagedResources(value) {
       if (key === 'mcp_servers' && mapping(binding) && Object.hasOwn(binding, 'endpoint')) {
         reference({ id: binding.id });
         directMcp(binding);
+      } else if (key === 'mcp_servers' && mapping(binding) && Object.hasOwn(binding, 'env_refs')) {
+        // Platform MCPs are resolved by the Server resource proxy. They use an
+        // ID-only binding while still declaring the explicitly forwarded API
+        // key header for the managed Host.
+        if (Object.keys(binding).some(field => !['id', 'region', 'env_refs'].includes(field))) fail();
+        if (typeof binding.id !== 'string' || !binding.id.startsWith('mcp-')) fail();
+        reference({ id: binding.id, ...(Object.hasOwn(binding, 'region') ? { region: binding.region } : {}) });
+        validateMcpEnvRefs(binding.env_refs);
       } else reference(binding);
       if (ids.has(binding.id)) fail();
       ids.add(binding.id);

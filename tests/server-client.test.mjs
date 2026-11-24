@@ -6,6 +6,44 @@ import { createCloudEndpointPolicy } from '../src/cloud-endpoints.mjs';
 function configuration(values) { return { resolve: async () => ({ values, sources: {} }) }; }
 const endpointOptions = { innerKopUrl: 'http://kop.test', innerIamUrl: 'http://iam.test' };
 
+test('managed KSXC authorization uses the signed caller and an opaque attempt ID', async () => {
+  const calls = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST', cloudRegion: 'pre-online' }),
+    fetchImpl: async (url, init) => {
+      assert.equal(url.origin, 'https://aicp.api.ksyun.com');
+      assert.match(init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
+      assert.equal(init.headers['X-KSC-CUSTOM-SOURCE'], 'pre');
+      const body = JSON.parse(init.body);
+      assert.equal(body.UserId, undefined);
+      assert.equal(body.CompanyCode, undefined);
+      calls.push([body.Action, body.AttemptId]);
+      return Response.json({ Code: 0, Data: { Status: 'pending', AttemptId: 'fixture-attempt' } });
+    },
+  });
+  for (const action of ['GetKsxcConnection', 'CreateKsxcConnection', 'GetKsxcConnectionResult', 'DeleteKsxcConnection']) {
+    await client.action(action, action === 'GetKsxcConnectionResult' ? { AttemptId: 'fixture-attempt' } : {});
+  }
+  assert.deepEqual(calls, [['GetKsxcConnection', undefined], ['CreateKsxcConnection', undefined],
+    ['GetKsxcConnectionResult', 'fixture-attempt'], ['DeleteKsxcConnection', undefined]]);
+});
+
+test('canonical KSXC connection Action names are admitted alongside legacy aliases', async () => {
+  const actions = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com', cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST', cloudRegion: 'pre-online' }),
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      actions.push(body.Action);
+      return Response.json({ Code: 0, Data: { Status: 'disconnected' } });
+    },
+  });
+  for (const action of ['CreateKsxcConnection', 'GetKsxcConnectionResult', 'DeleteKsxcConnection']) {
+    await client.action(action, action === 'GetKsxcConnectionResult' ? { AttemptId: 'attempt' } : {});
+  }
+  assert.deepEqual(actions, ['CreateKsxcConnection', 'GetKsxcConnectionResult', 'DeleteKsxcConnection']);
+});
+
 test('template environment selection keeps ordinary resource calls on the configured environment',async()=>{
  const requests=[],values={cloudAccessKey:'AKTEST',cloudSecretKey:'SKTEST',cloudRegion:'cn-beijing-6'};
  const client=createAgentEngineClient({configuration:configuration(values),fetchImpl:async(url,init)=>{requests.push(init);return Response.json({Code:0,Data:{items:[]}});}});

@@ -104,13 +104,13 @@ export function createProductClient(connection, { window = globalThis.window } =
         }
         return payload;
     }
-    async function serverAction(action, payload = {}) {
+    async function serverAction(action, payload = {}, signal) {
         if (!connection?.rpc?.call) {
             const error = new Error('AgentEngine Server 连接不可用');
             error.code = 'SERVER_CONNECTION_MISSING';
             throw error;
         }
-        const result = await callStudioOperation(connection, 'server/action', { action, payload });
+        const result = await callStudioOperation(connection, 'server/action', { action, payload }, signal);
         if (!result?.ok) {
             const error = new Error(result?.error?.message || `${action} 请求失败`);
             error.code = result?.error?.code || 'SERVER_ACTION_FAILED';
@@ -455,6 +455,26 @@ export function createProductClient(connection, { window = globalThis.window } =
         // Lifecycle calls must live on the base product client: the DSH plugin
         // surface mounts this object directly (no compatibility extension), so
         // compatibility-methods-only keys would be missing at runtime.
+        ksxcStatus: signal => studioBridgeOperation('ksxc/status', {}, signal),
+        ksxcActivate: version => studioBridgeOperation('ksxc/activate', { version }),
+        ksxcEnable: enabled => studioBridgeOperation('ksxc/enable', { enabled }),
+        ksxcRollback: () => studioBridgeOperation('ksxc/rollback', {}),
+        ksxcLogin: () => studioBridgeOperation('ksxc/login', {}),
+        ksxcLoginResult: (id, signal) => studioBridgeOperation('ksxc/login-result', { id }, signal),
+        ksxcLoginCancel: id => studioBridgeOperation('ksxc/login-cancel', { id }),
+        ksxcDisconnect: () => studioBridgeOperation('ksxc/disconnect', {}),
+        ksxcModels: signal => studioBridgeOperation('ksxc/models', {}, signal),
+        ksxcCloudStatus: signal => serverAction('GetKsxcConnection', {}, signal),
+        ksxcCloudLogin: () => serverAction('CreateKsxcConnection'),
+        ksxcCloudLoginResult: (id, signal) => serverAction('GetKsxcConnectionResult', { AttemptId: id }, signal),
+        ksxcCloudDisconnect: async () => {
+            const result = await serverAction('DeleteKsxcConnection');
+            // The shared Server revokes the encrypted connection. Clear every
+            // local managed-Pod cache as well because the browser surface may
+            // not carry the authoritative caller id to the Host.
+            if (bridgeAvailable()) await studioBridgeOperation('ksxc/cache-clear', {});
+            return result;
+        },
         starHarnessStatus: (options = {}, signal) => studioBridgeOperation('star-harness/status', options, signal),
         installStarHarness: version => studioBridgeOperation('star-harness/install', { version }),
         enableStarHarness: enabled => studioBridgeOperation('star-harness/enable', { enabled }),

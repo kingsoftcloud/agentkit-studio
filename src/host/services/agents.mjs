@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 /** Domain construction only; state belongs to this Host scope. */
-export function createAgentServices({ storeDir: studioStoreDir, studioBuildPromise, deployments, serverClientPromise, managedRuntime }) {
+export function createAgentServices({ storeDir: studioStoreDir, studioBuildPromise, deployments, serverClientPromise, managedRuntime, validateAgent }) {
     const agentStorePromise = managedRuntime
         ? import('../../managed-runtime-definition.mjs').then(({ createManagedAgentStore }) => createManagedAgentStore(managedRuntime))
-        : import('../../agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents') }));
+        : import('../../agent-store.mjs').then(({ createAgentStore }) => createAgentStore({ storeDir: join(studioStoreDir, 'agents'), validateAgent }));
     const agentCatalogPromise = import('../../agent-catalog.mjs').then(({ createAgentCatalog }) => createAgentCatalog({ store: () => agentStorePromise,
         builds: async (id) => (await studioBuildPromise).build.list(id), deployments: async () => (await deployments()).agents.list(),
         managedAgents: async query => {

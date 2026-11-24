@@ -22,6 +22,7 @@ import { createResourceDialog } from "./components/resource-dialog.mjs";
 import { createResourceDialogs } from "./components/resource-dialogs.mjs";
 import { createResourcePages } from "./pages/resources.mjs";
 import { createCodexPluginPages } from "./pages/codex-plugins.mjs";
+import { createKsxcSettings } from './pages/ksxc-settings.mjs';
 import { createStarHarnessPage } from "./pages/star-harness.mjs";
 import { createDeliveryPages } from "./pages/delivery.mjs";
 import { DEPLOYMENT_LABELS } from "./state/deployment.mjs";
@@ -90,6 +91,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createResourceDialogs({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createResourcePages({ ui, hostRemote, actions, window }));
   Object.assign(ui, createCodexPluginPages({ ui, hostRemote }));
+  ui.KsxcSettings = createKsxcSettings({ React, hostRemote, window });
   ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window, Switch: primitives.Switch });
   Object.assign(ui, createDeliveryPages({ ui, hostRemote, actions, window, document }));
   Object.assign(ui, createScheduleDelivery({ ui, hostRemote }));

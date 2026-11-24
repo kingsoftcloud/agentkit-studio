@@ -25,10 +25,16 @@ export function createResourceServices(ctx, { storeDir: studioStoreDir, portable
         localMcpStorePromise,
     ]).then(async ([skillDiscovery, serverClient, localMcpStore]) => {
         const { createLocalResourceAdapters } = await import('../../local-resource-adapters.mjs');
-        const managedMcpServers = new Map((managedRuntime?.declaration?.resources?.mcp_servers || []).map(item => [String(item.id), {
+        // ID-only managed MCP references must be resolved through the private
+        // Server resource proxy. Keep only inline descriptors in this direct
+        // store, otherwise an object with an undefined endpoint shadows the
+        // proxy lookup and discovery fails with MCP_ENDPOINT_UNAVAILABLE.
+        const managedMcpServers = new Map((managedRuntime?.declaration?.resources?.mcp_servers || [])
+          .filter(item => typeof item?.endpoint === 'string' && item.endpoint)
+          .map(item => [String(item.id), {
             resourceId: String(item.id), endpointUrl: item.endpoint, transport: item.transport || 'http',
             ...(item.env_refs ? { envRefs: item.env_refs } : {}),
-        }]));
+          }]));
         const resourceStore = {
             get: async (id, options) => managedMcpServers.get(String(id)) || await portableRuntime?.resourceStore?.get(id) || await localMcpStore.get(id, options),
         };

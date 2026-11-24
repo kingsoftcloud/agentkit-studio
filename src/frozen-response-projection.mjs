@@ -12,7 +12,7 @@ const presentationTypes = new Set(['response.output_item.added', 'response.outpu
   'response.content_part.added', 'response.content_part.done', 'response.output_text.delta', 'response.output_text.done',
   'response.reasoning_summary_text.delta', 'response.reasoning_summary_text.done',
   'response.function_call_arguments.done', 'response.resource_check', 'response.tool_result',
-  'response.question_resolved', HOSTED_HARNESS_VIEW_EVENT]);
+  'response.approval_resolved', 'response.question_resolved', HOSTED_HARNESS_VIEW_EVENT]);
 
 /** Normalize one derivative record to the only shape the Session log keeps.
  *  DSH persists session events as lossless JSON: the append site detaches a
@@ -105,7 +105,19 @@ export function createFrozenResponseProjection({ getService }) {
       && event.data?.requestId === request.runId);
     if (!rows.length) return null;
     if (rows.length !== 1) throw fail('RESPONSES_PROJECTION_INVALID');
-    return validate(rows[0].data, request);
+    const data = rows[0].data;
+    const recorded = data.response?.metadata?.agentkit;
+    const current = request.metadata?.agentkit;
+    if (!request.buildId && current?.versionId && recorded?.versionId
+      && (recorded.versionId !== current.versionId || recorded.manifestSha256 !== current.manifestSha256)) {
+      // The native invocation survives a managed update. Reissue the public
+      // handles for the current deployment and retain the original delivery.
+      const original = validate(data, { ...request, responseId: data.responseId, conversationId: data.response.conversation?.id });
+      const response = { ...original.response, id: request.responseId, session_id: request.publicSessionId || request.conversationId,
+        conversation: { id: request.conversationId }, metadata: { ...original.response.metadata, agentkit: { ...recorded, ...current } } };
+      return { response, events: original.events };
+    }
+    return validate(data, request);
   }
   return {
     contract: FROZEN_RESPONSE_PROJECTION,

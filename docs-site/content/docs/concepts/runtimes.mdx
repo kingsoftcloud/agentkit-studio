@@ -1,29 +1,29 @@
 ---
-title: 三种运行时
-description: 运行时类型决定一次运行由谁的执行模型负责。三种运行时各自的能力差异、Star Harness 为什么必须先安装，以及执行策略如何限制写入范围。
+title: 四种运行时
+description: 运行时类型决定一次运行由谁的执行模型负责。四种运行时各自的能力差异、Star Harness 为什么必须先安装，以及执行策略如何限制写入范围。
 status: new
 ---
 
-**运行时类型（`runtime.type`）决定一次运行由谁的执行模型负责。只有三种：DSH 原生、Star Harness、Codex**（`src/runtime-contract.mjs:6` 的 `STUDIO_RUNTIME_TYPES`）。
+**运行时类型（`runtime.type`）决定一次运行由谁的执行模型负责。支持 DSH 原生、Star Harness、Codex 和 KSXC**（`src/runtime-contract.mjs:6` 的 `STUDIO_RUNTIME_TYPES`）。
 
-这一页讲清三种运行时各自的归属与能力、Star Harness 为什么必须先安装才能选、以及运行时之外那一层「执行策略」如何限制写入范围。
+这一页讲清四种运行时各自的归属与能力、Star Harness 为什么必须先安装才能选、以及运行时之外那一层「执行策略」如何限制写入范围。
 
 ## 为什么运行时不是「引擎选项」
 
-把运行时理解成「换个模型后端」会立刻遇到矛盾：同一份 Agent 定义，在三个运行时上的可用能力根本不同——有的支持重放，有的支持子任务，有的两者都不支持。这不是配置差异，是执行归属差异。
+把运行时理解成「换个模型后端」会立刻遇到矛盾：同一份 Agent 定义，在不同运行时上的可用能力根本不同——有的支持重放，有的支持子任务，有的两者都不支持。这不是配置差异，是执行归属差异。
 
 | 你想做的事 | 需要的前提 |
 | --- | --- |
 | 重放一次历史运行 | 运行时支持 `replay`（Codex 与 DSH 原生支持，Star Harness 不支持） |
 | 让 Agent 拆出子任务 | 运行时支持 `child-tasks`（只有 Star Harness 支持） |
 | 从历史事件恢复未完成的 turn | 运行时支持 `resume`（只有 Star Harness 支持） |
-| 把 Agent 部署成常驻托管运行时 | 运行时可托管（只有 DSH 原生与 Codex 可以） |
+| 把 Agent 部署成常驻托管运行时 | 运行时可托管（DSH 原生、Codex 和已发布托管版本的 KSXC） |
 
 所以选运行时不是风格偏好，它决定了后面能做哪些事。**运行时在创建时锁定，之后不能改**——换运行时只能新建一个 Agent。
 
 ## Star Harness 必须先安装
 
-三种运行时里只有 Star Harness 是**可插拔的**：它由三个独立的 npm 包提供（`@kingsoftcloud/agentkit-harness-core` / `-node` / `-ui`，当前 `0.0.25`），Studio 单向依赖它，它不反向依赖 Studio。
+Star Harness 通过插件页安装：它由三个独立的 npm 包提供（`@kingsoftcloud/agentkit-harness-core` / `-node` / `-ui`，当前 `0.0.25`），Studio 单向依赖它，它不反向依赖 Studio。
 
 所以「新建 Agent 时能不能选 Star Harness」是一个**状态判断**，不是常量：
 
@@ -43,51 +43,55 @@ status: new
   历史文档里 Star Harness 还叫过 AgentKit Harness 与 Native Harness。**两个别名都已废弃**，统一写 **Star Harness**（`harness`）。
 </Callout>
 
-## 三个正式运行时
+## 四个正式运行时
 
-| 项 | DSH 原生 | Star Harness | Codex |
-| --- | --- | --- | --- |
-| 值 | `dsh-native` | `harness` | `codex` |
-| 界面名称 | DSH Native Harness | Star Harness | Codex Agent |
-| 执行归属 | DSH 自己 | KSADK Harness 原生内核 | Studio 内的 Codex App Server 适配器 |
-| 执行模型 | `native` | `native-kernel` | `codex-app-server` |
-| 契约 | `agentkit.studio.runtime/v1` | DSH 原生 turn 契约 | `studio.codex.adapter/v1` |
-| 事件所有者 | DSH 会话 | 原生 run store | Studio Codex 适配器 |
-| 流所有者 | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
-| 新建默认 | **是** | 条件可创建（见上节） | 否 |
+| 项 | DSH 原生 | Star Harness | Codex | KSXC |
+| --- | --- | --- | --- | --- |
+| 值 | `dsh-native` | `harness` | `codex` | `ksxc` |
+| 界面名称 | DSH Native Harness | Star Harness | Codex Agent | KSXC |
+| 执行归属 | DSH 自己 | KSADK Harness 原生内核 | Studio 内的 Codex App Server 适配器 | Studio 内的 KSXC App Server 适配器 |
+| 执行模型 | `native` | `native-kernel` | `codex-app-server` | `ksxc-app-server` |
+| 契约 | `agentkit.studio.runtime/v1` | DSH 原生 turn 契约 | `studio.codex.adapter/v1` | `studio.ksxc.adapter/v1` |
+| 事件所有者 | DSH 会话 | 原生 run store | Studio Codex 适配器 | Studio KSXC 适配器 |
+| 流所有者 | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` | `ksxc-turn/item` |
+| 新建默认 | **是** | 条件可创建（见上节） | 否 | 否 |
 
-<Diagram src="/assets/agentkit-runtime-ownership.png" alt="三种运行时（三列）在模型与工具循环、会话转录、持久运行状态与 Studio 接缝上的归属矩阵" />
+<Diagram src="/assets/agentkit-runtime-ownership.png" alt="三个早期运行时在模型与工具循环、会话转录、持久运行状态与 Studio 接缝上的归属矩阵" />
 
-*读图要点：执行者不是转录所有者——同一个运行时里，「谁在跑模型循环」和「谁在保存事件日志」是两个不同实体。三列里只有 `cancel` 是三者共有的能力，其余能力都属于某一个实现，不能靠配置打开。*
+*读图要点：执行者不是转录所有者——同一个运行时里，「谁在跑模型循环」和「谁在保存事件日志」是两个不同实体。图中的三个执行器展示了各自的事件和会话归属。KSXC 通过 Studio 适配器交付工具事件，业务历史由 DSH 保存。*
+
+### KSXC 桌面版本与账号
+
+在 Studio 设置的 KSXC 部分选择审定版本、安装并启用，再用 WPS 连接企业账号。升级前会校验制品摘要和 App Server 握手，已有版本可以回退。Agent 保存模型偏好，每轮按当前账号的企业模型目录核对。托管部署使用平台发布的 KSXC 版本。
 
 ## 能力矩阵
 
-| 能力 | DSH 原生 | Star Harness | Codex |
-| --- | :---: | :---: | :---: |
-| `session` | ✅ | — | ✅ |
-| `session-events` | ✅ | — | — |
-| `stream` | ✅ | — | ✅ |
-| `cancel` | ✅ | ✅ | ✅ |
-| `replay` | ✅ | — | ✅ |
-| `persistence` | ✅ | — | — |
-| `build-binding` | ✅ | — | ✅ |
-| `native-run` | — | ✅ | — |
-| `durable-receipts` | — | ✅ | — |
-| `tool-approval` | — | ✅ | — |
-| `resume` | — | ✅ | — |
-| `child-tasks` | — | ✅ | — |
+| 能力 | DSH 原生 | Star Harness | Codex | KSXC |
+| --- | :---: | :---: | :---: | :---: |
+| `session` | ✅ | — | ✅ | ✅ |
+| `session-events` | ✅ | — | — | — |
+| `stream` | ✅ | — | ✅ | ✅ |
+| `cancel` | ✅ | ✅ | ✅ | ✅ |
+| `replay` | ✅ | — | ✅ | ✅ |
+| `persistence` | ✅ | — | — | — |
+| `build-binding` | ✅ | — | ✅ | ✅ |
+| `native-run` | — | ✅ | — | — |
+| `durable-receipts` | — | ✅ | — | — |
+| `tool-approval` | — | ✅ | — | — |
+| `resume` | — | ✅ | — | — |
+| `child-tasks` | — | ✅ | — | — |
 
-只有 `cancel` 是三个运行时都支持的。能力项不是功能开关，不能通过配置打开——它是运行时实现的一部分。
+四个运行时都支持 `cancel`。能力项不是功能开关，不能通过配置打开——它是运行时实现的一部分。
 
 ## 运行时之外的硬规则
 
 | 规则 | 允许的值 | 越界结果 |
 | --- | --- | --- |
-| 创建 Agent | 3 个正式值 | `RUNTIME_UNSUPPORTED` |
+| 创建 Agent | 4 个正式值 | `RUNTIME_UNSUPPORTED` |
 | 专家团角色 | 仅 DSH 原生、Star Harness | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
 | 专家团成员（运行时） | 仅本地 DSH 原生、Star Harness | `TEAM_AGENT_UNSUPPORTED` |
-| 托管部署 | 仅 DSH 原生、Codex | 不出现在可部署列表 |
-| 托管清单声明 | 3 个正式值 | `MANAGED_RUNTIME_IDENTITY_MISMATCH` |
+| 托管部署 | DSH 原生、Codex 和平台已发布的 KSXC | 不出现在可部署列表 |
+| 托管清单声明 | 4 个正式值 | `MANAGED_RUNTIME_IDENTITY_MISMATCH` |
 
 「专家团不含 Codex 成员」与「托管部署不含 Star Harness」是两条独立限制，不要合并成一句「部分场景受限」。
 

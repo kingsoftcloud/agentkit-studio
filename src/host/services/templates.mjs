@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { listPlatformResources } from "../../platform-resource-bindings.mjs";
 import * as ExpertCatalogPlugin from "../../../packages/expert-catalog/src/index.mjs";
 import { listStudioTools } from '../../native-tool-catalog.mjs';
-async function createTemplateServices(ctx, { storeDir: studioStoreDir, env: runtimeEnv, configurationPromise, serverClientPromise, skillDiscoveryPromise, localMcpStorePromise, mcpProbePromise, agentStorePromise, credentialsService, models, listCodexAgentModels, codexModels, getTeamTemplates }) {
+async function createTemplateServices(ctx, { storeDir: studioStoreDir, env: runtimeEnv, configurationPromise, serverClientPromise, skillDiscoveryPromise, localMcpStorePromise, mcpProbePromise, agentStorePromise, credentialsService, models, listCodexAgentModels, codexModels, ksxc, getTeamTemplates }) {
   const templateCatalog = await (await import("../../template-catalog-source.mjs")).createTemplateCatalogSource({ studioStoreDir, env: runtimeEnv, configuration: () => configurationPromise, serverClient: () => serverClientPromise });
   ctx.plugin(ExpertCatalogPlugin, { catalog: templateCatalog });
   const templateDependencies = (await import("../../catalog-dependencies.mjs")).createCatalogDependencies({
@@ -18,6 +18,7 @@ async function createTemplateServices(ctx, { storeDir: studioStoreDir, env: runt
     dependencies: templateDependencies,
     platformResources: async (kind) => listPlatformResources(await serverClientPromise, kind),
     resources: async (kind, runtimeType) => {
+      if (kind === "model" && runtimeType === "ksxc") return ksxc?.desktopModels() ?? { items: [] };
       if (kind === "model" && runtimeType === "codex") return listCodexAgentModels({ models, catalog: codexModels });
       const serverClient = await serverClientPromise;
       if (kind === "tool") return listStudioTools({ query: { kind, runtimeType, limit: 200 }, serverClient });

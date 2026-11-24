@@ -1,0 +1,68 @@
+{
+  "schema": "agentkit-studio.ksxc-catalog-m4-evidence/v4",
+  "capturedAt": "2026-11-23T20:42:10+08:00",
+  "studio": {
+    "branch": "feat/ksxc-studio-v2",
+    "head": "9a0efd95",
+    "pushed": true,
+    "changes": ["managed MCP ID-only credential references", "env_refs/envRefs compatibility", "contract regression test"],
+    "targetedTests": {"command": "node --test tests/managed-resource-contract.test.mjs tests/managed-runtime-verifier.test.mjs tests/local-resource-adapters.test.mjs tests/ksxc-runtime.test.mjs", "passed": 309, "failed": 0}
+  },
+  "server": {
+    "sourceBranch": "feat/ksxc-mcp-apikey-test1105",
+    "testBranch": "test-1105",
+    "head": "c231bacb",
+    "sourceHead": "93243184",
+    "pushed": true,
+    "image": "hub.kce.ksyun.com/bigdata-ai/agentengine-server:pre-0.0.0-254-c231bacb27990e1f9859aeca9126d7923139ee4d",
+    "imageDigest": "sha256:6fe9ea80f770ab86c3d6c4642abaefe9f2328b8518bc0094202bd6844109e428",
+    "rollout": "preprod rollout completed",
+    "tests": {"command": "uv run --locked pytest tests/test_dsh_resource_transport.py tests/test_dsh_resource_contract.py -q", "passed": 271, "failed": 0, "skipped": 3}
+  },
+  "catalog": {
+    "environment": "pre-online",
+    "framework": "ksxc",
+    "runtimeVersion": "1.8.0-studio.0.0.22-a4156fe5-relay.10",
+    "runtimeImageDigest": "sha256:16017351f618b8c72a3ec4c45f0c8526ab599852c2bdeceef14b4d3726a22906",
+    "manifestSha256": "25ebe6e5d0e15cb29955882ecd10765152db347a58862259866e8d781f97ff91",
+    "ksxcPayloadSha256": "e3a78ecd7eecded8ee4c4fa8234825899813b713ae578b36d0b351a45c4e36d6",
+    "helmRevision": 9999,
+    "serverSync": "applied"
+  },
+  "agent": {
+    "agentId": "ar-20261123201208-3766d025",
+    "versionId": "e28c3c26-d777-42d9-a678-f1674b28e91b",
+    "status": "RUNNING",
+    "readyReplicas": 1,
+    "deploymentPhase": "READY",
+    "runtime": "ksxc",
+    "runtimeVersion": "1.8.0-studio.0.0.22-a4156fe5-relay.10"
+  },
+  "mcp": {
+    "mcpId": "mcp-20261123201156-y1i90h",
+    "pod": "Ready",
+    "directPodProbe": {"tools": ["add", "echo"], "add_2_plus_3": "5"},
+    "managedGetMcp": {"httpStatus": 200, "endpointScheme": "https", "credentialRefHeader": "Authorization"},
+    "managedHostProbe": {"error": "503 upstream connect error or disconnect/reset before headers", "operation": "POST /mcp initialize"}
+  },
+  "network": {
+    "mcpDnsA": "111.31.99.49",
+    "dnsTtlSeconds": 600,
+    "currentPublicIngressAddress": "120.92.44.162",
+    "dnsAddressPostStatus": 503,
+    "currentIngressPostStatus": 200,
+    "currentIngressTools": ["add", "echo"],
+    "currentIngressAddResult": "5",
+    "internalIngressAddress": "redacted-private-ingress-address",
+    "internalIngressPostStatus": 200
+  },
+  "m4": {
+    "sessionId": "m4-180-tool-apikey-tls-1795436988",
+    "runCompleted": true,
+    "output": "5",
+    "toolRegistered": false,
+    "approvalPresented": false,
+    "approvalStatus": "blocked-before-approval",
+    "secondWpsAccount": "not-provided"
+  }
+}

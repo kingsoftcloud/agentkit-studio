@@ -1,0 +1,32 @@
+{
+  "studioCommit": "bcb273b9dba5dc0a9a918f78a9dea8e2caf5fd87",
+  "upstreamMain": "4fea9a2f932b61739215be69ebe7c897dc138400",
+  "branch": "feat/ksxc-studio-v2",
+  "localAgent": "ar-local-db72c8e06e7b4265",
+  "localBuild": "build_f80567a94e8caaaff66c",
+  "cloudAgent": "ar-20261123132019-e0ff52db",
+  "cloudInstance": "e0ff52db-c4b1-4db3-b121-0685a400e263",
+  "cloudEnvironment": "pre-online",
+  "cloudRegion": "cn-beijing-6",
+  "runtime": "ksxc",
+  "runtimeVersion": "1.7.1-studio.0.0.22-2735f924-relay.3",
+  "imageDigest": "sha256:48a78ae863e0daaed164265a6697286a252399b5bd4b5c5d26a97dc3a163fe9f",
+  "create": {"accepted": true, "agentIdReturned": true, "instanceIdReturned": true},
+  "observed": {"status": "CREATING", "readyReplicas": 0, "deploymentPhase": "PENDING_KERNEL_REGISTRATION", "targetError": "TARGET_NOT_READY"},
+  "update": {"status": 409, "reason": "target still creating"},
+  "delete": {"status": 409, "reason": "target still creating"},
+  "catalog": {
+    "cloudReleases": [
+      "1.7.1-studio.0.0.22-2735f924-relay.2",
+      "1.7.1-studio.0.0.22-2735f924-relay.3"
+    ],
+    "localDesktopRelease": "1.8.0",
+    "dashboardValidatorIssue": "ksxc metadata rejected by legacy dsh-native/harness/codex validator"
+  },
+  "tests": {
+    "targeted": {"passed": 71, "failed": 0},
+    "full": {"total": 5517, "passed": 5514, "failed": 1, "skipped": 2},
+    "fullFailure": "tests/dsh-node-browser-tools.test.mjs: real cached Chromium unavailable"
+  },
+  "secretsIncluded": false
+}

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
 import { nativeVisionProfileId } from './native-vision-model.mjs';
 import { modelRuntimeOptions } from './model-profile-contract.mjs';
-import { isStudioRuntimeType } from './runtime-contract.mjs';
+import { isPortableRuntimeType } from './runtime-contract.mjs';
 import { LOCAL_SKILL_INSTALLATION_FILE } from './skill-discovery.mjs';
 
 export const portableError = (code, message) => Object.assign(new Error(message), { code });
@@ -79,7 +79,7 @@ export async function capturePortableResources({ record, models, adapters, confi
   rejectInlineSecrets(record.spec);
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
-  if (!isStudioRuntimeType(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
+  if (!isPortableRuntimeType(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
   // Concrete Node builtin capabilities travel only with a Frozen Native engine
   // build. Optional services still require target Host configuration; a tool
   // binding is never permission to execute or a substitute for credentials.

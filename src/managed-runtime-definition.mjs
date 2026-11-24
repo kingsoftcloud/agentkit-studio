@@ -47,13 +47,14 @@ export async function loadManagedRuntimeDefinition({ manifest, env = process.env
       fail('MANAGED_HARNESS_SERVICE_BINDING_INVALID', '托管 Harness 服务地址、凭据或工作区绑定无效');
     }
   }
-  const profile = remoteHarness ? null : loadHostModel(declaration.model, env);
+  const ksxc = declaration.framework === 'ksxc';
+  const profile = remoteHarness || ksxc ? null : loadHostModel(declaration.model, env);
   const harnessModelSelection = remoteHarness ? { provider: HARNESS_SERVICE_MODEL_PROVIDER, model: declaration.model } : null;
   const identity = { agentId, versionId, manifestSha256: sha256, runtimeName: declaration.runtime.name, runtimeVersion: declaration.runtime.version };
   // A platform declaration bypasses createAgentStore's authoring defaults.
   // Use the same available Native builtin profile before preset admission;
   // ordinary per-session permission checks still own every invocation.
-  const bindings = { ...(profile ? { modelProfileId: profile.id, modelProfileIds: [profile.id] } : {}),
+  const bindings = { ...(profile || ksxc ? { modelProfileId: declaration.model, modelProfileIds: [declaration.model] } : {}),
     ...(declaration.framework === 'harness' && !remoteHarness ? { tools: defaultNativeToolBindings({ env }) } : {}),
     ...managedResourceBindings(declaration.resources) };
   // The platform declaration is the only authority for a managed Agent, so the

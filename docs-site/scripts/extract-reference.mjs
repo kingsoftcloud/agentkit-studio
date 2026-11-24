@@ -1344,6 +1344,10 @@ const ACTION_DOCS = {
   ResumeRun: { domain: "run", zh: "续跑（当前声明为不可用）", en: "Resume a Run (declared unsupported)" },
   SubmitInteraction: { domain: "run", zh: "提交人工审批决定", en: "Submit a human approval decision" },
   SubmitAgentControl: { domain: "run", zh: "下发运行期控制指令", en: "Send a run-time control command" },
+  CreateKsxcConnection: { domain: "credential", zh: "为当前用户发起 KSXC 企业授权", en: "Start KSXC enterprise authorization for the current user" },
+  GetKsxcConnectionResult: { domain: "credential", zh: "查询当前用户发起的 KSXC 授权结果", en: "Poll KSXC authorization for the current user", fields: "AttemptId" },
+  GetKsxcConnection: { domain: "credential", zh: "读取当前用户的 KSXC 企业连接状态", en: "Read the current user's KSXC connection status" },
+  DeleteKsxcConnection: { domain: "credential", zh: "断开当前用户的 KSXC 企业连接", en: "Disconnect the current user's KSXC enterprise account" },
   ListAgentApiKeys: { domain: "credential", zh: "列出 Agent 的 API Key", en: "List the Agent's API keys" },
   CreateAgentApiKey: { domain: "credential", zh: "新建 Agent 的 API Key", en: "Create an API key for the Agent" },
 };

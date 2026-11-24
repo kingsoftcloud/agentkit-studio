@@ -1,5 +1,7 @@
 /** Prepare an installed DSH Host directly from a platform YAML declaration. */
 import { copyFile, lstat, link, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { readManagedKsxcConnectionConfig } from './host/services/ksxc-connection-client.mjs';
+import { verifyManagedKsxcPayload } from './providers/ksxc-runtime.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -278,6 +280,9 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   const bundledHarness = !remoteHarness && runtime.declaration.framework === 'harness'
     && env.AGENTKIT_MANAGED_STAR_HARNESS === '1';
   const serviceBacked = remoteHarness || bundledHarness;
+  const ksxc = runtime.identity.runtimeName === 'ksxc';
+  if (ksxc) readManagedKsxcConnectionConfig(env);
+  const ksxcPayload = ksxc ? await verifyManagedKsxcPayload(env) : null;
   if (bundledHarness && typeof startHarness !== 'function') fail('HARNESS_LAUNCHER_REQUIRED', '托管 Star Harness 缺少服务启动器');
   if (remoteHarness
     && workspacePath !== resolve(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE)) {
@@ -314,9 +319,9 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   // Session ownership is Agent state like DSH_HOME: the Hosted UI must keep
   // listing Sessions recorded by an earlier deployment version.
   const managedSessions = await adoptManagedSessions({ root, versions });
-  const codexHome = await directory(join(userHome, '.codex'));
+  const codexHome = ksxc ? undefined : await directory(join(userHome, '.codex'));
   const cwd = await directory(workspacePath);
-  if (!serviceBacked) {
+  if (!serviceBacked && !ksxc) {
     await immutableJson(join(home, 'config.yaml'), { settings: { modelProfiles: runtime.modelProfiles,
       modelName: runtime.declaration.model, modelProvider: 'openai-compatible', modelBaseUrl: runtime.modelProfiles[0].baseUrl } });
   }
@@ -325,7 +330,10 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
     patchContent: dshSettings ?? undefined });
   const names = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
     'KSADK_SANDBOX_BACKEND',
-    ...(serviceBacked
+    ...(ksxc
+      ? ['AGENTKIT_KSXC_EXECUTABLE', 'AGENTKIT_KSXC_SHA256', 'AGENTKIT_KSXC_PROTOCOL_PROFILE', 'AGENTKIT_KSXC_COMPANY_CONFIG_PATH',
+        'AGENTKIT_KSXC_VERSION', 'AGENTKIT_KSXC_ALLOW_HTTP']
+      : serviceBacked
       ? ['AGENTKIT_ENGINE_SERVICE_URL', 'AGENTKIT_ENGINE_SERVICE_TOKEN', 'AGENTKIT_ENGINE_SERVICE_WORKSPACE', 'AGENTKIT_ENGINE_SERVICE_CA_FILE']
       // A managed Host that spawns the bundled engine itself must forward the
       // launch contract. The image ships the engine but sets no
@@ -339,10 +347,10 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
     'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames,
     ...MANAGED_OBSERVABILITY_ENV_NAMES];
   const childEnv = Object.fromEntries(names.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
-  Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: codexHome,
+  Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, ...(codexHome ? { CODEX_HOME: codexHome } : {}),
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
     AGENTKIT_HOME: home, AGENTKIT_MANAGED_SESSIONS: managedSessions,
-    ...(!serviceBacked ? { OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible' } : {}),
+    ...(!serviceBacked && !ksxc ? { OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible' } : {}),
     AGENTENGINE_MANIFEST_PATH: resolve(manifest) });
   let companion;
   if (bundledHarness) {
@@ -354,5 +362,5 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
       AGENTKIT_ENGINE_SERVICE_TOKEN: companion.token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: cwd,
       AGENTKIT_ENGINE_SERVICE_MODEL: profile.modelName, AGENTKIT_MANAGED_STAR_HARNESS: '1' });
   }
-  return { entry, args: runtimeProfileArgs(), cwd, env: childEnv, identity: { ...runtime.identity, dshVersion }, companion };
+  return { entry, args: runtimeProfileArgs(), cwd, env: childEnv, identity: { ...runtime.identity, dshVersion, ...(ksxcPayload ? { ksxcPayload } : {}) }, companion };
 }

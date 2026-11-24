@@ -1,6 +1,6 @@
 ---
 title: "运行时与实体契约"
-description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、实体标识与校验错误码。"
+description: "`agentkit.studio.runtime/v1` 的 4 种运行时、能力矩阵、实体标识与校验错误码。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
@@ -12,10 +12,10 @@ description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、�
 | 常量 | 值 | 说明 |
 | --- | --- | --- |
 | `STUDIO_RUNTIME_CONTRACT_VERSION` | `agentkit.studio.runtime/v1` | 契约版本，同时是准入校验依据 |
-| `STUDIO_RUNTIME_TYPES` | `dsh-native` · `harness` · `codex` | 公开可路由的运行时类型 |
+| `STUDIO_RUNTIME_TYPES` | `dsh-native` · `harness` · `codex` · `ksxc` | 公开可路由的运行时类型 |
 | `STUDIO_CANONICAL_IDENTIFIERS` | `agentId` · `revision` · `buildId` · `sessionId` · `runId` | 跨实体唯一的标识字段名 |
 
-**公开运行时共 3 种**：`dsh-native`、`harness`、`codex`。`assertStudioRuntimeType()` 只接受这些值，其余一律 `RUNTIME_UNSUPPORTED`。新增运行时只需改 `src/runtime-contract.mjs:STUDIO_RUNTIME_TYPES`，本页的计数与能力矩阵随之自动更新。见[运行时](../concepts/runtimes.mdx)。
+**公开运行时共 4 种**：`dsh-native`、`harness`、`codex`、`ksxc`。`assertStudioRuntimeType()` 只接受这些值，其余一律 `RUNTIME_UNSUPPORTED`。新增运行时只需改 `src/runtime-contract.mjs:STUDIO_RUNTIME_TYPES`，本页的计数与能力矩阵随之自动更新。见[运行时](../concepts/runtimes.mdx)。
 
 ## 能力矩阵
 
@@ -25,6 +25,7 @@ description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、�
 | --- | --- | --- | --- | --- | --- | --- |
 | `dsh-native` | `dsh` | `native` | `agentkit.studio.runtime/v1` | `session` `session-events` `stream` `cancel` `replay` `persistence` `build-binding` | `dsh-session` | `dsh-agent/assistant-stream` |
 | `harness` | `ksadk-harness` | `native-kernel` | `agentkit.native-dsh-turn/v1` | `native-run` `durable-receipts` `tool-approval` `cancel` `resume` `child-tasks` | `native-run-store` | `native-model-port` |
+| `ksxc` | `studio` | `ksxc-app-server` | `studio.ksxc.adapter/v1` | `session` `stream` `cancel` `replay` `build-binding` | `studio-ksxc-adapter` | `ksxc-turn/item` |
 | `codex` | `studio` | `codex-app-server` | `studio.codex.adapter/v1` | `session` `stream` `cancel` `replay` `build-binding` | `studio-codex-adapter` | `codex-turn/item` |
 
 ## 实体与标识
@@ -43,9 +44,9 @@ description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、�
 
 | 错误码 | 触发条件 | 源码 |
 | --- | --- | --- |
-| `RUNTIME_UNSUPPORTED` | `runtime.type` 不在公开或实验列表中 | `src/runtime-contract.mjs:67` |
-| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` 缺失，或 `revision` 不是正整数 | `src/runtime-contract.mjs:74` |
-| `RUN_IDENTITY_MISMATCH` | 运行身份与绑定的路由不一致 | `src/runtime-contract.mjs:88` |
+| `RUNTIME_UNSUPPORTED` | `runtime.type` 不在公开或实验列表中 | `src/runtime-contract.mjs:74` |
+| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` 缺失，或 `revision` 不是正整数 | `src/runtime-contract.mjs:81` |
+| `RUN_IDENTITY_MISMATCH` | 运行身份与绑定的路由不一致 | `src/runtime-contract.mjs:95` |
 
 `studioRunIdentity()` 会先补齐字段再校验，因此空白字符串与缺字段等价；`revision` 会被强制转成数字。
 
@@ -54,7 +55,7 @@ description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、�
 | 项 | 值 | 说明 |
 | --- | --- | --- |
 | 契约版本 | `agentkit.studio.runtime/v1` | 与 Studio 版本同 PR 演进 |
-| 公开运行时 | 3 种 | dsh-native / harness / codex |
+| 公开运行时 | 4 种 | dsh-native / harness / codex / ksxc |
 | 标识字段 | 5 个 | 改名即破坏性变更 |
 
 ## 开发者入口

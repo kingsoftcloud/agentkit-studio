@@ -14,7 +14,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, StarHarnessItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, StarHarnessItem, KsxcSettings, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote }, ui.installHarnessTimeline);
@@ -275,6 +275,9 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-models', order: 190, label: '模型与凭证',
   }, () => h(ModelSettingsSection, { dshModel })));
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'agentkit-ksxc', order: 195, label: 'KSXC',
+  }, () => h(KsxcSettings)));
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-studio', order: 200, label: PRODUCT_BRAND.name,
   }, StudioSettingsSection));
