@@ -50,7 +50,7 @@ import { createStudioTeamPages } from './pages/studio-teams.mjs';
 import { createTemplateResourcePages } from './pages/template-resource-library.mjs';
 
 /** Build one presentation graph and one set of owners for each apply(ctx). */
-export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeAssembler, nativeModules, harnessUI, harnessUIError }, { window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent, MutationObserver = globalThis.MutationObserver } = {}) {
+export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeAssembler, nativeModules, harnessUI, harnessUIDescriptor, harnessUIError }, { window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent, MutationObserver = globalThis.MutationObserver } = {}) {
   let closed = false;
 
   /** Show only the value just typed; stored credentials are never read back. */
@@ -84,6 +84,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.CloudSessionStatus = createCloudSessionStatus({ ui, hostRemote });
   ui.NativeChildPanel = createNativeChildPanel({ ui, hostRemote }, harnessUI?.createNativeChildPanel);
   ui.installHarnessTimeline = harnessUI?.installTaskTimeline;
+  ui.harnessUIDescriptor = harnessUIDescriptor;
   ui.harnessUIError = harnessUIError;
   ui.RuntimeCatalogPage = createRuntimeCatalogPage({ ui, hostRemote, window, CustomEvent });
   ui.DomainPage = createDomainPage({ ui });

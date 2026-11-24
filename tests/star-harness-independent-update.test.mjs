@@ -9,7 +9,28 @@ import { STAR_HARNESS_CORE, STAR_HARNESS_PACKAGE, STAR_HARNESS_UI, STAR_HARNESS_
 import { createStarHarnessReleases } from '../src/host/services/star-harness-release.mjs';
 import { createStarHarnessManager } from '../src/host/services/star-harness.mjs';
 import { starHarnessClientResponse } from '../src/host/routes/star-harness-client.mjs';
-import { loadStarHarnessUI } from '../src/client/dsh/star-harness-ui.mjs';
+import { loadActiveStarHarnessUI, refreshStarHarnessUI, watchStarHarnessUI } from '../src/client/dsh/star-harness-ui.mjs';
+
+test('loads the new signed module if the active release changes during an import', async () => {
+  const old = { version: '0.0.29', sha256: '1'.repeat(64) };
+  const next = { version: '0.0.30', sha256: '2'.repeat(64) };
+  let selected = old;
+  const requested = [];
+  const active = await loadActiveStarHarnessUI({
+    fetchImpl: async url => starHarnessClientResponse(new Request('http://localhost' + url), selected),
+    importModule: async url => {
+      requested.push(new URL('http://localhost' + url).searchParams.get('sha256'));
+      if (selected === old) {
+        selected = next;
+        throw new TypeError('The old signed module is no longer active');
+      }
+      return { contract: STAR_HARNESS_UI_CONTRACT, version: next.version, installTaskTimeline() {}, createNativeChildPanel() {} };
+    },
+  });
+  assert.deepEqual(requested, [old.sha256, next.sha256]);
+  assert.deepEqual(active.descriptor, next);
+  assert.equal(active.module.version, next.version);
+});
 
 const oldVersion = '0.0.26';
 const newVersion = '0.0.27';
@@ -136,17 +157,49 @@ test('one release switches verified engine and UI together, and a failed candida
   assert.deepEqual(starts, [oldVersion, newVersion, oldVersion]);
 
   failedVersion = undefined;
+  const startupDescriptor = Object.freeze((await manager.status()).clientUI);
   await manager.install(newVersion);
   let status = await manager.status();
   assert.deepEqual(status.clientUI, { version: newVersion, sha256: fixtures[newVersion].sha256 });
   assert.equal(status.previousVersion, oldVersion);
-  const module = await loadStarHarnessUI(status.clientUI, async url => {
-    const asset = starHarnessClientResponse(new Request('http://localhost' + url), manager.clientAsset);
-    assert.equal(asset.status, 200);
-    assert.equal(await asset.text(), fixtures[newVersion].ui);
-    return { contract: STAR_HARNESS_UI_CONTRACT, version: newVersion, installTaskTimeline() {}, createNativeChildPanel() {} };
+  let reads = 0;
+  const active = await loadActiveStarHarnessUI({
+    fetchImpl: async (url, options) => {
+      assert.equal(options.cache, 'no-store');
+      const descriptor = starHarnessClientResponse(new Request('http://localhost' + url), manager.clientAsset);
+      assert.equal(descriptor.headers.get('cache-control'), 'no-store');
+      reads++;
+      return descriptor;
+    },
+    importModule: async url => {
+      const asset = starHarnessClientResponse(new Request('http://localhost' + url), manager.clientAsset);
+      assert.equal(asset.status, 200);
+      assert.match(asset.headers.get('cache-control'), /immutable/);
+      assert.equal(await asset.text(), fixtures[newVersion].ui);
+      return { contract: STAR_HARNESS_UI_CONTRACT, version: newVersion, installTaskTimeline() {}, createNativeChildPanel() {} };
+    },
   });
-  assert.equal(module.version, newVersion);
+  assert.equal(reads, 1);
+  assert.equal(startupDescriptor.version, oldVersion);
+  assert.equal(active.module.version, newVersion);
+  assert.deepEqual(active.descriptor, status.clientUI);
+
+  let reloads = 0, listener;
+  const renderer = {
+    __AGENTKIT_STUDIO__: Object.freeze({ starHarnessUI: startupDescriptor }),
+    location: { reload() { reloads++; } },
+    BroadcastChannel: class {
+      set onmessage(value) { listener = value; }
+      close() {}
+    },
+  };
+  const unwatch = watchStarHarnessUI(renderer, active.descriptor);
+  refreshStarHarnessUI(renderer, active.descriptor, status.clientUI, false);
+  listener({ data: active.descriptor.sha256 });
+  assert.equal(reloads, 0, 'the cached Desktop bootstrap must not trigger repeat reloads');
+  listener({ data: startupDescriptor.sha256 });
+  assert.equal(reloads, 1, 'another window activating a different release must reload');
+  unwatch();
 
   await manager.close();
   offline = true;

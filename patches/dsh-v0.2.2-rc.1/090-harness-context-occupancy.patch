@@ -1,0 +1,169 @@
+diff --git a/packages/llm/token-meter/src/usage-projection.ts b/packages/llm/token-meter/src/usage-projection.ts
+index 52268889ec9528fc3298d4221d36ffb5049de0a2..9d895ca9dd486f43f889aff24c88a2ae8b412f28 100644
+--- a/packages/llm/token-meter/src/usage-projection.ts
++++ b/packages/llm/token-meter/src/usage-projection.ts
+@@ -85,12 +85,29 @@ function usageOf(event: SessionEvent): TokenUsage | undefined {
+   return lastAssistantStreamChunk(event.data.stream, 'usage')?.usage
+ }
+ 
++const positiveTokenCount = z.number().int().positive()
++const nativeContextSchema = z.object({
++  runId: z.string().min(1),
++  contextWindow: positiveTokenCount.optional(),
++  inputTokens: positiveTokenCount.optional(),
++}).strict()
++const nativeEngineEventSchema = z.object({
++  runId: z.string().min(1),
++  contextWindow: positiveTokenCount.optional(),
++  event: z.object({
++    schema: z.literal('agentkit.engine-event/v1'),
++    kind: z.enum(['run.started', 'model.completed']),
++    usage: z.object({ inputTokens: positiveTokenCount }).optional(),
++  }),
++})
++
+ /** The context-pressure state schema and source of its inferred type. */
+ const contextPressureStateSchema = z.object({
+   contextWindow: z.number().int().positive().optional(),
+   pressureTokens: z.number().int().nonnegative().optional(),
+   surfaceTokens: z.number().int().nonnegative(),
+   sampledSurfaceTokens: z.number().int().nonnegative().optional(),
++  nativeContext: nativeContextSchema.optional(),
+   claim: z.object({
+     start: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionSeq),
+     end: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionSeq),
+@@ -166,12 +183,33 @@ export const tokenUsageProjectionDefinition = {
+  */
+ export const contextPressureProjectionDefinition = {
+   key: 'contextPressure',
+-  stateVersion: 5,
++  stateVersion: 6,
+   stateSchema: contextPressureStateSchema,
+   init: () => ({ surfaceTokens: 0 }),
+   apply: (state, event) => {
+     const fold = foldSurfaceProjection(state.claim, event)
++    const eventType: string = event.type
+     let next = state
++    if (event.type === 'turn/start' && state.nativeContext !== undefined) {
++      const { nativeContext: _previousTurn, ...ordinaryContext } = state
++      next = ordinaryContext
++    }
++    // Studio stores per-request Harness facts as ignorable events. Its Assistant
++    // settlement also contains aggregate billing usage for all calls in the Run.
++    if ((eventType === 'agentkit/native-engine-event' || eventType === 'plugin:agentkit/native-engine-event')
++      && event.ignorable === true) {
++      const parsed = nativeEngineEventSchema.safeParse(event.data)
++      if (parsed.success) {
++        const { runId, contextWindow, event: frame } = parsed.data
++        const active = next.nativeContext
++        if (frame.kind === 'run.started' && active?.runId !== runId) {
++          next = { ...next, nativeContext: { runId, ...contextWindow === undefined ? {} : { contextWindow } } }
++        } else if (frame.kind === 'model.completed' && active?.runId === runId && frame.usage !== undefined
++          && active.inputTokens !== frame.usage.inputTokens) {
++          next = { ...next, nativeContext: { ...active, inputTokens: frame.usage.inputTokens } }
++        }
++      }
++    }
+     if (event.type === 'request/context') {
+       const contextWindow = event.data.contextWindow
+       if (contextWindow !== state.contextWindow) {
+@@ -183,7 +221,7 @@ export const contextPressureProjectionDefinition = {
+         }
+       }
+     }
+-    const usage = usageOf(event)
++    const usage = next.nativeContext === undefined ? usageOf(event) : undefined
+     if (usage !== undefined) {
+       const pressureTokens = pressureFrom(usage)
+       if (pressureTokens !== next.pressureTokens || next.sampledSurfaceTokens !== next.surfaceTokens) {
+@@ -201,13 +239,21 @@ export const contextPressureProjectionDefinition = {
+   },
+   wire: {
+     viewSchema: pressureSchema,
+-    view: ({ contextWindow, pressureTokens, surfaceTokens, sampledSurfaceTokens }) => ({
+-      ...contextWindow === undefined ? {} : { contextWindow },
+-      ...pressureTokens === undefined ? {} : { pressureTokens },
+-      ...pressureTokens === undefined || sampledSurfaceTokens === undefined
+-        ? {}
+-        : { projectedTokens: Math.max(0, pressureTokens + surfaceTokens - sampledSurfaceTokens) },
+-    }),
++    view: ({ nativeContext, contextWindow, pressureTokens, surfaceTokens, sampledSurfaceTokens }) => {
++      if (nativeContext !== undefined) {
++        return {
++          ...nativeContext.contextWindow === undefined ? {} : { contextWindow: nativeContext.contextWindow },
++          ...nativeContext.inputTokens === undefined ? {} : { pressureTokens: nativeContext.inputTokens },
++        }
++      }
++      return {
++        ...contextWindow === undefined ? {} : { contextWindow },
++        ...pressureTokens === undefined ? {} : { pressureTokens },
++        ...pressureTokens === undefined || sampledSurfaceTokens === undefined
++          ? {}
++          : { projectedTokens: Math.max(0, pressureTokens + surfaceTokens - sampledSurfaceTokens) },
++      }
++    },
+     summary: false,
+   },
+ } satisfies ProjectionDefinition<'contextPressure', ContextPressureState>
+diff --git a/packages/llm/token-meter/tests/token-usage-projection.spec.ts b/packages/llm/token-meter/tests/token-usage-projection.spec.ts
+index d14e3dd387cba73d0be2abe76488a47c1dd371e6..1d87fcd13ae88a23d4c7358bc9916c86352af399 100644
+--- a/packages/llm/token-meter/tests/token-usage-projection.spec.ts
++++ b/packages/llm/token-meter/tests/token-usage-projection.spec.ts
+@@ -359,6 +359,48 @@ function appendAssistant(
+ }
+ 
+ describe('contextPressure session projection', () => {
++  it('uses the latest Harness request and its own window while retaining cumulative billing usage', async () => {
++    const { ctx, session } = await harness()
++    const engine = (runId: string, kind: string, facts: { contextWindow?: number; inputTokens?: number } = {}) =>
++      Reflect.apply(session.append, session, [runId === 'older' ? 'plugin:agentkit/native-engine-event' : 'agentkit/native-engine-event', {
++        runId,
++        ...(facts.contextWindow === undefined ? {} : { contextWindow: facts.contextWindow }),
++        event: { schema: 'agentkit.engine-event/v1', kind,
++          ...(facts.inputTokens === undefined ? {} : { usage: { inputTokens: facts.inputTokens } }) },
++      }, { ignorable: true }])
++
++    session.append('turn/start', { turn: 1 })
++    startStep(session, 1, 1)
++    recordContext(session, 'catalog', 1_048_576)
++    engine('native', 'run.started', { contextWindow: 128_000 })
++    expect(pressure(ctx, session)).toEqual({ contextWindow: 128_000 })
++    engine('native', 'model.completed', { inputTokens: 69_000 })
++    expect(pressure(ctx, session)).toEqual({ contextWindow: 128_000, pressureTokens: 69_000 })
++    engine('native', 'context.summary_completed', { inputTokens: 81_000 })
++    engine('native', 'model.completed', { inputTokens: 0 })
++    engine('other', 'model.completed', { inputTokens: 90_000 })
++    expect(pressure(ctx, session)).toEqual({ contextWindow: 128_000, pressureTokens: 69_000 })
++    engine('native', 'model.completed', { inputTokens: 42_000 })
++    finalUsage(session, { inputTokens: 680_000, cacheReadTokens: 700_000, outputTokens: 30_000 }, 1, 1)
++    expect(pressure(ctx, session)).toEqual({ contextWindow: 128_000, pressureTokens: 42_000 })
++    expect(projected(ctx, session)).toMatchObject({ uncachedInputTokens: 680_000, cacheReadTokens: 700_000 })
++    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
++
++    session.append('turn/start', { turn: 2 })
++    startStep(session, 2, 1)
++    engine('older', 'run.started')
++    engine('older', 'model.completed', { inputTokens: 21_000 })
++    finalUsage(session, { inputTokens: 1_100_000, outputTokens: 30 }, 2, 1)
++    expect(pressure(ctx, session)).toEqual({ pressureTokens: 21_000 })
++    session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
++
++    session.append('turn/start', { turn: 3 })
++    startStep(session, 3, 1)
++    recordContext(session, 'ordinary', 64_000)
++    usageChunk(session, { inputTokens: 1_000, outputTokens: 10 }, 3, 1)
++    expect(pressure(ctx, session)).toEqual({ contextWindow: 64_000, pressureTokens: 1_000, projectedTokens: 1_000 })
++  })
++
+   it('serves no pressure or capacity for an empty log', async () => {
+     const { ctx, session } = await harness()
+     expect(ctx.tokenMeter.contextPressure(session)).toEqual({})
+@@ -447,7 +489,7 @@ describe('contextPressure session projection', () => {
+     const checkpoint = JSON.parse(JSON.stringify(
+       ctx.sessionProjections.checkpoint(session),
+     )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
+-    expect(checkpoint.contextPressure?.ver).toBe(5)
++    expect(checkpoint.contextPressure?.ver).toBe(6)
+ 
+     await meterFiber.dispose()
+     expect(ctx.sessionProjections.snapshot(session).values).not.toHaveProperty('contextPressure')

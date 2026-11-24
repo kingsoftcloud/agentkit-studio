@@ -284,7 +284,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     })) : undefined;
   if (starHarness) {
     ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
-    ctx.provide('studioStarHarnessClient', { get descriptor() { return starHarness.clientDescriptor; } });
     await starHarness.restoreClientAsset().catch(error => {
       console.warn('[agentkit-studio] Star Harness UI restore failed:', error?.code || 'STAR_HARNESS_UI_RESTORE_FAILED');
     });

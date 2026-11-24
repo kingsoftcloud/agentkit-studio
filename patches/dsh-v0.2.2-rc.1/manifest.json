@@ -2892,12 +2892,48 @@
       },
       "sequence": 58,
       "sha256": "ca54412de425d3c41bd739ed0a0ea391523b229bc28219b891ac15ccedf55721"
+    },
+    {
+      "id": "090",
+      "file": "090-harness-context-occupancy.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "low",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "removeWhen": "DSH supports a separate per-request context sample from the Studio runtime bridge.",
+      "contracts": [
+        "The Studio Harness ring uses the effective engine window and the last task model request.",
+        "Cumulative usage remains available for session statistics and ordinary DSH pressure keeps its existing behavior."
+      ],
+      "affectedPackages": [
+        "packages/llm/token-meter"
+      ],
+      "affectedFiles": [
+        "packages/llm/token-meter/src/usage-projection.ts",
+        "packages/llm/token-meter/tests/token-usage-projection.spec.ts"
+      ],
+      "dependsOn": [],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio Harness runtime bridge integration."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/llm/token-meter/tests/token-usage-projection.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "dsh-web"
+        ]
+      },
+      "sequence": 59,
+      "sha256": "b4b31b3ec37ee0082a8083f91375139d8541e17aca443678c95d54c6749a7290"
     }
   ],
-  "patchedTree": "c4bcfd7fa07d3429a053441c1bfa551a43e1dca4",
-  "patchedSourceSha256": "44128b8498c10d2b0e5048c520f5386a3f1f83dcbd839de086c60419591dcdee",
+  "patchedTree": "23f1ae4f6090fc1090496214580f61b91bd2913a",
+  "patchedSourceSha256": "0ef3ca4084fe1430c32696fb71b5fa28666afafc0efea6b5d7c2d167fa86522c",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "57dab6ec2a2665fcee7613a843139d0991197c596844891926148c919962b202"
+    "sha256": "046fceb9f774667824a917484f2f2fb1eef7256a3238dc3fa788d95b75118454"
   }
 }

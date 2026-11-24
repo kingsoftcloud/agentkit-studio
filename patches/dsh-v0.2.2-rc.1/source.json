@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "30eac29ac17e13c95a58f7fb7b9992e7e1c57f3b",
+  "headCommit": "45ddecb1c064f2139fce411847d4e5229ff34665",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "c4bcfd7fa07d3429a053441c1bfa551a43e1dca4",
-  "sourceSha256": "44128b8498c10d2b0e5048c520f5386a3f1f83dcbd839de086c60419591dcdee",
+  "tree": "23f1ae4f6090fc1090496214580f61b91bd2913a",
+  "sourceSha256": "0ef3ca4084fe1430c32696fb71b5fa28666afafc0efea6b5d7c2d167fa86522c",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "ce786c9980f09ad9d181410400787781bce711457d76137e407b81b8a769d268"
+    "sha256": "1b514a058e2efe7f241138ccd2339569307bc347e10b4ab524ed549ac16cc469"
   },
   "commits": [
     {
@@ -358,6 +358,12 @@
       "file": "089-model-reasoning-defaults.patch",
       "commit": "30eac29ac17e13c95a58f7fb7b9992e7e1c57f3b",
       "sha256": "ca54412de425d3c41bd739ed0a0ea391523b229bc28219b891ac15ccedf55721"
+    },
+    {
+      "id": "090",
+      "file": "090-harness-context-occupancy.patch",
+      "commit": "45ddecb1c064f2139fce411847d4e5229ff34665",
+      "sha256": "b4b31b3ec37ee0082a8083f91375139d8541e17aca443678c95d54c6749a7290"
     }
   ]
 }

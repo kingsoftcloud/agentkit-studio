@@ -344,13 +344,16 @@ test('Native body fragments enter the live Session presentation without contamin
     append: (type, data, options) => stored.push({ type, data, ...options }) } };
   bridge.bindRoute(sessionId, { agentId: 'native-preview', runtime: 'native-engine', local: true, agent });
   const adapter = createDshRuntimeAdapter({ bridge, nativeEngineRuntime: { usesService: true, async *stream() {
+    yield { type: 'engine-event', runId: 'original', view: null, contextWindow: 128000,
+      event: { schema: 'agentkit.engine-event/v1', seq: 1, kind: 'run.started', category: 'run' } };
     yield { type: 'engine-event', runId: 'original', view: null,
-      event: { schema: 'agentkit.engine-event/v1', seq: 1, kind: 'effect.prepared', category: 'model', title: 'request', requestId } };
+      event: { schema: 'agentkit.engine-event/v1', seq: 2, kind: 'effect.prepared', category: 'model', title: 'request', requestId } };
     yield { type: 'engine-text', runId: 'original', requestId, cursor, offset: 0, delta: 'draft' };
     yield { type: 'text', text: 'Only committed answer.' };
   } } });
   const chunks = await Array.fromAsync(adapter.stream({ ...prompt, sessionId }));
   assertContinuousBlocks(chunks, [[0, 'text', 'Only committed answer.']]);
+  assert.equal(stored.find(entry => entry.data.event?.kind === 'run.started')?.data.contextWindow, 128000);
   assert.deepEqual(stored.find(event => event.type === 'agentkit/native-engine-text'), {
     type: 'agentkit/native-engine-text', ignorable: true,
     data: { runId: 'original', requestId, cursor, offset: 0, delta: 'draft' },

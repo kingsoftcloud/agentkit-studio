@@ -9,8 +9,10 @@ import { tmpdir } from 'node:os';
 for (const policy of ['accept', 'external', 'denied', 'session', 'rejected', 'lost', 'mid']) test(`cold explicit workspace compensation: ${policy}`, { timeout: 25000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'native-workspace-repair-process-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  async function start(phase) {
-    const child = fork(new URL('./fixtures/native-workspace-repair.mjs', import.meta.url), [root, phase, policy],
+  async function start(phase, expiredLeaseAt) {
+    const args = [root, phase, policy];
+    if (expiredLeaseAt !== undefined) args.push(String(expiredLeaseAt));
+    const child = fork(new URL('./fixtures/native-workspace-repair.mjs', import.meta.url), args,
       { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: { ...process.env, PATH: dirname(process.execPath), PYTHON: '/unavailable/python' } });
     let stderr = ''; child.stderr.on('data', data => { stderr += data; });
     t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
@@ -29,8 +31,7 @@ for (const policy of ['accept', 'external', 'denied', 'session', 'rejected', 'lo
   assert.notEqual(repaired.report.pid, first.report.pid);
   if (policy === 'mid') {
     assert.equal(repaired.report.stage, 'inverse-published-before-completion'); await kill(repaired);
-    await new Promise(resolve => setTimeout(resolve, Math.max(0, repaired.report.leaseExpiresAt - Date.now()) + 30));
-    const retry = await start('retry'); assert.equal((await retry.exited)[0], 0);
+    const retry = await start('retry', repaired.report.leaseExpiresAt); assert.equal((await retry.exited)[0], 0);
     assert.equal(retry.report.phase, 'completed'); assert.equal(retry.report.repairs, 1); assert.equal(retry.report.toolCalls, 1);
     assert.deepEqual(retry.report.originalReceipt, first.report.originalReceipt);
     assert.equal(retry.report.first, null); assert.equal(retry.report.second, false);

@@ -153,7 +153,6 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   return {
     get enabled() { return configuration.enabled; },
     get clientAsset() { return clientAsset; },
-    get clientDescriptor() { return clientDescriptor(); },
     async restoreClientAsset() {
       try { clientAsset = await readClient(configuration); }
       catch (error) {

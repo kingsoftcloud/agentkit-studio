@@ -155,7 +155,8 @@ test('the engine keeps provider cache hits and reasoning separate from the alrea
   answer.at(-1).usage = { ...usage, prompt_tokens_details: { cached_tokens: 7 },
     completion_tokens_details: { reasoning_tokens: 2 } };
   const f = await setup(t, [answer]);
-  const chunks = await collect(f.runtime.stream(f.options));
+  const chunks = await collect(f.runtime.stream({ ...f.options, modelProvider: { ...f.options.modelProvider, contextWindow: 64000 } }));
+  assert.equal(chunks.find(chunk => chunk.type === 'engine-event' && chunk.event.kind === 'run.started')?.contextWindow, 64000);
   assert.deepEqual(chunks.filter(chunk => chunk.type === 'usage'), [{ type: 'usage', usage: {
     inputTokens: 10, outputTokens: 5, cachedInputTokens: 7, reasoningTokens: 2,
   } }]);

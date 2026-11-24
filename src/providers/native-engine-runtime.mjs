@@ -293,6 +293,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         let canGuide = typeof nextGuidance === 'function' && typeof commitGuidance === 'function'
           && hello.capabilities?.methods?.includes('run/guide');
         let pendingGuidance = null;
+        const contextWindow = hello.engine?.model?.contextWindow;
         for (let cursor = 0; ;) {
           if (canGuide && !pendingGuidance) {
             const item = nextGuidance();
@@ -314,7 +315,8 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
                 pendingGuidance = null;
               }
             }
-            yield { type: 'engine-event', runId, view, event };
+            yield { type: 'engine-event', runId, view, event,
+              ...(event.kind === 'run.started' && Number.isSafeInteger(contextWindow) && contextWindow > 0 ? { contextWindow } : {}) };
             for (const chunk of chunksOf(event)) yield chunk;
             if (event.kind === 'run.terminal' && text(event.detail)) finalText = event.detail;
           }
