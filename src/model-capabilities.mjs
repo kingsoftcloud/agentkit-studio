@@ -27,12 +27,25 @@ export function modelCatalogLimits(value) {
 }
 /** A configured budget can narrow advertised capacity. Defaults are operating
  * limits, not claims about an unreported model maximum. */
+export const DEFAULT_CONTEXT_WINDOW = 128000;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+export function resolveModelBudgets(profile = {}, catalog) {
+    const limits = modelCatalogLimits(catalog);
+    const context = profile.contextWindow ?? limits.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+    const contextWindow = Math.min(context, limits.contextWindow ?? context);
+    const requestedOutput = profile.maxOutputTokens ?? Math.min(limits.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(contextWindow / 4));
+    const capped = Math.min(requestedOutput, limits.maxOutputTokens ?? requestedOutput);
+    // Several gateways (Kimi among them) advertise an output maximum equal to
+    // the context window, and users can type either value. An output budget
+    // cannot occupy the whole window, so clamp instead of rejecting the save.
+    const maxOutputTokens = Math.max(1, Math.min(capped, Math.floor(contextWindow / 2)));
+    const adjusted = maxOutputTokens !== requestedOutput;
+    return { contextWindow, maxOutputTokens, adjusted,
+        requestedOutput, advertisedMaxOutputTokens: limits.maxOutputTokens ?? null };
+}
 export function admitModelCapabilities(profile, catalog, catalogState = catalog ? 'available' : 'unavailable') {
     const limits = modelCatalogLimits(catalog);
-    const context = profile.contextWindow ?? limits.contextWindow ?? 128000;
-    const contextWindow = Math.min(context, limits.contextWindow ?? context);
-    const requestedOutput = profile.maxOutputTokens ?? Math.min(limits.maxOutputTokens ?? 8192, Math.floor(contextWindow / 4));
-    const maxOutputTokens = Math.min(requestedOutput, limits.maxOutputTokens ?? requestedOutput);
+    const { contextWindow, maxOutputTokens } = resolveModelBudgets(profile, catalog);
     const source = (configured, advertised, actual) => configured !== undefined && configured === actual ? 'profile' : advertised !== undefined && advertised === actual ? 'catalog' : 'default';
     const knownInput = catalog && catalog.inputKnown !== false && Array.isArray(catalog.input);
     const modalities = knownInput ? catalog.input : profile.input ?? ['text'];

@@ -23,8 +23,7 @@ export function createKsxcSettings({ React, hostRemote, window }) {
   const { Button, Note, Progress, Row, Section, Select, Spinner } = createFormKit({ React });
   const cloudConnection = value => ({ connected: value?.Status === 'connected', account: value?.Account });
   const cloudStatus = hostRemote.ksxcCloudStatus && (async signal => ({ supported: true, connection: cloudConnection(await hostRemote.ksxcCloudStatus(signal)) }));
-  const cloudLogin = async () => {
-    const value = await hostRemote.ksxcCloudLogin();
+  const cloudLogin = async () => {    const value = await hostRemote.ksxcCloudLogin();
     const url = new URL(value?.LoginUrl);
     if (value.Status !== 'pending' || typeof value.AttemptId !== 'string' || !value.AttemptId || url.protocol !== 'https:' || url.username || url.password) {
       throw Error('托管 KSXC 服务返回了无效授权入口。');
@@ -37,6 +36,12 @@ export function createKsxcSettings({ React, hostRemote, window }) {
     if (value?.Status === 'connected') return { status: 'connected', connection: cloudConnection(value) };
     throw Error('托管 KSXC 授权已结束，请重新登录。');
   };
+  // The settings page is the only caller that asks the Host to re-read the company
+  // gateway; the Agent form and the runtime catalog read the cached answer.
+  // Defined once: the status effect depends on its identity.
+  const desktopStatus = hostRemote.ksxcStatus
+    ? signal => hostRemote.ksxcStatus(signal, { refresh: true })
+    : undefined;
   function SettingsControls({ managed }) {
     const [status, setStatus] = useState(null);
     const [version, setVersion] = useState('');
@@ -47,11 +52,6 @@ export function createKsxcSettings({ React, hostRemote, window }) {
     // Polling must stop when the section unmounts: the install itself keeps running in the Host.
     const mounted = useRef(true);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-    // The settings page is the only caller that asks the Host to re-read the company
-    // gateway; the Agent form and the runtime catalog read the cached answer.
-    const desktopStatus = hostRemote.ksxcStatus
-      ? signal => hostRemote.ksxcStatus(signal, { refresh: true })
-      : undefined;
     const getStatus = managed ? cloudStatus : desktopStatus;
     const login = managed ? cloudLogin : hostRemote.ksxcLogin;
     const pollLogin = managed ? cloudPoll : hostRemote.ksxcLoginResult;
@@ -131,7 +131,7 @@ export function createKsxcSettings({ React, hostRemote, window }) {
     }
     const { release, connection } = status || {};
     const installing = progress?.status === 'running';
-    const installLabel = release.active ? '切换版本' : '安装';
+    const installLabel = release?.active ? '切换版本' : '安装';
     return h(React.Fragment, null,
       error ? Note({ tone: 'danger', role: 'alert' }, error) : null,
       !getStatus || status?.supported === false ? Note(null, '当前 Host 尚未配置 KSXC。') : null,

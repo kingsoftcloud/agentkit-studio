@@ -10,7 +10,7 @@ function connectionAddressLabel({ address }) {
 
 const PROVIDER_TYPES = ['ksyun', 'openai', 'custom'];
 
-export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip, SecretInput, providerLabel, makeId }) {
+export function createModelSettingsDirectory({ h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId }) {
   const title = group => group.name ? group.label : [providerLabel(group.provider), group.label].filter(Boolean).join(' · ');
   const searchField = (label, value, onChange) => h('label', { className: 'ms-search' },
     h('input', {
@@ -105,6 +105,21 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
       }
     };
 
+    // 填好地址和 Key 后自动拉取目录，不必先点「测试连接」。用 ref 去重，
+    // 避免 setProviderForm 触发的重渲染把同一份配置重复拉取。
+    // 简化测试 harness 不提供 useRef/useEffect 时自动拉取不启用，其余功能不变。
+    const autoCheckRef = typeof useRef === 'function' ? useRef('') : { current: '' };
+    if (typeof useEffect === 'function') useEffect(() => {
+      if (!providerForm || providerForm.id) return;
+      const { provider, baseUrl, apiKey, check } = providerForm;
+      if (!baseUrl || !String(apiKey || '').trim()) return;
+      if (check?.state === 'loading' || check?.state === 'success') return;
+      const token = JSON.stringify([provider, baseUrl, apiKey]);
+      if (autoCheckRef.current === token) return;
+      autoCheckRef.current = token;
+      void testProvider();
+    }, [providerForm]);
+
     const renderNewProviderCatalog = () => {
       const { check, picks, query: catalogQuery } = providerForm;
       if (check?.state !== 'success') return null;
@@ -131,17 +146,42 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
           : note(check.items.length ? '没有匹配的模型' : '该提供商未返回模型'));
     };
 
+    // 手动填写模型 ID 常驻：目录拉不到、或模型不在厂商目录里时也能直接添加。
+    const addManualModel = () => {
+      const id = String(providerForm?.manual || '').trim();
+      if (!id || !providerForm) return;
+      const item = (providerForm.check?.items || []).find(entry => entry.id === id) || { id, inputKnown: false };
+      const nextId = makeId();
+      setProviderForm(current => {
+        if (current.picks.has(id)) return { ...current, manual: '' };
+        const selected = new Map(current.picks);
+        const profileIds = new Map(current.profileIds);
+        selected.set(id, item);
+        profileIds.set(id, nextId);
+        return { ...current, picks: selected, profileIds, manual: '' };
+      });
+    };
+    const renderManualEntry = () => h('div', { className: 'ms-manual-entry', 'data-manual-model-entry': true },
+      h('input', { className: 'ms-input', 'aria-label': '手动填写模型 ID', placeholder: '目录里没有？输入模型 ID 后添加',
+        value: providerForm.manual || '',
+        onChange: event => setProviderForm(current => ({ ...current, manual: event.target.value })),
+        onKeyDown: event => { if (event.key === 'Enter') { event.preventDefault(); addManualModel(); } } }),
+      button('添加', addManualModel, undefined, { 'data-size': 'sm', disabled: !String(providerForm.manual || '').trim() }));
+
     const renderProviderForm = () => {
       const { id, provider, baseUrl, connectionName, apiKey, error, check } = providerForm;
       const stored = connections.find(group => group.id === id)?.connection;
       const hasKey = stored && stored.provider === provider && stored.baseUrl === baseUrl && (stored.apiKey || credentialConfigured(stored));
       const types = PROVIDER_TYPES.includes(provider) ? PROVIDER_TYPES : [...PROVIDER_TYPES, provider];
-      const set = (name, value) => {
-        if (probing && name !== 'connectionName') batch.stop();
-        setProviderForm(current => ({
-          ...current, [name]: value, error: '', ...(name === 'connectionName' ? {} : { check: null, picks: new Map(), query: '' }),
-        }));
-      };
+    const set = (name, value) => {
+      if (probing && name !== 'connectionName') batch.stop();
+      setProviderForm(current => ({
+        ...current, [name]: value, error: '',
+        // 只有换地址才作废已勾选的模型；换 Key、名称都保留勾选，目录按新值重拉。
+        ...(name === 'baseUrl' ? { check: null, picks: new Map(), query: '' }
+          : name === 'apiKey' ? { check: null } : {}),
+      }));
+    };
       return h('section', { 'data-model-provider-editor': true },
         backButton(id ? '返回提供商' : '模型提供商', () => setProviderForm(null)),
         h('div', { className: 'ms-intro' }, h('h3', null, id ? '编辑提供商' : '添加提供商')),
@@ -152,7 +192,7 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
                 const next = event.target.value;
                 if (probing) batch.stop();
                 setProviderForm(current => ({ ...current, provider: next, baseUrl: normalizeModelEndpoint('', next),
-                  apiKey: '', error: '', check: null, query: '', picks: new Map() }));
+                  error: '', check: null, query: '', picks: new Map() }));
               },
             }, types.map(type => h('option', { key: type, value: type }, providerLabel(type))))),
             field('名称（可选）', h('input', { className: 'ms-input', 'aria-label': '提供商名称', value: connectionName,
@@ -170,7 +210,7 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
               { disabled: probing || check?.state === 'loading', 'data-size': 'sm' }),
             check?.message ? h('p', { role: 'status', className: 'ms-note', 'data-tone': check.state === 'error' ? 'danger' : 'success' }, check.message) : null),
           error ? h('p', { role: 'alert', className: 'ms-note', 'data-tone': 'danger' }, error) : null),
-        id ? null : renderNewProviderCatalog());
+        id ? null : [renderNewProviderCatalog(), renderManualEntry()]);
     };
 
     const readCatalog = async (token, group) => {

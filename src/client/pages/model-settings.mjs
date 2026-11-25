@@ -1,6 +1,7 @@
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, modelCredentialName, modelProfileId } from '../dsh/model-bridge.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { resolveModelBudgets } from '../../model-capabilities.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
 import { createModelSettingsDirectory } from './model-settings-directory.mjs';
@@ -89,7 +90,7 @@ export function createModelSettingsSection({
   const providerLabel = provider => PROVIDER_LABELS[provider] || provider || '自定义提供商';
   const sourceLabel = source => SOURCE_LABELS[source] || source || '未配置';
   const useEffortProbe = createUseEffortProbe({ useState, useRef, useEffect });
-  const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({ h, useState, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId });
+  const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({ h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId });
 
   function ModelSettingsSection({ dshModel, mode = 'all', onSaved }) {
     const [form, setForm] = useState({
@@ -333,6 +334,9 @@ export function createModelSettingsSection({
       if (saveLock.current || status !== 'ready') return false;
       saveLock.current = true;
       setSaving(true); setMessage(''); setError('');
+      const failure = reason => reason?.code === 'invalid_model_capabilities'
+        ? '模型预算校验失败：最大输出 Token 必须为正整数，并小于上下文窗口。'
+        : reason?.message || '保存模型与凭证失败';
       try {
         if (mode === 'cloud') {
           const access = configuration.cloudAccessKey.trim(), secret = configuration.cloudSecretKey.trim();
@@ -344,7 +348,16 @@ export function createModelSettingsSection({
           onSaved?.();
           return true;
         }
-        const rawProfiles = configuration.profiles.map(modelProfilePayload);
+        // 保存前把输出预算折算到上下文窗口以内，与运行时 admission 保持一致：
+        // Host 里存的值就是 DSH 实际生效值，用户不必自己算「窗口的一半」。
+        const clampedOutputs = [];
+        const rawProfiles = configuration.profiles.map(modelProfilePayload).map(profile => {
+          if (profile.maxOutputTokens === undefined && profile.contextWindow === undefined) return profile;
+          const budgets = resolveModelBudgets(profile, null);
+          if (!budgets.adjusted) return profile;
+          clampedOutputs.push(`${profile.modelName} → ${budgets.maxOutputTokens}`);
+          return { ...profile, maxOutputTokens: budgets.maxOutputTokens };
+        });
         const activeDefaultIndex = rawProfiles.findIndex(profile => profile.enabled !== false && profile.default);
         const firstEnabledIndex = rawProfiles.findIndex(profile => profile.enabled !== false);
         const defaultIndex = activeDefaultIndex >= 0 ? activeDefaultIndex : firstEnabledIndex;
@@ -387,12 +400,15 @@ export function createModelSettingsSection({
           profiles: configuration.profiles.map(profile => ({ ...profile, apiKey: '' })),
           providers: configuration.providers.map(provider => ({ ...provider, apiKey: '' })), cloudAccessKey: '', cloudSecretKey: '' }));
         window.dispatchEvent(new CustomEvent('agentkit-studio:model-credential-changed'));
-        setMessage(unverified ? `模型配置已保存 · ${unverified} 个模型的接口待确认` : '模型配置已保存');
+        setMessage([
+          unverified ? `模型配置已保存 · ${unverified} 个模型的接口待确认` : '模型配置已保存',
+          clampedOutputs.length ? `最大输出已按上下文窗口折算：${clampedOutputs.join('、')}` : '',
+        ].filter(Boolean).join('；'));
         await load();
         onSaved?.();
         return true;
       } catch (reason) {
-        setError(reason?.message || '保存模型与凭证失败');
+        setError(failure(reason));
         return false;
       } finally {
         saveLock.current = false;
@@ -780,7 +796,12 @@ export function createModelSettingsSection({
           selectedDirty && !selectedDraft ? h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => revertProfile(selectedIndex) }, '撤销修改') : null,
           selectedDraft
             ? h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '取消')
-            : profiles.length <= 1 ? null : h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '移除'))),
+            : (() => {
+              const lastEnabled = selected.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1;
+              return h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn',
+                disabled: lastEnabled, title: lastEnabled ? '请先添加或启用另一个模型，再移除当前模型' : undefined,
+                onClick: () => removeProfile(selectedIndex) }, '移除');
+            })())),
       h('div', { className: 'ms-grid ms-grid-2 ms-model-fields' },
         h('div', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel),
         reasoningField),
