@@ -3,6 +3,9 @@ import { resolvePaletteStyles } from '../styles/palette.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
+/** Set once the user finishes or dismisses the guide, so it is not auto-shown again. */
+const ONBOARDING_DONE_KEY = 'agentkit-studio:onboarding-done';
+
 export function createCredentialOnboarding({
   ui: { React: { createElement: h, useEffect, useRef, useState }, Modal, ModelSettingsSection, StudioMark, buttonStyle, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document
@@ -29,19 +32,29 @@ export function createCredentialOnboarding({
     const check = async ({ manual = false } = {}) => {
       const generation = ++lifetime.current.generation;
       setState(current => ({ ...current, status: 'loading', error: '' }));
+      const acknowledged = (() => { try { return window.localStorage?.getItem(ONBOARDING_DONE_KEY) === '1'; } catch { return false; } })();
       try {
         const result = await hostRemote.modelCredentialStatus();
         if (!lifetime.current.active || generation !== lifetime.current.generation) return;
         const next = { status: 'ready', configured: result?.configured === true };
         setState(next);
-        if (next.configured && !explicit && !manual && lifetime.current.stage === 'welcome') {
+        const wasMissing = lifetime.current.lastConfigured === false;
+        lifetime.current.lastConfigured = next.configured;
+        // Saving inside the guide (missing → configured) closes it, and an
+        // already-acknowledged configured state completes silently. A first run
+        // that finds an existing credential (e.g. a Codex auth.json) with no
+        // acknowledgement still opens once so the user sees 开始对话 / 更换模型.
+        if (next.configured && (wasMissing || (acknowledged && !explicit && !manual && lifetime.current.stage === 'welcome'))) {
           setOpen(false);
           if (!lifetime.current.completed) { lifetime.current.completed = true; complete(); }
         } else if (!lifetime.current.dismissed) setOpen(true);
       } catch {
         if (!lifetime.current.active || generation !== lifetime.current.generation) return;
-        setState({ status: 'error', configured: false, error: '暂时无法读取凭证状态，请连接 Studio Host 后重试。' });
-        if (explicit || manual) setOpen(true);
+        // A not-yet-connected Host no longer hides the guide: open it, show the
+        // connecting state, and let the credential-recheck event retry once the
+        // Host is ready instead of staying invisible until a manual recheck.
+        setState({ status: 'error', configured: false, error: '正在连接 Studio Host，连接成功后继续…' });
+        if (!lifetime.current.dismissed) setOpen(true);
       }
     };
     useEffect(() => {
@@ -78,7 +91,12 @@ export function createCredentialOnboarding({
       return () => strip.remove();
     }, [open]);
     if (!open) return null;
-    const close = () => { lifetime.current.dismissed = true; setOpen(false); complete(); };
+    const close = () => {
+      lifetime.current.dismissed = true;
+      setOpen(false);
+      try { window.localStorage?.setItem(ONBOARDING_DONE_KEY, '1'); } catch { /* storage unavailable: only this run is affected */ }
+      complete();
+    };
     const configure = () => setStage('model');
     const loading = state.status === 'loading';
     const actions = stage === 'welcome' ? h('div', { className: 'agentkit-onboarding-actions', 'data-studio-controls': true },

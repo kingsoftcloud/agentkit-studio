@@ -70,7 +70,7 @@ test('credential guide is a DSH settings onboarding step with retry and deferred
   assert.match(onboarding, /重试/);
   assert.match(settings, /重新打开凭证引导/);
   assert.match(settings, /settings\.onboarding/);
-  assert.doesNotMatch(onboarding, /localStorage/);
+  assert.match(onboarding, /localStorage/); // 用户确认后记 localStorage 标记，避免重复弹
   assert.match(onboardingStyles, /agentkitCredentialOnboardingIn/);
   assert.match(onboardingStyles, /prefers-reduced-motion/);
 });
@@ -86,7 +86,7 @@ test('credential filesystem inspection stays in the Host-only dynamic graph', ()
   assert.match(hostEntry, /await import\('\.\.\/model-credential-sync\.mjs'\)/);
 });
 
-test('first missing credential opens the guide, configured readiness stays quiet, and saved readiness closes it', async () => {
+test('first missing credential opens the guide, existing readiness shows once, saved readiness closes it', async () => {
   const missing = onboardingHarness({ statuses: [{ configured: false, source: 'missing' }, { configured: true, source: 'env' }] });
   await missing.settle();
   assert.ok(missing.modal(), 'first missing status should open the guide');
@@ -94,9 +94,16 @@ test('first missing credential opens the guide, configured readiness stays quiet
   await missing.settle();
   assert.equal(missing.modal(), null, 'a save/recheck with a configured credential closes the guide');
 
+  // 本机已有凭证（首次启动）：仍弹出一次「已就绪」，让用户可以开始对话或更换模型。
   const ready = onboardingHarness({ statuses: [{ configured: true, source: 'dsh' }] });
   await ready.settle();
-  assert.equal(ready.modal(), null, 'an existing DSH credential must not show onboarding');
+  assert.ok(ready.modal(), 'an existing credential opens the guide once');
+  assert.equal(ready.modal().props.title, '模型凭证已就绪');
+
+  // 用户已确认过（localStorage 有标记）后才不再自动弹。
+  const acked = onboardingHarness({ statuses: [{ configured: true, source: 'dsh' }], localStorage: { getItem: () => '1', setItem: () => {} } });
+  await acked.settle();
+  assert.equal(acked.modal(), null, 'acknowledged readiness stays quiet');
 });
 
 test('the DSH onboarding coordinator owns completion and model settings navigation', () => {
@@ -159,10 +166,10 @@ test('configuration guide walks through model setup without modifying credential
   assert.equal(walk(ui.modal()).find(node => node.props['aria-current'] === 'step').children.at(-1), '开始对话');
 });
 
-test('a Host reconnect rechecks readiness instead of treating transport failure as missing', async () => {
+test('a Host reconnect rechecks readiness; transport failure shows a connecting state', async () => {
   const ui = onboardingHarness({ statuses: [Promise.reject(new Error('offline')), { configured: false, source: 'missing' }] });
   await ui.settle();
-  assert.equal(ui.modal(), null, 'transport error must not trigger a missing-credential dialog');
+  assert.ok(ui.modal(), 'transport error opens the guide in the connecting state');
   ui.window.dispatchEvent({ type: 'agentkit-studio:credential-recheck' });
   await ui.settle();
   assert.ok(ui.modal(), 'reconnect recheck can then show the actual missing state');

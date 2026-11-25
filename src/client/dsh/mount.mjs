@@ -38,7 +38,13 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
     name: 'settings.onboarding', id: 'agentkit-studio-credential', order: 20,
   }, props => h(CredentialOnboarding, { ...props, dshModel: createDshModelBridge(ctx) })));
-  ctx.effect(() => connectionOwner.bind(ctx.connection), 'agentkit-studio:remote-connection');
+  ctx.effect(() => {
+    const release = connectionOwner.bind(ctx.connection);
+    // The Host can connect after the guide mounted: notify it to re-check so a
+    // first run does not stay on the connecting state.
+    window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck'));
+    return release;
+  }, 'agentkit-studio:remote-connection');
   ctx.on('connection/reset', () => { window.dispatchEvent(new CustomEvent('agentkit-studio:credential-recheck')); window.dispatchEvent(new CustomEvent('agentkit-studio:connection-reset')); });
   // DSH owns the single global plugin center: its own 已安装 / 发现 tabs are the
   // market, so Studio contributes no market row of its own. Codex stays an
