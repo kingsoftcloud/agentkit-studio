@@ -131,11 +131,13 @@ export function createRuntimeResponsesContract({ agentId, buildId, definitionId,
 }
 
 export function runtimeResponse(request, result = {}, status = 'in_progress', output = []) {
-  const input = Number(result.tokenUsage?.inputTokens || 0), generated = Number(result.tokenUsage?.outputTokens || 0);
+  const { inputTokens: input, outputTokens: generated } = result.tokenUsage ?? {};
+  const usageReported = [input, generated].every(value => Number.isSafeInteger(value) && value >= 0)
+    && Number.isSafeInteger(input + generated);
   const text = status === 'completed' ? String(result.output || '') : '';
   return { id: request.responseId, object: 'response', created_at: request.createdAt, status, model: request.model,
     session_id: request.publicSessionId || request.conversationId, conversation: { id: request.conversationId }, metadata: Array.isArray(result.resourceChecks)
       ? { ...request.metadata, agentkit: { ...request.metadata?.agentkit, resourceChecks: result.resourceChecks.map(sanitizeResourceCheck).filter(Boolean) } } : request.metadata,
     output, output_text: text, error: result.error || null,
-    ...(result.tokenUsage ? { usage: { input_tokens: input, output_tokens: generated, total_tokens: input + generated } } : {}) };
+    ...(usageReported ? { usage: { input_tokens: input, output_tokens: generated, total_tokens: input + generated } } : {}) };
 }

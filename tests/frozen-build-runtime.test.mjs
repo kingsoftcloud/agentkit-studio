@@ -27,7 +27,10 @@ test('Responses selects each bound model on the native session and preserves its
       for (const event of [
         { type: 'turn/start', data: { turn } }, { type: 'user/message', data: { content, source: { rpcId: requestId, requestFingerprint } } },
         { type: 'studio/resource-check', data: { kind: 'knowledge-base', resourceId: 'kb-test', action: 'search', status: 'succeeded', hitCount: 0 } },
-        { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: models.get(sessionId) }] } } },
+        { type: 'assistant/message', data: {
+          message: { content: [{ type: 'text', text: models.get(sessionId) }] },
+          usage: turn === 1 ? { inputTokens: 8, outputTokens: 3, cacheReadTokens: 3 } : {},
+        } },
         { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } },
       ]) events.push({ ...event, seq: events.length });
     },
@@ -49,8 +52,10 @@ test('Responses selects each bound model on the native session and preserves its
   const first = await (await post(firstRequest)).json();
   assert.equal(first.output_text, 'profile-b'); assert.equal(first.model, 'model-b');
   assert.equal(first.metadata.agentkit.resourceChecks[0].hitCount, 0);
+  assert.deepEqual(first.usage, { input_tokens: 11, output_tokens: 3, total_tokens: 14 });
   const next = await (await post({ input: 'follow-up', previous_response_id: first.id, request_id: 'second', model: 'model-a' })).json();
   assert.equal(next.output_text, 'profile-a'); assert.equal(history.size, 1);
+  assert.equal(Object.hasOwn(next, 'usage'), false);
   await runtime.close(); runtime = await start();
   const replay = await (await post(firstRequest)).json();
   assert.deepEqual(replay, first);
