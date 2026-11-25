@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createKsxcRoute } from '../src/host/routes/ksxc.mjs';
 import { STUDIO_OPERATION_IDS } from '../src/contracts/operations.mjs';
 import { installProgressText } from '../src/client/pages/ksxc-settings.mjs';
+import { createProductClient } from '../src/remote/control-client.mjs';
 
 const accounts = { status: async () => ({ connected: false }) };
 
@@ -18,6 +19,18 @@ test('status only refreshes the release catalog when the caller asks for it', as
   const refreshed = await route('ksxc/status', { refresh: true }, undefined);
   assert.equal(refreshed.ok, true);
   assert.deepEqual(seen, [undefined, { refresh: true }]);
+});
+
+test('only the settings page asks the bridge for a refresh', async () => {
+  const calls = [];
+  const client = createProductClient({ rpc: { call: async (_channel, operation, payload) => {
+    calls.push([operation, payload]);
+    return { ok: true, value: { supported: true } };
+  } } }, { window: {} });
+  await client.ksxcStatus();
+  await client.ksxcStatus(undefined, { refresh: false });
+  await client.ksxcStatus(new AbortController().signal, { refresh: true });
+  assert.deepEqual(calls, [['ksxc/status', {}], ['ksxc/status', {}], ['ksxc/status', { refresh: true }]]);
 });
 
 test('install endpoints hand the version and the request id to the release service', async () => {
