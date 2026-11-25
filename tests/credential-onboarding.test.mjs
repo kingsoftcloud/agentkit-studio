@@ -86,7 +86,7 @@ test('credential filesystem inspection stays in the Host-only dynamic graph', ()
   assert.match(hostEntry, /await import\('\.\.\/model-credential-sync\.mjs'\)/);
 });
 
-test('first missing credential opens the guide, existing readiness shows once, saved readiness closes it', async () => {
+test('first missing credential opens the guide, existing readiness stays quiet, saved readiness closes it', async () => {
   const missing = onboardingHarness({ statuses: [{ configured: false, source: 'missing' }, { configured: true, source: 'env' }] });
   await missing.settle();
   assert.ok(missing.modal(), 'first missing status should open the guide');
@@ -94,16 +94,15 @@ test('first missing credential opens the guide, existing readiness shows once, s
   await missing.settle();
   assert.equal(missing.modal(), null, 'a save/recheck with a configured credential closes the guide');
 
-  // 本机已有凭证（首次启动）：仍弹出一次「已就绪」，让用户可以开始对话或更换模型。
+  // 本机已有凭证：不自动弹（已配置就能用，不打扰）。
   const ready = onboardingHarness({ statuses: [{ configured: true, source: 'dsh' }] });
   await ready.settle();
-  assert.ok(ready.modal(), 'an existing credential opens the guide once');
-  assert.equal(ready.modal().props.title, '模型凭证已就绪');
+  assert.equal(ready.modal(), null, 'an existing credential does not auto-show the guide');
 
-  // 用户已确认过（localStorage 有标记）后才不再自动弹。
-  const acked = onboardingHarness({ statuses: [{ configured: true, source: 'dsh' }], localStorage: { getItem: () => '1', setItem: () => {} } });
+  // 未配置但用户之前已跳过：也不再自动弹。
+  const acked = onboardingHarness({ statuses: [{ configured: false }], localStorage: { getItem: () => '1', setItem: () => {} } });
   await acked.settle();
-  assert.equal(acked.modal(), null, 'acknowledged readiness stays quiet');
+  assert.equal(acked.modal(), null, 'dismissed first-run stays quiet');
 });
 
 test('the DSH onboarding coordinator owns completion and model settings navigation', () => {
@@ -112,24 +111,22 @@ test('the DSH onboarding coordinator owns completion and model settings navigati
   assert.match(settings, /id: 'agentkit-studio-credential'/);
 });
 
-test('fullscreen onboarding saves a model, permits skipping cloud credentials and can reopen', async () => {
+test('first run shows a simple model form, saves, closes, and can reopen', async () => {
   const actions = [];
   const props = { explicit: true, complete: () => actions.push('complete'), openSection: id => actions.push(id) };
   const ui = onboardingHarness({ statuses: [{ configured: false }], props });
   await ui.settle();
-  assert.ok(ui.modal());
-  ui.footerButtons().find(button => button.children.includes('开始设置')).props.onClick();
-  await ui.settle();
+  assert.ok(ui.modal(), 'first run opens the guide');
   const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
+  // 首屏就是可填的简洁表单（simple），不是先欢迎页再跳复杂表单。
   const model = walk(ui.modal()).find(node => node.type === 'ModelSettingsSection');
+  assert.ok(model, 'the simple model form is shown directly');
   assert.equal(model.props.mode, 'model');
+  assert.equal(model.props.simple, true);
   assert.deepEqual(actions, [], 'model setup must not prematurely complete onboarding');
   model.props.onSaved();
   await ui.settle();
-  assert.equal(walk(ui.modal()).find(node => node.type === 'ModelSettingsSection').props.mode, 'cloud');
-  ui.footerButtons().find(button => button.children.includes('跳过，开始对话')).props.onClick();
-  await ui.settle();
-  assert.equal(ui.modal(), null);
+  assert.equal(ui.modal(), null, 'saving closes the guide');
   assert.deepEqual(actions, ['complete']);
 
   // DSH unmounts completed steps. The launcher requests a new mounted step.
@@ -147,23 +144,6 @@ test('explicit onboarding shows a retryable Host error', async () => {
   await ui.settle();
   assert.ok(ui.modal());
   assert.ok(ui.footerButtons().some(button => button.children.includes('重试')));
-});
-
-test('configuration guide walks through model setup without modifying credentials', async () => {
-  const ui = onboardingHarness({ statuses: [{ configured: false }] });
-  await ui.settle();
-  const walk = node => node && typeof node === 'object' ? [node, ...(node.children || []).flatMap(walk)] : [];
-  let nodes = walk(ui.modal());
-  assert.equal(nodes.filter(node => node.type === 'li').length, 3);
-  assert.equal(nodes.find(node => node.props['aria-current'] === 'step').children.at(-1), '选择提供商');
-  nodes.find(node => node.type === 'button' && node.children.includes('查看下一步 →')).props.onClick();
-  await ui.settle();
-  nodes = walk(ui.modal());
-  assert.equal(nodes.find(node => node.props['aria-current'] === 'step').children.at(-1), '填写凭证');
-  assert.ok(nodes.some(node => node.children.includes('••••••••••••••••')));
-  nodes.find(node => node.type === 'button' && node.children.includes('开始对话')).props.onClick();
-  await ui.settle();
-  assert.equal(walk(ui.modal()).find(node => node.props['aria-current'] === 'step').children.at(-1), '开始对话');
 });
 
 test('a Host reconnect rechecks readiness; transport failure shows a connecting state', async () => {

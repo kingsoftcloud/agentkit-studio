@@ -2,6 +2,7 @@ import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, mode
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
+import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
 import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback } from './model-settings-capability.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
@@ -93,7 +94,7 @@ export function createModelSettingsSection({
   const useEffortProbe = createUseEffortProbe({ useState, useRef, useEffect });
   const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({ h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId });
 
-  function ModelSettingsSection({ dshModel, mode = 'all', onSaved }) {
+  function ModelSettingsSection({ dshModel, mode = 'all', onSaved, simple = false }) {
     const [form, setForm] = useState({
       profiles: [{ id: 'default', provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: DEFAULT_KSYUN_MODEL, credentialName: DSH_MODEL_CREDENTIAL, apiKey: '', enabled: true, default: true }],
       providers: [],
@@ -719,13 +720,14 @@ export function createModelSettingsSection({
     const capacitySummary = renderCapabilitySummary(h, selected);
 
     const probeReport = effortProbe.reportFor(selected.id);
-    const applicableLevels = applicableProbeLevels(probeReport);
     const applyProbeLevels = createApplyProbeLevels({ patchProfile, selectedIndex, setMessage });
+    // 探测结果直接生效：可用档位写回草稿（可撤销），不再要用户二次点「应用」。
+    useEffect(() => { const levels = applicableProbeLevels(probeReport); if (levels.length) applyProbeLevels(levels); }, [probeReport]);
     const reasoningField = renderModelEffortSettings(h, {
       efforts: selectedReasoning.efforts, value: reasoningValue, levels: selected.reasoningLevels,
       protocol: selected.protocol, provisional: !Array.isArray(selected.reasoningLevels) && reasoningProfileFor(selected.provider).fallback,
-      probing: Boolean(effortProbe.progress), canProbe: Boolean(selected.modelName?.trim() && hostRemote.probeModelEfforts),
-      report: probeReport, applicableLevels, onApply: applyProbeLevels,
+      probing: Boolean(effortProbe.progress), canProbe: Boolean(selected.modelName?.trim() && hostRemote.probeModelEfforts && !lookupModelCapabilities(selected)),
+      report: probeReport,
       onProbe: probeSelectedEfforts, onChange: level => patchProfile(selectedIndex, {
         reasoningEfforts: level ? true : undefined, defaultReasoningEffort: level || undefined,
       }),
@@ -806,9 +808,9 @@ export function createModelSettingsSection({
             }))),
       h('div', { className: 'ms-grid ms-grid-2 ms-model-fields' },
         h('div', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel),
-        reasoningField),
-      capacitySummary,
-      capability,
+        simple ? null : reasoningField),
+      simple ? null : capacitySummary,
+      simple ? null : capability,
       mode !== 'cloud' ? [
       h('div', { className: 'ms-editor-section-head' },
         h('h5', null, '连接'),
@@ -886,7 +888,7 @@ export function createModelSettingsSection({
           disabled: connection.state === 'loading' }, connection.state === 'loading' ? '读取中…' : '读取模型'),
         h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => testModelConnection(selectedIndex), disabled: connection.state === 'loading' }, '测试连接')),
       connection.message ? h('p', { role: 'status', className: 'ms-note', 'data-tone': connection.state === 'error' ? 'danger' : connection.state === 'warning' ? 'warn' : 'success' }, connection.message) : null] : null,
-      h('div', { className: 'ms-advanced-group' },
+      simple ? null : h('div', { className: 'ms-advanced-group' },
         h('details', { className: 'ms-advanced' },
           h('summary', null, '连接与思考模式'),
           h('div', { className: 'ms-grid ms-grid-2' },

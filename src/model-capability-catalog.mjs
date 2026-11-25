@@ -25,10 +25,24 @@ const normalizeEndpoint = value => {
     return (url.host + url.pathname).replace(/\/+$/, '').toLowerCase();
   } catch { return raw.replace(/\/+$/, '').toLowerCase(); }
 };
-const normalizeId = id => String(id || '').trim().toLowerCase().replace(/-latest$/, '');
-// deepseek-v4.1-flash is catalogued as deepseek-v4-flash. Only used as a
-// last-resort, single-hit match inside one provider, never across providers.
-const stripPatch = id => normalizeId(id).replace(/(\d+)\.\d+/g, '$1');
+const normalizeId = id => String(id || '').trim().toLowerCase()
+  .replace(/-latest$/, '')
+  // deepseek-v4.1-flash-1017 / gpt-4o-20240806 are build/dated variants of a
+  // catalogued model; drop a trailing 4–8 digit build or date suffix.
+  .replace(/-\d{4,8}$/, '');
+
+const effortsFor = entry => (entry?.efforts ? STUDIO_REASONING_LEVELS.filter(level => entry.efforts.includes(level)) : []);
+
+const findInGroup = (group, modelName) => {
+  const want = normalizeId(modelName);
+  if (!want || !group?.models) return undefined;
+  // Exact id only (after normalizing -latest and build/date suffixes). Never
+  // collapse distinct versions (v4.1 must not be answered with v4's facts).
+  for (const [id, entry] of Object.entries(group.models)) {
+    if (normalizeId(id) === want) return entry;
+  }
+  return undefined;
+};
 
 /** Model-id prefix → the original vendor's catalog ids, in preference order. */
 const MODEL_ORIGINS = [
@@ -49,20 +63,6 @@ for (const [providerId, group] of Object.entries(MODEL_CATALOG)) {
   const key = normalizeEndpoint(group.api);
   if (key && !endpointIndex.has(key)) endpointIndex.set(key, providerId);
 }
-
-const effortsFor = entry => (entry?.efforts ? STUDIO_REASONING_LEVELS.filter(level => entry.efforts.includes(level)) : []);
-
-const findInGroup = (group, modelName) => {
-  const want = normalizeId(modelName);
-  if (!want || !group?.models) return undefined;
-  for (const [id, entry] of Object.entries(group.models)) {
-    if (normalizeId(id) === want) return entry;
-  }
-  // Patch-version fallback, only when it is unambiguous within this provider.
-  const wantStem = stripPatch(want);
-  const hits = Object.entries(group.models).filter(([id]) => stripPatch(id) === wantStem);
-  return hits.length === 1 ? hits[0][1] : undefined;
-};
 
 const shape = (providerId, group, entry) => ({
   providerId, providerName: group.name, efforts: effortsFor(entry),

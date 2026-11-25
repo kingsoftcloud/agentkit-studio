@@ -26,8 +26,12 @@ test('vision-capable models are marked as such', () => {
   assert.equal(lookupModelCapabilities({ ...star, modelName: 'kimi-k3.1-pro-highspeed' }).image, true);
 });
 
-test('a patch-version difference resolves only when unambiguous', () => {
-  const hit = lookupModelCapabilities({ ...star, modelName: 'deepseek-v4.1-flash' });
+test('distinct model versions are never collapsed onto each other', () => {
+  // deepseek-v4.1-flash is not in the catalog (which lists deepseek-v4-flash):
+  // v4.1 must not be answered with v4's facts, even after dropping a build suffix.
+  assert.equal(lookupModelCapabilities({ ...star, modelName: 'deepseek-v4.1-flash' }), null);
+  assert.equal(lookupModelCapabilities({ ...star, modelName: 'deepseek-v4.1-flash-1017' }), null);
+  const hit = lookupModelCapabilities({ ...star, modelName: 'deepseek-v4-flash' });
   assert.equal(hit.providerId, 'deepseek');
   assert.ok(hit.context > 0);
 });

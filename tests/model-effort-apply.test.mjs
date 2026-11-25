@@ -59,10 +59,8 @@ test('probing then applying writes the usable levels into the saved profile', as
   await view.openEditor();
   // Run the probe, then apply the levels it found (low/high accepted, max rejected).
   await view.click(node => node.type === 'button' && (node.children || []).includes('探测档位'));
-  const applyButton = view.nodes().find(node => node.props?.['data-apply-probe']);
-  assert.ok(applyButton, 'the apply button appears once usable levels are reported');
-  assert.ok(applyButton.children.join('').includes('2'), 'two usable levels');
-  await view.click(node => node.props?.['data-apply-probe']);
+  await view.settle();
+  // 探测完成后自动写回，不需要二次点「应用」。
   assert.ok(view.text().includes('已应用探测到的 2 个档位'));
   await view.save();
   assert.deepEqual(view.values.modelProfiles[0].reasoningLevels, ['low', 'high']);
