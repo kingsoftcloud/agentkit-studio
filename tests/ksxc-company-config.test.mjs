@@ -8,6 +8,8 @@ import { createKsxcRoute } from '../src/host/routes/ksxc.mjs';
 
 const shipped = JSON.parse(await readFile(new URL('../src/host/services/ksxc-company.json', import.meta.url), 'utf8'));
 const managedRuntime = { identity: { runtimeName: 'ksxc' } };
+// The desktop Host ships macOS and Windows x64 payloads; a Linux runner has none.
+const installable = ['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(`${process.platform}-${process.arch}`);
 
 test('the shipped company config names the public gateway, the company and a public installer', () => {
   assert.deepEqual(Object.keys(shipped).sort(), ['baseUrl', 'code', 'installerUrl']);
@@ -21,7 +23,7 @@ test('a desktop Host with no environment still gets KSXC from the shipped config
   const ksxc = await createKsxcHost({ storeDir, env: {}, credentials: {} });
   assert.ok(ksxc, 'the desktop Host must be configured without any export');
   const status = await ksxc.releases.status();
-  assert.equal(status.installable, true);
+  assert.equal(status.installable, installable);
   assert.ok(ksxc.accounts, 'the desktop account service must be available');
   assert.equal(ksxc.managedConnection, undefined, 'the shipped config must not leak into the managed connection');
 });
@@ -32,7 +34,7 @@ test('the settings status is served for a desktop Host with no environment', asy
   const ksxc = await createKsxcHost({ storeDir, env: {}, credentials: { readRecord: async () => null } });
   const result = await createKsxcRoute(ksxc)('ksxc/status', {});
   assert.equal(result.value.supported, true);
-  assert.equal(result.value.release.installable, true);
+  assert.equal(result.value.release.installable, installable);
   // The bundled account is not connected until the user signs in.
   assert.equal(result.value.connection.connected, false);
   await ksxc.accounts.close();

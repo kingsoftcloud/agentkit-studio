@@ -78,9 +78,9 @@ const tarInvocationFor = (target, archive, payload) => (target.startsWith('win32
   : { args: ['--no-same-owner', '-xzf', archive, '-C', payload], env: { PATH: '/usr/bin:/bin', LANG: 'C' } });
 
 export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = fetch,
-  // The Host platform, injectable so a POSIX machine can exercise the Windows layout.
-  platform = process.platform, arch = process.arch, target = `${platform}-${arch}`,
+  target = `${process.platform}-${process.arch}`,
   minFreeBytes = MIN_FREE_BYTES,
+  // Injected so a POSIX host can exercise the Windows layout with its own tar.
   executableName = executableNameFor(target),
   tarPath = tarPathFor(target) }) {
   const stateFile = join(root, 'active.json');
@@ -185,9 +185,13 @@ export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = 
     catch { return undefined; }
   }
   function command(release, directory = join(installed, release.version)) {
+    // The payload was built for the release target, not for this machine, so the
+    // platform/arch pair comes from it: a POSIX runner then validates a macOS or
+    // Windows payload instead of rejecting it as RUNTIME_UNSUPPORTED.
+    const [releasePlatform, releaseArch] = release.target.split('-');
     return { ...resolveKsxcCommand({ executable: join(directory, 'bin', executableName), expectedSha256: release.sha256,
-      protocolProfile: release.protocolProfile, companyConfigPath, allowedTargets: [release.target], platform, arch, env: {} }),
-    version: release.version };
+      protocolProfile: release.protocolProfile, companyConfigPath, allowedTargets: [release.target],
+      platform: releasePlatform, arch: releaseArch, env: {} }), version: release.version };
   }
   async function valid(release, directory) {
     const options = command(release, directory);

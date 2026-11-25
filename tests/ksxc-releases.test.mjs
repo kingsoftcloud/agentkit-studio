@@ -331,8 +331,7 @@ test('an unsupported platform is not installable', async t => {
 test('a Windows x64 target installs the .exe payload', async t => {
   // `tarPath` is injected because this machine runs the POSIX tar; a real Windows
   // Host resolves `%SystemRoot%\System32\tar.exe` on its own.
-  const f = await fixture(t, { target: 'win32-x64', platform: 'win32', arch: 'x64',
-    executableName: 'codex.exe', tarPath: '/usr/bin/tar' });
+  const f = await fixture(t, { target: 'win32-x64', executableName: 'codex.exe', tarPath: '/usr/bin/tar' });
   const status = await f.releases.status({ refresh: true });
   assert.equal(status.installable, true);
   assert.deepEqual(status.versions, ['1.8.0']);
