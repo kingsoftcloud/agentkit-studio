@@ -13,10 +13,12 @@ import { ENGINE_TOOL_CATALOG_FILE, readEngineToolCatalog } from '../../contracts
 import { harnessModelEndpoint } from '../../model-endpoint.mjs';
 
 import { fetchStarHarnessProof, verifyStarHarnessProof, STAR_HARNESS_PACKAGE, STAR_HARNESS_CORE, STAR_HARNESS_UI,
-  STAR_HARNESS_CLIENT_FILE, starHarnessVersion } from './star-harness-catalog.mjs';
+  STAR_HARNESS_CLIENT_FILE, starHarnessVersion, compareStarHarnessVersions } from './star-harness-catalog.mjs';
 
 export { STAR_HARNESS_PACKAGE, starHarnessVersion };
 export const STAR_HARNESS_REGISTRY = 'https://registry.npmjs.org';
+const registryPackage = STAR_HARNESS_REGISTRY + '/' + encodeURIComponent(STAR_HARNESS_PACKAGE);
+const catalogWindow = 8;
 export const starHarnessError = (code, message, options) => Object.assign(new Error(message, options), { code });
 const run = promisify(execFile);
 const workerEntry = fileURLToPath(new URL('./star-harness-worker.mjs', import.meta.url));
@@ -104,6 +106,15 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
       throw starHarnessError('STAR_HARNESS_RELEASE_UNREVIEWED', '此版本的签名发布清单尚不可用或与当前 Studio 不兼容。', { cause });
     }
   };
+  async function registryMetadata(suffix, signal) {
+    const response = await fetchImpl(registryPackage + suffix, {
+      signal: AbortSignal.any([AbortSignal.timeout(6000), signal].filter(Boolean)), redirect: 'error',
+    });
+    if (!response.ok) { await response.body?.cancel(); throw Error('registry unavailable'); }
+    const metadata = await response.json();
+    if (metadata?.name !== STAR_HARNESS_PACKAGE) throw Error('registry release invalid');
+    return metadata;
+  }
   const installedRelease = async (folder, version) => {
     const evidence = await lstat(proofFile(folder));
     if (!evidence.isFile() || evidence.size > 20 * 1024 * 1024) throw Error('Invalid installed release evidence');
@@ -149,13 +160,29 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
     client: async version => (await assets(version)).client,
     assets,
     async latest(signal) {
-      const response = await fetchImpl(STAR_HARNESS_REGISTRY + '/' + encodeURIComponent(STAR_HARNESS_PACKAGE) + '/latest',
-        { signal: AbortSignal.any([AbortSignal.timeout(6000), signal].filter(Boolean)), redirect: 'error' });
-      if (!response.ok) { await response.body?.cancel(); throw Error('registry unavailable'); }
-      const release = await response.json();
-      if (release.name !== STAR_HARNESS_PACKAGE || !starHarnessVersion(release.version)) throw Error('registry release invalid');
+      const release = await registryMetadata('/latest', signal);
+      if (!starHarnessVersion(release.version)) throw Error('registry release invalid');
       try { await downloadRelease(release.version, signal); return release.version; }
       catch (error) { if (error.code !== 'STAR_HARNESS_RELEASE_UNREVIEWED') throw error; return null; }
+    },
+    async catalog(signal) {
+      const metadata = await registryMetadata('', signal);
+      if (!metadata.versions || typeof metadata.versions !== 'object' || Array.isArray(metadata.versions))
+        throw Error('registry release history invalid');
+      const candidates = Object.keys(metadata.versions)
+        .filter(version => starHarnessVersion(version) && metadata.versions[version]?.name === STAR_HARNESS_PACKAGE
+          && metadata.versions[version].version === version)
+        .sort((a, b) => compareStarHarnessVersions(b, a)).slice(0, catalogWindow);
+      const rows = await Promise.all(candidates.map(async version => {
+        try { await downloadRelease(version, signal); }
+        catch (error) { if (error.code === 'STAR_HARNESS_RELEASE_UNREVIEWED') return null; throw error; }
+        const published = metadata.time?.[version];
+        const publishedAt = typeof published === 'string' && Number.isFinite(Date.parse(published))
+          ? new Date(published).toISOString() : null;
+        return { version, publishedAt };
+      }));
+      signal?.throwIfAborted();
+      return rows.filter(Boolean);
     },
     async install(version, signal) {
       if (!starHarnessVersion(version)) throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 版本无效。');

@@ -132,10 +132,21 @@ async function pluginPage() {
 
 async function install(version, action) {
   let panel = await pluginPage();
+  const label = action === '安装' ? '安装 ' + version : action === '升级' ? '升级到 ' + version : action;
+  let control = panel.getByRole('button', { name: label, exact: true });
   if (action === '安装' || action === '升级') {
-    await panel.getByRole('textbox', { name: '版本', exact: true }).fill(version, { timeout: pluginControlTimeout });
+    await expect(panel.getByRole('button', { name: '检查更新' })).toBeEnabled({ timeout: pluginControlTimeout });
+    const fromCatalog = await control.isVisible();
+    proof.selectedFromCatalog ??= {};
+    proof.selectedFromCatalog[version] = fromCatalog;
+    if (!fromCatalog) {
+      const input = panel.getByRole('textbox', { name: '版本', exact: true });
+      if (!await input.isVisible()) await panel.getByText('按版本号安装或修复', { exact: true }).click();
+      await input.fill(version, { timeout: pluginControlTimeout });
+      control = panel.getByRole('button', { name: action, exact: true });
+    }
   }
-  await panel.getByRole('button', { name: action, exact: true }).click({ timeout: pluginControlTimeout });
+  await control.click({ timeout: pluginControlTimeout });
   await expect.poll(async () => {
     try { return (await rpc('star-harness/status')).version; }
     catch (error) {
@@ -143,7 +154,7 @@ async function install(version, action) {
     }
   }, { timeout: 215000, intervals: [500, 1000, 1500] }).toBe(version);
   if (!await panel.isVisible()) panel = await pluginPage();
-  await expect(panel).toContainText('已安装 ' + version, { timeout: 45000 });
+  await expect(panel.locator('[aria-current="true"]')).toHaveText('v' + version, { timeout: 45000 });
   await page.screenshot({ path: join(output, 'plugin-' + version + (action.startsWith('回退') ? '-restored' : '') + '.png'), timeout: 60000 });
 }
 
@@ -272,8 +283,11 @@ try {
   assert.notEqual(identity.pid, proof.processes.at(-1).pid);
   const opened = performance.now();
   const panel = await pluginPage();
-  // The page reads status and checks the registry before rendering install.
-  await expect(panel.getByRole('button', { name: '安装', exact: true })).toBeVisible({ timeout: pluginControlTimeout });
+  await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible();
+  await expect(panel.getByText('执行多步任务', { exact: true })).toBeVisible();
+  await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible();
+  await page.screenshot({ path: join(output, 'plugin-overview.png'), timeout: 60000 });
+  await expect(panel.getByRole('button', { name: '检查更新' })).toBeEnabled({ timeout: pluginControlTimeout });
   proof.firstPluginControlsMs = Math.round(performance.now() - opened);
   assert.equal(await page.evaluate(async route => {
     const response = await fetch(route + '?descriptor=1');
@@ -298,7 +312,7 @@ try {
   await quit();
   await boot();
   assert.notEqual(identity.pid, proof.processes.at(-1).pid);
-  await expect(await pluginPage()).toContainText('已安装 ' + upgrade, { timeout });
+  await expect((await pluginPage()).locator('[aria-current="true"]')).toHaveText('v' + upgrade, { timeout });
   await reopenFirstConversation();
   await send(turns[2], secondModel);
   await checkRenderer(upgrade);

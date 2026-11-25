@@ -129,6 +129,68 @@ test('Star Harness status accepts a null payload and verifies stored configurati
   await assert.rejects(invalid('star-harness/status', null), { code: 'STAR_HARNESS_CONFIG_INVALID' });
 });
 
+test('the release catalog filters published versions by signature and Studio compatibility', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-star-catalog-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const versions = ['1.2.9', '1.2.10', '1.2.11', '1.2.12', '1.2.13-beta.0'];
+  const proofs = Object.fromEntries(versions.map(version => [version, starHarnessProofFixture(version,
+    Object.fromEntries([STAR_HARNESS_PACKAGE, STAR_HARNESS_CORE, STAR_HARNESS_UI].map(name => [name, {
+      'package.json': JSON.stringify({ name, version }),
+      ...(name === STAR_HARNESS_UI ? { [STAR_HARNESS_CLIENT_FILE]: 'export {};' } : {}),
+    }])), { change: manifest => { if (version === '1.2.12') manifest.studio.engineProtocol = 'future'; } })]));
+  const checked = [];
+  const releases = createStarHarnessReleases({ directory, async verifySignature(_bundle, options) {
+    const version = options.certificateIdentityURI.split('@refs/tags/v').at(-1);
+    checked.push(version);
+    if (version === '1.2.11') throw Error('Invalid signature');
+  }, async fetchImpl(url) {
+    if (url.startsWith('https://registry.npmjs.org/')) return Response.json({
+      name: STAR_HARNESS_PACKAGE,
+      versions: Object.fromEntries(versions.map(version => [version, { version, name: STAR_HARNESS_PACKAGE }])),
+      time: { '1.2.10': '2026-11-20T10:02:13.000Z' },
+    });
+    const version = new URL(url).pathname.split('/').at(-2).slice(1);
+    const proof = proofs[version];
+    return url.endsWith('.bundle.json') ? Response.json(proof.bundle) : new Response(Buffer.from(proof.manifest, 'base64'));
+  } });
+  assert.deepEqual(await releases.catalog(), [
+    { version: '1.2.10', publishedAt: '2026-11-20T10:02:13.000Z' },
+    { version: '1.2.9', publishedAt: null },
+  ]);
+  assert.deepEqual(checked.sort(), ['1.2.10', '1.2.11', '1.2.12', '1.2.9']);
+});
+
+test('the release catalog follows the installed version and survives a registry outage', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'studio-star-catalog-status-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let offline = false;
+  const releases = {
+    install: async () => root,
+    async catalog() {
+      if (offline) throw Error('offline');
+      return ['0.0.31', '0.0.30', '0.0.29'].map(version => ({ version, publishedAt: null }));
+    },
+  };
+  const manager = createStarHarnessManager({ root, releases, externalRoutes: new Map(), settings: async () => ({}),
+    probe: async () => {} });
+  t.after(() => manager.close());
+  await manager.install('0.0.30');
+  await manager.install('0.0.31');
+  const refresh = () => manager.status({ checkUpdates: true, includeVersions: true });
+  const status = await refresh();
+  assert.equal(status.rollbackVersion, '0.0.30');
+  assert.deepEqual(status.releaseVersions.map(row => row.action), ['current', 'rollback', 'history']);
+  offline = true;
+  assert.equal((await refresh()).registryUnavailable, true);
+  assert.deepEqual((await manager.status()).releaseVersions, status.releaseVersions);
+  await assert.rejects(manager.install('0.0.29'), { code: 'STAR_HARNESS_VERSION_UNSUPPORTED' });
+  await manager.install('0.0.30');
+  const rolledBack = await manager.status();
+  assert.equal(rolledBack.rollbackVersion, null);
+  assert.equal(rolledBack.availableUpgrade, '0.0.31');
+  assert.deepEqual(rolledBack.releaseVersions.map(row => row.action), ['upgrade', 'current', 'history']);
+});
+
 test('Star Harness changes automatic model bindings without replacing a leased worker', async t => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'studio-star-model-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
