@@ -2,7 +2,7 @@ import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, mode
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
-import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
+import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback } from './model-settings-capability.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
 import { createModelSettingsDirectory } from './model-settings-directory.mjs';
@@ -335,9 +335,7 @@ export function createModelSettingsSection({
       if (saveLock.current || status !== 'ready') return false;
       saveLock.current = true;
       setSaving(true); setMessage(''); setError('');
-      const failure = reason => reason?.code === 'invalid_model_capabilities'
-        ? '模型预算校验失败：最大输出 Token 必须为正整数，并小于上下文窗口。'
-        : reason?.message || '保存模型与凭证失败';
+      const failure = saveFailureMessage;
       try {
         if (mode === 'cloud') {
           const access = configuration.cloudAccessKey.trim(), secret = configuration.cloudSecretKey.trim();
@@ -394,14 +392,7 @@ export function createModelSettingsSection({
         const discoveredProfiles = await hydrateModelInputs(profiles);
         const persistedProfiles = runtimeProfiles(discoveredProfiles);
         await hostRemote.updateSettings({ modelProfiles: persistedProfiles });
-        // 同步到对话引擎失败时把本机配置回滚到保存前，避免「Host 已改、DSH 未改」。
-        const rollbackProfiles = runtimeProfiles(savedState.profiles);
-        try {
-          await dshModel.applyProfiles({ profiles: persistedProfiles, keys });
-        } catch (reason) {
-          await hostRemote.updateSettings({ modelProfiles: rollbackProfiles }).catch(() => {});
-          throw Object.assign(new Error(`同步到对话引擎失败：${reason?.message || reason}。本机配置已回滚到保存前，请重试。`), { code: reason?.code });
-        }
+        await applyProfilesWithRollback({ dshModel, persistedProfiles, keys, hostRemote, rollbackProfiles: runtimeProfiles(savedState.profiles) });
         // The Host now holds these values: every draft has served its purpose.
         clearModelSettingsDrafts();
         setForm(current => ({ ...current, ...configuration,
@@ -725,29 +716,11 @@ export function createModelSettingsSection({
         ? [h(Chip, { key: 'text' }, '文字'), selected.input?.includes('image') ? h(Chip, { key: 'image' }, '图片') : null]
         : h('span', { className: 'ms-hint' }, capabilityHint));
 
-    // 容量与来源：让用户看到上下文窗口、最大输出的实际生效值，以及它来自
-    // 用户填写、能力目录还是内置默认，而不是一个不可见的常量。
-    const capabilityCatalog = lookupModelCapabilities(selected);
-    const capabilityBudgets = resolveModelBudgets(selected, null);
-    const capacitySource = configured => configured !== undefined ? '用户填写' : capabilityCatalog ? '目录' : '默认';
-    const capacitySummary = h('div', { className: 'ms-capability-summary', 'data-capability-summary': true },
-      h('span', { className: 'ms-label' }, '容量'),
-      h('span', { className: 'ms-capability-item' }, `上下文 ${capabilityBudgets.contextWindow.toLocaleString()}`,
-        h('span', { className: 'ms-hint' }, ` · ${capacitySource(selected.contextWindow)}`)),
-      h('span', { className: 'ms-capability-item' }, `最大输出 ${capabilityBudgets.maxOutputTokens.toLocaleString()}`,
-        h('span', { className: 'ms-hint' }, ` · ${capacitySource(selected.maxOutputTokens)}`)),
-      capabilityCatalog ? h('span', { className: 'ms-hint' }, `目录：${capabilityCatalog.providerName || 'models.dev'}`) : null);
+    const capacitySummary = renderCapabilitySummary(h, selected);
 
     const probeReport = effortProbe.reportFor(selected.id);
-    const applicableLevels = (probeReport?.outcomes || [])
-      .filter(row => row.outcome === 'accepted' || row.outcome === 'confirmed').map(row => row.level);
-    const applyProbeLevels = levels => {
-      patchProfile(selectedIndex, {
-        reasoningLevels: levels, reasoningEfforts: true,
-        defaultReasoningEffort: levels.includes('high') ? 'high' : levels[levels.length - 1],
-      });
-      setMessage(`已应用探测到的 ${levels.length} 个档位，保存后生效`);
-    };
+    const applicableLevels = applicableProbeLevels(probeReport);
+    const applyProbeLevels = createApplyProbeLevels({ patchProfile, selectedIndex, setMessage });
     const reasoningField = renderModelEffortSettings(h, {
       efforts: selectedReasoning.efforts, value: reasoningValue, levels: selected.reasoningLevels,
       protocol: selected.protocol, provisional: !Array.isArray(selected.reasoningLevels) && reasoningProfileFor(selected.provider).fallback,
@@ -827,12 +800,10 @@ export function createModelSettingsSection({
           selectedDirty && !selectedDraft ? h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => revertProfile(selectedIndex) }, '撤销修改') : null,
           selectedDraft
             ? h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '取消')
-            : (() => {
-              const lastEnabled = selected.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1;
-              return h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn',
-                disabled: lastEnabled, title: lastEnabled ? '请先添加或启用另一个模型，再移除当前模型' : undefined,
-                onClick: () => removeProfile(selectedIndex) }, '移除');
-            })())),
+            : renderRemoveButton(h, {
+              lastEnabled: selected.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1,
+              onClick: () => removeProfile(selectedIndex),
+            }))),
       h('div', { className: 'ms-grid ms-grid-2 ms-model-fields' },
         h('div', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel),
         reasoningField),
