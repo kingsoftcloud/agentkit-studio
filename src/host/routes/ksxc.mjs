@@ -6,8 +6,15 @@ export function createKsxcRoute(ksxc) {
     const { releases, accounts } = ksxc || {};
     if (endpoint === 'ksxc/status') {
       return { ok: true, value: releases && accounts
-        ? { supported: true, release: await releases.status(), connection: await accounts.status(user) }
+        // Refresh is opt-in: the settings page asks for it, but the Agent form and
+        // the runtime catalog read the same status and must stay off the network.
+        ? { supported: true, release: await releases.status(payload?.refresh ? { refresh: true } : undefined), connection: await accounts.status(user) }
         : { supported: false } };
+    }
+    if (endpoint === 'ksxc/install-start' || endpoint === 'ksxc/install-status') {
+      if (!releases?.startInstall) throw Object.assign(new Error('当前 Studio Host 不支持安装 KSXC。'), { code: 'KSXC_HOST_UNAVAILABLE' });
+      return { ok: true, value: endpoint === 'ksxc/install-start'
+        ? releases.startInstall(payload?.version) : releases.installStatus(payload?.requestId) };
     }
     if (endpoint === 'ksxc/cache-clear') {
       if (!ksxc?.managedConnection?.clear) return { ok: true, value: { cleared: false } };

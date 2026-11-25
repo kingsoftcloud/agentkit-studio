@@ -455,7 +455,11 @@ export function createProductClient(connection, { window = globalThis.window } =
         // Lifecycle calls must live on the base product client: the DSH plugin
         // surface mounts this object directly (no compatibility extension), so
         // compatibility-methods-only keys would be missing at runtime.
-        ksxcStatus: signal => studioBridgeOperation('ksxc/status', {}, signal),
+        // `refresh` asks the Host to re-read the company gateway; only the settings
+        // page wants that, so every other caller keeps the local answer.
+        ksxcStatus: (signal, { refresh = false } = {}) => studioBridgeOperation('ksxc/status', refresh ? { refresh: true } : {}, signal),
+        ksxcInstallStart: version => studioBridgeOperation('ksxc/install-start', { version }),
+        ksxcInstallStatus: requestId => studioBridgeOperation('ksxc/install-status', { requestId }),
         ksxcActivate: version => studioBridgeOperation('ksxc/activate', { version }),
         ksxcEnable: enabled => studioBridgeOperation('ksxc/enable', { enabled }),
         ksxcRollback: () => studioBridgeOperation('ksxc/rollback', {}),

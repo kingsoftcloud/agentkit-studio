@@ -10,7 +10,7 @@ description: "调用已部署 Agent 的 AgentEngine HTTP 接口：43 个 Action�
 | | Studio RPC | AgentEngine Action（本页） |
 | --- | --- | --- |
 | 谁和谁说话 | 浏览器 ↔ 本地 Host | 本地 Host ↔ 云控制面 |
-| 规模 | `144` 个 operation | `43` 个 Action + `5` 个 Skill 服务 Action |
+| 规模 | `146` 个 operation | `43` 个 Action + `5` 个 Skill 服务 Action |
 | 通道 | `/agentkit` | `POST /agentengine/api/v1/{Action}` 或 KOP `/?Action=…&Version=v1` |
 | 信封 | `{ ok, value }` / `{ ok, error }` | `{ Code, RequestId, Error, Data }` |
 | 认证 | 本地 Host 会话 | `Authorization: Bearer` 或 AWS SigV4 |
@@ -336,7 +336,7 @@ for (;;) {
 ## 相关页面
 
 <Cards>
-  <Card title="控制协议" href="/docs/reference/operations">`144` 个 Studio RPC operation（浏览器 ↔ 本地 Host）</Card>
+  <Card title="控制协议" href="/docs/reference/operations">`146` 个 Studio RPC operation（浏览器 ↔ 本地 Host）</Card>
   <Card title="托管运行时生命周期" href="/docs/deployment/managed-runtime-lifecycle">19 个部署状态与能力矩阵</Card>
   <Card title="错误码" href="/docs/reference/errors">全量错误码索引</Card>
   <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">从 Studio 发起一次部署</Card>
