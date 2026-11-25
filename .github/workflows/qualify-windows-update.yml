@@ -1,4 +1,4 @@
-name: Release and qualify signed Studio installers
+name: Qualify published Studio macOS installer
 
 on:
   workflow_dispatch:
@@ -15,12 +15,8 @@ on:
         description: Installed desktop version
         type: string
         required: true
-      mac_candidate:
-        description: Accepted signed macOS candidate run ID
-        type: string
-        required: true
-      windows_candidate:
-        description: Accepted signed Windows candidate run ID
+      mac_sha256:
+        description: Disk image digest from signed macOS CI acceptance
         type: string
         required: true
 
@@ -28,185 +24,8 @@ permissions:
   contents: read
 
 jobs:
-
-  publish-signed:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: write
-      actions: read
-    outputs:
-      mac_sha256: ${{ steps.candidate.outputs.mac_sha256 }}
-      installer_sha256: ${{ steps.candidate.outputs.installer_sha256 }}
-      app_sha256: ${{ steps.candidate.outputs.app_sha256 }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.studio_ref }}
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-      - name: Reverify accepted signed source and installer archives
-        id: candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ inputs.studio_ref }}
-          MAC_RUN: ${{ inputs.mac_candidate }}
-          WIN_RUN: ${{ inputs.windows_candidate }}
-          BUILD_VERSION: ${{ inputs.desktop_version }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ && "$MAC_RUN" =~ ^[0-9]+$ && "$WIN_RUN" =~ ^[0-9]+$ && "$BUILD_VERSION" =~ ^[0-9][0-9A-Za-z.-]+$ && "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test "v$(node -p 'require("./package.json").version')" = "$RELEASE_TAG"
-          scratch="$RUNNER_TEMP/signed-release-input"
-          mkdir -p "$scratch/assets"
-          node scripts/prepare-macos-candidate.mjs --repository "$GITHUB_REPOSITORY" --run "$MAC_RUN" --source "$SOURCE_SHA" --version "$BUILD_VERSION" --channel nightly --output "$scratch/mac"
-          node scripts/prepare-windows-candidate.mjs --repository "$GITHUB_REPOSITORY" --run "$WIN_RUN" --source "$SOURCE_SHA" --version "$BUILD_VERSION" --require-ui --output "$scratch/win"
-          python3 - "$scratch" "$BUILD_VERSION" <<'PY'
-          import hashlib, json, os, shutil, sys
-          from pathlib import Path, PurePosixPath
-          from zipfile import ZipFile
-
-          root = Path(sys.argv[1])
-          version = sys.argv[2]
-          assets = root / 'assets'
-          def match(archive, predicate):
-              paths = [name for name in archive.namelist() if not name.endswith('/') and predicate(PurePosixPath(name))]
-              if len(paths) != 1:
-                  raise RuntimeError(f'Expected one archive entry, found {paths}')
-              return paths[0]
-          def data(archive, name, parent=None):
-              entry = match(archive, lambda path: path.name == name and (parent is None or parent in path.parts[:-1]))
-              return archive.read(entry)
-          def stage_file(archive, name, parent=None):
-              entry = match(archive, lambda path: path.name == name and (parent is None or parent in path.parts[:-1]))
-              target = assets / name
-              with archive.open(entry) as source, target.open('xb') as handle:
-                  shutil.copyfileobj(source, handle)
-              with target.open('rb') as handle:
-                  return hashlib.file_digest(handle, 'sha256').hexdigest()
-          with ZipFile(root / 'mac' / 'candidate.zip') as mac:
-              dmg = f'deepseek-harness-{version}-mac-arm64.dmg'
-              mac_sha = stage_file(mac, dmg)
-              sums = data(mac, 'SHA256SUMS').decode().splitlines()
-              assert f'{mac_sha}  {dmg}' in sums or f'{mac_sha}  ./{dmg}' in sums
-              assert json.loads(data(mac, 'mac-arm64-release.json'))['version'] == version
-          with ZipFile(root / 'win' / 'candidate.zip') as win:
-              exe = f'deepseek-harness-{version}-win-x64.exe'
-              win_sha = stage_file(win, exe, 'windows-release')
-              stage_file(win, exe + '.blockmap', 'windows-release')
-              installed = json.loads(data(win, 'windows-install.json', 'windows-proof').decode('utf-8-sig'))
-              assert installed['version'] == version and installed['installerSha256'].lower() == win_sha
-              assert all(installed[field] for field in ('installed', 'installerSigned', 'timestamped', 'appSigned', 'uiVerified'))
-              harness = json.loads(data(win, 'evidence.json', 'harness-upgrade').decode('utf-8-sig'))
-              assert harness['baseline'] == '0.0.31' and harness['upgrade'] == '0.0.32' and not harness.get('error')
-              assert harness['unlockedAfterRun'] and len(harness['checkpoints']) >= 6
-          with open(Path(os.environ['GITHUB_OUTPUT']), 'a') as handle:
-              for key, value in [('mac_sha256', mac_sha), ('installer_sha256', win_sha), ('app_sha256', installed['appSha256'].lower())]:
-                  print(f'{key}={value}', file=handle)
-          PY
-          (cd "$scratch/assets" && sha256sum -- ./*.dmg ./*.exe ./*.blockmap > SHA256SUMS)
-      - name: Publish the verified immutable Studio Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ inputs.studio_ref }}
-          MAC_RUN: ${{ inputs.mac_candidate }}
-          WIN_RUN: ${{ inputs.windows_candidate }}
-          BUILD_VERSION: ${{ inputs.desktop_version }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          if tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha 2>/dev/null); then test "$tag_sha" = "$SOURCE_SHA"; fi
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish,isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null || :
-          if [[ ! -s "$RUNNER_TEMP/existing-release.json" ]]; then
-            {
-              printf 'AgentKit Studio %s\n\n' "$RELEASE_TAG"
-              printf '桌面构建版本 %s，源码提交 %s。\n\n' "$BUILD_VERSION" "$SOURCE_SHA"
-              printf '%s\n' '本版完善 Star Harness 插件介绍、组件和版本管理，支持从插件页升级及回退。'
-              printf '%s\n\n' 'Windows 安装包通过签名、实际安装、Harness 0.0.31 至 0.0.32 升级、重启续跑及回退验收。'
-              printf 'macOS 构建 https://github.com/%s/actions/runs/%s\n\nWindows 构建 https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$MAC_RUN" "$GITHUB_REPOSITORY" "$WIN_RUN"
-            } > "$RUNNER_TEMP/studio-release-notes.md"
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --draft --title "Studio $RELEASE_TAG" --notes-file "$RUNNER_TEMP/studio-release-notes.md"
-          fi
-          existing_sha=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)
-          test "$existing_sha" = "$SOURCE_SHA"
-          for asset in "$RUNNER_TEMP/signed-release-input/assets/"*; do
-            name=$(basename "$asset")
-            expected="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
-            digest=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq ".assets[] | select(.name==\"$name\") | .digest")
-            if [[ -n "$digest" ]]; then test "$digest" = "$expected"
-            else gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
-            fi
-            test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq ".assets[] | select(.name==\"$name\") | .digest")" = "$expected"
-          done
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)" = "$SOURCE_SHA"
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
-  published-windows:
-    needs: publish-signed
-    runs-on: windows-2025
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.studio_ref }}
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-      - run: pnpm install --frozen-lockfile
-      - name: Download published installer and install with Authenticode verification
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ inputs.studio_ref }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          BUILD_VERSION: ${{ inputs.desktop_version }}
-          INSTALLER_SHA256: ${{ needs.publish-signed.outputs.installer_sha256 }}
-          APP_SHA256: ${{ needs.publish-signed.outputs.app_sha256 }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:SOURCE_SHA -notmatch '^[a-f0-9]{40}$' -or (git rev-parse HEAD) -ne $env:SOURCE_SHA) { throw 'Incorrect release source checkout' }
-          if ($env:RELEASE_TAG -notmatch '^(?:desktop-)?v?[0-9][A-Za-z0-9.-]+$' -or $env:BUILD_VERSION -notmatch '^[0-9][A-Za-z0-9.-]+$' -or $env:INSTALLER_SHA256 -notmatch '^[a-fA-F0-9]{64}$' -or $env:APP_SHA256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid release evidence inputs' }
-          $tagCommit = gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:RELEASE_TAG" --jq .sha
-          if ($LASTEXITCODE -or $tagCommit -ne $env:SOURCE_SHA) { throw 'Published release tag differs from accepted source' }
-          $artifacts = Join-Path $env:RUNNER_TEMP 'published-studio'
-          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern '*-win-x64.exe' --pattern '*.exe.blockmap' --dir $artifacts
-          if ($LASTEXITCODE) { throw 'Could not download the published release assets' }
-          $installer = @(Get-ChildItem -LiteralPath $artifacts -Filter '*.exe' -File)
-          if ($installer.Count -ne 1 -or (Get-FileHash $installer[0].FullName -Algorithm SHA256).Hash -ne $env:INSTALLER_SHA256) { throw 'Downloaded installer differs from signed acceptance' }
-          $signature = Get-AuthenticodeSignature $installer[0].FullName
-          if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'Published installer signature invalid or missing timestamp' }
-          $env:CERTUM_THUMBPRINT = $signature.SignerCertificate.Thumbprint
-          ./scripts/verify-windows-install.ps1 -Artifacts $artifacts -Version $env:BUILD_VERSION -Evidence .artifacts/windows-proof
-          $receipt = Get-Content .artifacts/windows-proof/windows-install.json -Raw | ConvertFrom-Json
-          if ($receipt.appSha256 -ne $env:APP_SHA256) { throw 'Installed executable differs from signed acceptance' }
-          $receipt | Add-Member -NotePropertyName releaseTag -NotePropertyValue $env:RELEASE_TAG
-          $receipt | Add-Member -NotePropertyName sourceCommit -NotePropertyValue $env:SOURCE_SHA
-          $receipt | ConvertTo-Json | Set-Content .artifacts/windows-proof/windows-install.json
-      - name: Upgrade in plugin UI, restart original conversation and roll back
-        shell: pwsh
-        env:
-          AGENTKIT_TELEMETRY_DISABLED: '1'
-        run: |
-          node scripts/verify-desktop-harness-upgrade.mjs "$env:STUDIO_INSTALLED_APP" 0.0.31 0.0.32 .artifacts/windows-proof/harness-upgrade
-          if ($LASTEXITCODE) { throw 'Plugin upgrade, restart or rollback verification failed' }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: published-windows-acceptance
-          path: .artifacts/windows-proof/
-          if-no-files-found: error
-
   published-macos:
-    needs: publish-signed
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -226,7 +45,7 @@ jobs:
           SOURCE_SHA: ${{ inputs.studio_ref }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           BUILD_VERSION: ${{ inputs.desktop_version }}
-          DMG_SHA256: ${{ needs.publish-signed.outputs.mac_sha256 }}
+          DMG_SHA256: ${{ inputs.mac_sha256 }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ && "$RELEASE_TAG" =~ ^(desktop-)?v?[0-9][A-Za-z0-9.-]+$ && "$DMG_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
