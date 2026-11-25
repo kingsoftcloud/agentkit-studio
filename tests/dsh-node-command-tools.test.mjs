@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { checkGovernedCommand } from '../src/providers/studio-local-command/local-command-policy.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
@@ -164,6 +165,21 @@ test('approval denial, formal mutation, governed policy and symlink cwd fail bef
     assert.equal(result.status, 'error'); assert.equal(result.content.executed, false);
   }
   assert.equal(existsSync(join(f.workspaceRoot, 'forbidden')), false);
+});
+
+test('the governed parser applies the same command policy to nested literal commands', async t => {
+  const { workspaceRoot } = fixture(t);
+  const inputs = [
+    'sudo true',
+    "bash -c 'sudo true'",
+    "sh <<'SCRIPT'\nsudo true\nSCRIPT",
+    `python3 -c 'import os; os.system("sudo true")'`,
+  ];
+  for (const command of inputs) {
+    const finding = await checkGovernedCommand(command, { cwd: workspaceRoot, allowedRoots: [workspaceRoot] });
+    assert.equal(finding?.rule, 'command_rejected');
+  }
+  assert.equal(await checkGovernedCommand("sh -c 'printf ok'", { cwd: workspaceRoot, allowedRoots: [workspaceRoot] }), null);
 });
 
 test('original cancellation settles an uncooperative approval and observes its late rejection', async t => {

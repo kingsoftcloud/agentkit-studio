@@ -52,7 +52,7 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | Wait for the build to become available before downloading |
 | `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:74` | `runtime.type` is not one of `STUDIO_RUNTIME_TYPES` |
 | `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:38` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
-| `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:75` | Shrink the request body or switch to chunked upload |
+| `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:76` | Shrink the request body or switch to chunked upload |
 | `INVALID_QUERY` | `src/agent-catalog.mjs:9` | Check the query string types and enum values |
 | `CREDENTIAL_VALUE_MISSING` | `src/host/routes/credentials.mjs:7` | Fill in the value for that credential reference |
 | `EVALUATION_TARGET_NOT_FOUND` | `src/host/services/automation.mjs:47` | Register the evaluation target first |
@@ -89,13 +89,13 @@ The remaining 171 codes are grouped by namespace, with meaning and the first tri
 | `AGENTKIT` | 3 | Standalone codes without a namespace prefix. | `src/contracts/definitions.mjs:17` |
 | `BUILTIN` | 3 | Built-in Skill manifests. | `src/builtin-skills.mjs:44` |
 | `MEMORY` | 3 | Memory store outcomes. | `src/memory-identity.mjs:53` |
-| `UPSTREAM` | 3 | Upstream streaming. | `src/model-proxy-handler.mjs:225` |
+| `UPSTREAM` | 3 | Upstream streaming. | `src/model-proxy-handler.mjs:227` |
 | `AGENT` | 2 | Agent catalog and revision resolution. | `src/host/routes/agents.mjs:13` |
 | `BUILD` | 2 | Builds and frozen runtime. | `src/agent-preset-admission.mjs:323` |
 | `CREDENTIAL` | 2 | Credential references and values. | `src/host/routes/credentials.mjs:6` |
 | `DEPLOYMENT` | 2 | Deployment interruption and recovery. | `src/deployment-rollouts.mjs:194` |
 | `EVALUATION` | 2 | Evaluation targets and runs. | `src/host/routes/evaluations.mjs:8` |
-| `REQUEST` | 2 | Request body and cancellation. | `src/model-proxy-handler.mjs:75` |
+| `REQUEST` | 2 | Request body and cancellation. | `src/model-proxy-handler.mjs:76` |
 | `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:38` |
 | `STAR` | 2 | Local Star Harness install, version and workspace binding. | `src/host/routes/http.mjs:65` |
 | `A2A` | 1 | Agent-to-Agent control plane. | `src/providers/native-a2a-tool-activity.mjs:175` |
@@ -107,7 +107,7 @@ The remaining 171 codes are grouped by namespace, with meaning and the first tri
 | `SCHEDULE` | 1 | Schedules. | `src/host/services/automation.mjs:29` |
 | `SCHEDULER` | 1 | Host scheduler. | `src/host/routes/schedules.mjs:14` |
 | `SERVER` | 1 | Server connection. | `src/remote/compatibility-methods.mjs:57` |
-| `STATELESS` | 1 | Stateless call input. | `src/model-proxy-handler.mjs:83` |
+| `STATELESS` | 1 | Stateless call input. | `src/model-proxy-handler.mjs:84` |
 | `SUMMON` | 1 | Template summon conflicts. | `src/template-summon.mjs:108` |
 | `TOOL` | 1 | Tool lookup. | `src/providers/dsh-presentation-tools.mjs:7` |
 | `USER` | 1 | User question validation. | `src/providers/user-question-tool.mjs:54` |

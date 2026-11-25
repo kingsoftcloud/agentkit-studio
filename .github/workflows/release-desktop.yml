@@ -78,6 +78,14 @@ on:
         required: false
         default: false
         type: boolean
+      harness_upgrade_from:
+        description: "Signed Harness baseline for the Windows candidate's plugin upgrade check"
+        type: string
+        default: ""
+      harness_upgrade_to:
+        description: "Signed Harness target for the Windows candidate's plugin upgrade check"
+        type: string
+        default: ""
       create_github_release:
         description: "Create or refresh the GitHub Release for an already-signed candidate; run after the feed is published, normally with candidate_run_id"
         required: false
@@ -142,6 +150,19 @@ jobs:
       plugin_roots: ${{ steps.product.outputs.plugin_roots }}
       plugin_bundles: ${{ steps.product.outputs.plugin_bundles }}
     steps:
+      - name: Require signed Harness qualification versions for the Windows candidate
+        if: ${{ inputs.candidate_run_id == '' && (inputs.publish_feed || inputs.queue_windows) }}
+        shell: bash
+        env:
+          HARNESS_UPGRADE_FROM: ${{ inputs.harness_upgrade_from }}
+          HARNESS_UPGRADE_TO: ${{ inputs.harness_upgrade_to }}
+        run: |
+          set -euo pipefail
+          version_pattern='^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}$'
+          if [[ ! "$HARNESS_UPGRADE_FROM" =~ $version_pattern || ! "$HARNESS_UPGRADE_TO" =~ $version_pattern || "$HARNESS_UPGRADE_FROM" == "$HARNESS_UPGRADE_TO" ]]; then
+            echo 'Provide two distinct signed Harness versions to qualify the Windows candidate.' >&2
+            exit 1
+          fi
       # The packaged DSH 0.2.2-rc.1 Host accepts nightly/latest; nightly is the
       # default because latest rejects prerelease versions. Preview and stable
       # stay selectable so an in-flight or emergency release can still be rebuilt
@@ -927,6 +948,8 @@ jobs:
       - name: Queue the Windows build for the same release batch
         env:
           GH_TOKEN: ${{ github.token }}
+          HARNESS_UPGRADE_FROM: ${{ inputs.harness_upgrade_from }}
+          HARNESS_UPGRADE_TO: ${{ inputs.harness_upgrade_to }}
         run: |
           set -euo pipefail
           gh workflow run release-windows.yml \
@@ -936,4 +959,6 @@ jobs:
             -f build_version="${{ needs.source-gate.outputs.build_version }}" \
             -f channel="${{ needs.source-gate.outputs.channel }}" \
             -f update_origin="${{ needs.source-gate.outputs.update_origin }}" \
+            -f harness_upgrade_from="$HARNESS_UPGRADE_FROM" \
+            -f harness_upgrade_to="$HARNESS_UPGRADE_TO" \
             -f diagnostic_only=false

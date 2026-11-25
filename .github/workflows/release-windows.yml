@@ -16,11 +16,11 @@ on:
         type: boolean
         default: false
       harness_upgrade_from:
-        description: Published signed Harness baseline for optional plugin UI qualification
+        description: Published signed Harness baseline, required for a signed Windows candidate
         type: string
         default: ''
       harness_upgrade_to:
-        description: Published signed Harness upgrade for optional plugin UI qualification
+        description: Published signed Harness upgrade, required for a signed Windows candidate
         type: string
         default: ''
       qualify_telemetry:
@@ -76,7 +76,7 @@ jobs:
         shell: pwsh
         run: throw 'Telemetry qualification requires a signed candidate'
       - name: Validate Harness qualification options
-        if: ${{ inputs.harness_upgrade_from != '' || inputs.harness_upgrade_to != '' }}
+        if: ${{ !inputs.diagnostic_only || inputs.harness_upgrade_from != '' || inputs.harness_upgrade_to != '' }}
         shell: pwsh
         env:
           HARNESS_UPGRADE_FROM: ${{ inputs.harness_upgrade_from }}

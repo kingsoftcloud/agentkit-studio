@@ -330,7 +330,12 @@ export class E2BCommandStore {
     try {
       child = spawn(process.execPath, ['--input-type=module', '-e',
         `import(${JSON.stringify(supervisor)}).then(m => m.runSupervisor()).catch(() => process.exit(1))`],
-        { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: { ...process.env, NODE_NO_WARNINGS: '1' } });
+        { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: {
+          ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot } : {}),
+          ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+          ...(process.env.NODE_EXTRA_CA_CERTS ? { NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS } : {}),
+          NODE_NO_WARNINGS: '1',
+        } });
     } catch { recordSpawnFailure(); return; }
     child.once('error', () => { try { recordSpawnFailure(); } catch {} });
     child.stdin.on('error', () => {});

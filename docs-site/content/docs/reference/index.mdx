@@ -1,6 +1,6 @@
 ---
 title: "参考"
-description: "由源码生成的契约参考：144 个 operation、198 个错误码、154 个环境变量、56 个 make 目标。"
+description: "由源码生成的契约参考：144 个 operation、198 个错误码、156 个环境变量、56 个 make 目标。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
@@ -24,12 +24,12 @@ node scripts/extract-reference.mjs --check  # CI：源码改了但页面没重�
 | [运行时与实体契约](./runtime-contract.mdx) | 4 种运行时的能力矩阵、实体标识与校验错误 | 4 runtime types | `src/runtime-contract.mjs` |
 | [控制协议](./operations.mdx) | 每个 operation id 的作用与 Host 处理器 | 144 operations · 26 domains | `src/contracts/operations.mjs` |
 | [配置参考](./configuration.mdx) | 四个配置文件的全部键与默认值 | 4 manifests | `src/product.json` |
-| [环境变量参考](./environment.mdx) | 可配置 / 平台注入 / 禁止修改三档 | 154 names | `src/**` |
+| [环境变量参考](./environment.mdx) | 可配置 / 平台注入 / 禁止修改三档 | 156 names | `src/**` |
 | [模板 Schema](./templates.mdx) | 专家团模板的字段约束与拒绝形状 | 7 codes | `src/team-template-contract.mjs` |
 | [插件市场目录 Schema](./plugin-catalog.mdx) | DSH 索引结构、默认源与 Star Harness 签名发行 | format 1 · 80 plugins | `assets/plugin-market/index.json` |
 | [部署状态机](./deployment-states.mdx) | 状态、界面标签、轮询与需关注 | 19 states | `src/client/state/deployment.mjs` |
 | [错误码](./errors.mdx) | Top 30 用户动作 + 命名空间索引 | 198 codes | `src/**` |
-| [命令参考](./commands.mdx) | make 目标、依赖与校验脚本 | 56 make · 106 verify | `Makefile` |
+| [命令参考](./commands.mdx) | make 目标、依赖与校验脚本 | 56 make · 104 verify | `Makefile` |
 | [会话事件](./session-events.mdx) | 事件触发时机、配对规则与持久化 | 16 events · 3 frames | `src/host/dsh-session-contract.mjs` |
 
 ## 按角色阅读
