@@ -39,9 +39,15 @@ export function readZipFiles(buffer, { maxArchiveBytes = 20 * 1024 * 1024, maxEn
     const nameLength = buffer.readUInt16LE(cursor + 28), offset = buffer.readUInt32LE(cursor + 42);
     const next = cursor + 46 + nameLength + buffer.readUInt16LE(cursor + 30) + buffer.readUInt16LE(cursor + 32);
     if (next > end || offset + 30 > central || buffer.readUInt32LE(offset) !== 0x04034b50) throw new Error('invalid archive entry bounds');
-    const name = buffer.toString('utf8', cursor + 46, cursor + 46 + nameLength);
+    // Windows-built archives (PowerShell Compress-Archive and several zip
+    // CLIs) record '\' as the separator, so a published Skill can mix both
+    // separators in one name. Normalize to '/' *before* validating: the
+    // traversal, absolute-path and drive-letter checks then inspect the real
+    // components instead of rejecting an otherwise well-formed archive, while
+    // '..'/'/' that normalization exposes is still rejected.
+    const name = buffer.toString('utf8', cursor + 46, cursor + 46 + nameLength).replace(/\\/g, '/');
     const mode = buffer.readUInt32LE(cursor + 38) >>> 16;
-    if (!name || /[\\\0]/.test(name) || name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.split('/').some(part => part === '..' || part === '.') || names.has(name) || (mode & 0xf000) === 0xa000) throw new Error('unsafe archive path');
+    if (!name || name.includes('\0') || name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.split('/').some(part => part === '..' || part === '.') || names.has(name) || (mode & 0xf000) === 0xa000) throw new Error('unsafe archive path');
     names.add(name);
     totalBytes += size;
     if (size > maxFileBytes || totalBytes > maxExpandedBytes || (buffer.readUInt16LE(cursor + 8) & 1)) throw new Error('archive expansion limit or encryption');
