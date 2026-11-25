@@ -7,13 +7,44 @@ import { createZip, readZipFiles } from '../src/zip.mjs';
 import { materializeCloudSkill, runtimeSkill } from '../src/skill-files.mjs';
 
 test('Skill archives reject traversal, duplicate files and damaged contents before extraction', () => {
-  for (const name of ['../outside.py', '/tmp/outside.py', 'C:/outside.py', 'scripts/../../outside.py', 'scripts\\outside.py']) {
+  for (const name of ['../outside.py', '/tmp/outside.py', 'C:/outside.py', 'scripts/../../outside.py']) {
     assert.throws(() => readZipFiles(createZip([{ name, data: 'bad' }])), /unsafe archive path/);
   }
   assert.throws(() => readZipFiles(createZip([{ name: 'same', data: 'a' }, { name: 'same', data: 'b' }])), /unsafe archive path/);
   const damaged = createZip([{ name: 'SKILL.md', data: 'hello' }]);
   damaged[38] ^= 1;
   assert.throws(() => readZipFiles(damaged), /checksum mismatch/);
+});
+
+test('Windows-built archives are normalized to POSIX separators instead of rejected', () => {
+  // PowerShell Compress-Archive and several zip CLIs record '\' as the
+  // separator. The published sap-mm-procureanalyze-platform-1.0.1 archive is
+  // one of them: the first separator is a literal '/' and every later one is
+  // '\', so the raw entry name mixes both.
+  const archive = createZip([
+    { name: 'skill\\SKILL.md', data: '# Test' },
+    { name: 'skill/references\\demand-inventory\\ROUTER.md', data: '# Router' },
+    { name: 'skill\\scripts\\check.py', data: 'print(1)', executable: true },
+    { name: 'skill\\assets\\', data: '' },
+  ]);
+  const files = readZipFiles(archive);
+  assert.deepEqual(files.map(file => file.name), [
+    'skill/SKILL.md',
+    'skill/references/demand-inventory/ROUTER.md',
+    'skill/scripts/check.py',
+  ]);
+  assert.equal(files[2].executable, true);
+});
+
+test('Normalization still rejects traversal and duplicates it exposes', () => {
+  for (const name of ['..\\outside.py', '\\tmp\\outside.py', 'C:\\outside.py', 'scripts\\..\\..\\outside.py', 'scripts\\.\\outside.py']) {
+    assert.throws(() => readZipFiles(createZip([{ name, data: 'bad' }])), /unsafe archive path/);
+  }
+  // Two spellings of the same entry must not both survive normalization.
+  assert.throws(() => readZipFiles(createZip([
+    { name: 'skill/SKILL.md', data: 'a' },
+    { name: 'skill\\SKILL.md', data: 'b' },
+  ])), /unsafe archive path/);
 });
 
 test('cached Skill script tampering is detected before reuse', async () => {
