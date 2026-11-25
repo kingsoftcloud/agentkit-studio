@@ -69,22 +69,28 @@ function recursiveForce(args) {
   }
   return options.toLowerCase().includes('r') && options.toLowerCase().includes('f');
 }
-function checkTokens(args, path, line, depth, stdin = null) {
+function checkTokens(args, path, line, depth, { governed, stdin = null, topLevel = false }) {
   limited(depth);
   const index = executableIndex(args); if (index < 0) return null;
   const command = basename(args[index]).toLowerCase(), rest = args.slice(index + 1);
+  const gateway = governed ? gatewayPolicy(args) ?? (args[0] !== command ? gatewayPolicy([command, ...rest]) : null) : null;
+  const rejection = gateway && { ...gateway, path, line };
+  // Keep the existing gateway result for direct requests and the more
+  // specific local diagnostic for formerly local-only nested commands.
+  if (topLevel && rejection) return rejection;
   if (blocked.has(command)) return finding(`shell.blocked_command.${command}`, `command '${command}' is not allowed by the local-process policy`, path, line);
   if (command === 'rm' && recursiveForce(rest)) return finding('shell.recursive_force_remove', 'recursive forced removal is not allowed', path, line);
+  if (rejection) return rejection;
   if (stdin !== null && !rest.includes('-c') && !rest.includes('-m')
     && (!rest.length || rest[0] === '-' || shell(command) && rest.includes('-s'))) {
-    const result = python(command) ? checkPython(stdin, path || '<stdin>', depth + 1)
-      : shell(command) ? checkShell(stdin, path || '<stdin>', depth + 1, false, false, command === 'bash' ? 'bash' : 'posix') : null;
+    const result = python(command) ? checkPython(stdin, path || '<stdin>', depth + 1, governed)
+      : shell(command) ? checkShell(stdin, path || '<stdin>', depth + 1, governed, false, command === 'bash' ? 'bash' : 'posix') : null;
     if (result) return result;
   }
   const option = rest.indexOf('-c');
   if (option < 0 || option + 1 >= rest.length) return null;
-  return python(command) ? checkPython(rest[option + 1], path || '<command>', depth + 1)
-    : shell(command) ? checkShell(rest[option + 1], path, depth + 1, false, false, command === 'bash' ? 'bash' : 'posix') : null;
+  return python(command) ? checkPython(rest[option + 1], path || '<command>', depth + 1, governed)
+    : shell(command) ? checkShell(rest[option + 1], path, depth + 1, governed, false, command === 'bash' ? 'bash' : 'posix') : null;
 }
 function checkShell(text, path, depth, governed = false, scanEntries = false, dialect = 'bash') {
   limited(depth);
@@ -94,8 +100,8 @@ function checkShell(text, path, depth, governed = false, scanEntries = false, di
     return finding('invalid_command', 'Bash combined redirection requires an explicit Bash interpreter', path);
   if (analysis.backgrounds.length) return finding('shell.background_process', 'background process syntax is not allowed', path, analysis.backgrounds[0]);
   for (const { argv, line, stdin } of analysis.commands) {
-    const result = (governed ? gatewayPolicy(argv) : null) ?? checkTokens(argv, path, line, depth + 1, stdin)
-      ?? (scanEntries ? scanScripts(argv) : null);
+    const result = checkTokens(argv, path, line, depth + 1, { governed, stdin, topLevel: scanEntries })
+      ?? (scanEntries ? scanScripts(argv, governed) : null);
     if (result) return result;
   }
   return null;
@@ -120,7 +126,7 @@ function keywordTrue(args, name) {
   return args.keywords.some(item => ruffIdentifier(item.fields.arg) === name
     && unwrapRuff(item.fields.value)?.tag === 'ExprBooleanLiteral' && unwrapRuff(item.fields.value).fields.value === true);
 }
-function checkPython(source, path, depth) {
+function checkPython(source, path, depth, governed) {
   limited(depth); if (Buffer.byteLength(source) > 2 * 1024 * 1024) throw Error('command_policy_source_limit');
   let wire;
   try {
@@ -149,14 +155,14 @@ function checkPython(source, path, depth) {
     if (['os.kill', 'os.killpg', 'os.setsid'].includes(name)) return finding('python.process_control', `call to ${name} is not allowed`, path, line);
     if (['os.popen', 'os.system'].includes(name) && args.args.length) {
       const text = ruffString(args.args[0]);
-      if (text !== null) { const result = checkShell(text, path, depth + 1); if (result) return result; }
+      if (text !== null) { const result = checkShell(text, path, depth + 1, governed); if (result) return result; }
     }
     if (subprocesses.has(name)) {
       if (name === 'subprocess.Popen' && keywordTrue(args, 'start_new_session'))
         return finding('python.detached_process', 'subprocess start_new_session=True is not allowed', path, line);
       const command = args.args.length ? commandLiteral(args.args[0]) : null;
-      const result = Array.isArray(command) ? checkTokens(command, path, line, depth + 1)
-        : typeof command === 'string' && keywordTrue(args, 'shell') ? checkShell(command, path, depth + 1) : null;
+      const result = Array.isArray(command) ? checkTokens(command, path, line, depth + 1, { governed })
+        : typeof command === 'string' && keywordTrue(args, 'shell') ? checkShell(command, path, depth + 1, governed) : null;
       if (result) return result;
     }
     if (name === 'shutil.rmtree' && args.args.length) {
@@ -176,7 +182,7 @@ function directScript(command, rest) {
   }
   return null;
 }
-function scanScripts(args) {
+function scanScripts(args, governed) {
   const index = executableIndex(args); if (index < 0) return null;
   const script = directScript(args[index], args.slice(index + 1)); if (script === null) return null;
   let path, source;
@@ -186,8 +192,8 @@ function scanScripts(args) {
     if (statSync(path).size > 2 * 1024 * 1024) throw Error('command_policy_source_limit');
     source = new TextDecoder('utf8', { fatal: true, ignoreBOM: true }).decode(readFileSync(path));
   } catch (error) { if (error.message === 'command_policy_source_limit') throw error; return null; }
-  return extname(path).toLowerCase() === '.py' ? checkPython(source, path, 0)
-    : checkShell(source, path, 0, false, false, ['sh', 'dash'].includes(basename(args[index])) ? 'posix' : 'bash');
+  return extname(path).toLowerCase() === '.py' ? checkPython(source, path, 0, governed)
+    : checkShell(source, path, 0, governed, false, ['sh', 'dash'].includes(basename(args[index])) ? 'posix' : 'bash');
 }
 try {
   const { command } = workerData;

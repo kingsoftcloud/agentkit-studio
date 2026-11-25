@@ -19,9 +19,36 @@ function noSymlinks(path) {
     if (dirname(part) === part) break;
   }
 }
+const verifiedMacAcl = new Map();
+function macAclIdentity(path, admitted) {
+  const current = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+  check(current && Number(current.dev) === admitted.dev && Number(current.ino) === admitted.ino
+    && Number(current.mode) === admitted.mode && Number(current.uid) === admitted.uid, 'background_state_changed');
+  return `${current.dev}:${current.ino}:${current.ctimeNs}`;
+}
 function hasPrivatePermissions(path, stat) {
-  return process.platform === 'win32' ? verifyWindowsPrivateState(resolve(path), stat)
-    : stat.uid === process.getuid() && (stat.mode & 0o077) === 0;
+  if (process.platform === 'win32') return verifyWindowsPrivateState(resolve(path), stat);
+  if (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) return false;
+  if (process.platform !== 'darwin') return true;
+  // Extended ACLs on macOS can grant access independently of the mode bits.
+  // An ACL edit changes the inode's nanosecond-resolution change time.
+  const absolute = resolve(path);
+  const identity = macAclIdentity(absolute, stat);
+  if (verifiedMacAcl.get(absolute) === identity) return true;
+  const result = spawnSync('/bin/ls', ['-lbed', absolute], { encoding: 'utf8',
+    env: { LC_ALL: 'C' }, timeout: 2000 });
+  // SQLite can replace or remove a journal while the ACL probe is running.
+  const current = macAclIdentity(absolute, stat);
+  if (result.error || result.status !== 0 || !result.stdout) return false;
+  const entries = result.stdout.trimEnd().split('\n').slice(1);
+  const privateAcl = entries.every(entry => /^\s*\d+: .+\bdeny\s/.test(entry) && !/\ballow\s/.test(entry));
+  // A live file can be modified by its owner during the probe. Use the
+  // observed ACL for this check, and require a fresh probe on the next open.
+  if (privateAcl && current === identity) {
+    if (verifiedMacAcl.size >= 1024) verifiedMacAcl.clear();
+    verifiedMacAcl.set(absolute, identity);
+  }
+  return privateAcl;
 }
 export function privateDirectory(path, create = false) {
   noSymlinks(path);
@@ -142,6 +169,8 @@ $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $trusted = @($user, 'S-1-5-18', 'S-1-5-32-544')
 $acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $env:AGENTKIT_WINDOWS_PRIVATE_STATE_PATH
 if ($acl.GetOwner($sidType).Value -notin $trusted) { exit 2 }
+$descriptor = [System.Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+if ($null -eq $descriptor.DiscretionaryAcl) { exit 2 }
 foreach ($entry in $acl.GetAccessRules($true, $true, $sidType)) {
   if ($entry.AccessControlType -ne 'Allow') { continue }
   $principal = $entry.IdentityReference.Value

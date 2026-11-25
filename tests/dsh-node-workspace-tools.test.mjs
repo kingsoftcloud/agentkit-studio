@@ -150,6 +150,12 @@ test('workspace schemas, snapshots and read receipts interoperate with the insta
   assert.equal((await legacy().execute(editAgain)).status, 'ok');
   assert.equal(readFileSync(join(h.workspaceRoot, 'f.txt'), 'utf8'), '回退 😀\n');
   const batch = request('write_workspace_files', { files: [{ path: 'a.txt', content: 'x y' }, { path: 'b.txt', content: 'b' }] });
+  const oversized = request('write_workspace_files', { files: Array.from({ length: 101 },
+    (_, index) => ({ path: `too-many-${index}.txt`, content: 'fixture' })) });
+  const rejected = await studio().execute(oversized, () => {});
+  assert.equal(rejected.status, 'error');
+  assert.equal(rejected.content.error_type, 'too_many_files');
+  assert.equal(existsSync(join(h.workspaceRoot, 'too-many-0.txt')), false);
   assert.deepEqual((await studio().execute(batch, () => {})).workspaceChangedPaths, ['a.txt', 'b.txt']);
   const multi = request('multi_edit_workspace_file', { path: 'a.txt', edits: [
     { old_text: 'x', new_text: '甲' }, { old_text: 'y', new_text: '乙' },

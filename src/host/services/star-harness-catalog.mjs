@@ -28,6 +28,11 @@ export const STAR_HARNESS_CLIENT_FILE = 'dist/studio-client.mjs';
 export const STAR_HARNESS_UI_CONTRACT = 'agentkit.studio-harness-ui/v1';
 export const STAR_HARNESS_ENGINE_PROTOCOL = 'agentkit.engine/v1';
 export const starHarnessVersion = version => typeof version === 'string' && /^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(version);
+export function compareStarHarnessVersions(a, b) {
+  const [majorA, minorA, patchA] = a.split('.').map(Number);
+  const [majorB, minorB, patchB] = b.split('.').map(Number);
+  return majorA - majorB || minorA - minorB || patchA - patchB;
+}
 
 const sha256 = /^[a-f0-9]{64}$/;
 const integrity = /^sha512-[A-Za-z0-9+/]{86}==$/;
@@ -41,7 +46,7 @@ async function releaseArtifact(fetchImpl, version, name, signal) {
   });
   if (!response.ok || !response.body) {
     await response.body?.cancel();
-    throw Error('Star Harness release evidence unavailable');
+    throw Object.assign(Error('Star Harness release evidence unavailable'), { status: response.status });
   }
   const chunks = [];
   let size = 0;

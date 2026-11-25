@@ -22,10 +22,8 @@ scripts/native-tool-search-proof.mjs	core node/native/sqlite-store
 scripts/native-workspace-repair-proof.mjs	core node/native/sqlite-store
 scripts/prepare-studio-native-web-session.mjs	node/native/assistant-stream
 scripts/verify-a2a-host-decisions.mjs	core
-scripts/verify-a2a-question-wait.mjs	core node/native/a2a-tools node/native/sqlite-store
 scripts/verify-a2a-session-events.mjs	core
 scripts/verify-native-dependencies.mjs	core node node/native/browser-workspace-policy node/native/child-owner node/native/local-output-policy node/native/local-process node/native/local-resource-profile node/native/tool-guidance node/native/workspace-tools
-scripts/verify-native-dsh-browser.mjs	core node/native/artifact-store node/native/browser-workspace-protocol
 scripts/verify-native-dsh-numeric.mjs	core
 scripts/verify-native-dsh-output.mjs	core
 scripts/verify-native-dsh-turn.mjs	ui/host/session-task-events

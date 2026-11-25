@@ -318,8 +318,10 @@ export function createStudioWorkspaceTools({ workspaceRoot: root, pinnedRootReal
     const files = args.files;
     const overwrite = args.overwrite !== false;
     if (!Array.isArray(files) || !files.length) return { ok: false, error_message: 'files must be a non-empty list' };
+    if (files.length > 100) return { ok: false, error_type: 'too_many_files',
+      error_message: 'Write at most 100 files per call. No files were written.' };
     const prepared = [];
-    for (const item of files.slice(0, 100)) {
+    for (const item of files) {
       if (!item || typeof item !== 'object') return { ok: false, error_message: 'each file item must be an object' };
       const p = String(item.path ?? '').trim();
       if (!p) return { ok: false, error_message: 'each file item requires path' };
@@ -340,7 +342,7 @@ export function createStudioWorkspaceTools({ workspaceRoot: root, pinnedRootReal
         diff_deletions: result.diff_deletions,
       });
     }
-    return { ok: true, written, truncated: files.length > written.length };
+    return { ok: true, written, truncated: false };
   }
 
   function editWorkspaceFile(args) {

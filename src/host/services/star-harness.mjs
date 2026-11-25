@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { canonicalEngineWorkspace, HARNESS_SERVICE_MODEL_PROVIDER } from '../../providers/engine-service-workspaces.mjs';
 import { modelInput } from '../../model-input.mjs';
 import { createStarHarnessReleases, inspectStarHarness, probeStarHarness, startStarHarness, starHarnessError, starHarnessVersion } from './star-harness-release.mjs';
+import { compareStarHarnessVersions } from './star-harness-catalog.mjs';
 
 const initial = { version: null, previousVersion: null, enabled: false, bindings: [] };
 const codes = {
@@ -19,10 +20,7 @@ const contains = (parent, child) => {
   return !offset || !isAbsolute(offset) && offset !== '..' && !offset.startsWith('..' + sep);
 };
 const overlaps = (a, b) => contains(a, b) || contains(b, a);
-const newer = (a, b) => {
-  const x = a.split('.').map(Number), y = b.split('.').map(Number);
-  return x[0] > y[0] || x[0] === y[0] && (x[1] > y[1] || x[1] === y[1] && x[2] > y[2]);
-};
+const newer = (a, b) => compareStarHarnessVersions(a, b) > 0;
 const modelSelection = model => ({ provider: HARNESS_SERVICE_MODEL_PROVIDER, model });
 
 export function createStarHarnessManager({ root, env, externalRoutes, profile, settings, packageManager, workspaceRegistry, modelProfiles = [],
@@ -43,7 +41,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
   const workers = new Map(), starting = new Map(), leases = new Map();
   let configuredProfiles = modelProfiles;
   const lifetime = new AbortController();
-  let mutation, latestVersion = null, closing;
+  let mutation, latestVersion = null, releaseCatalog = null, releaseCatalogCheckedAt = -Infinity, registryUnavailable = false, closing;
 
   async function readAssets(next) {
     if (!next.enabled) return { client: null, toolCatalog: null };
@@ -235,14 +233,28 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       try { return { connection: await ensureWorker(binding), release }; }
       catch (error) { release(); throw error; }
     },
-    async status({ checkUpdates = false, includeWorkspaces = true } = {}, signal) {
+    async status({ checkUpdates = false, includeWorkspaces = true, includeVersions = false, refreshVersions = false } = {}, signal) {
       if (configError) throw configError;
-      let registryUnavailable = false;
-      if (checkUpdates) {
-        try { latestVersion = await releases.latest(signal); }
-        catch { signal?.throwIfAborted(); latestVersion = null; registryUnavailable = true; }
+      signal?.throwIfAborted();
+      if (checkUpdates && includeWorkspaces) {
+        try {
+          if (includeVersions) {
+            if (refreshVersions === true || registryUnavailable || performance.now() - releaseCatalogCheckedAt >= 300_000) {
+              releaseCatalog = await releases.catalog(signal);
+              releaseCatalogCheckedAt = performance.now();
+            }
+            latestVersion = releaseCatalog[0]?.version ?? null;
+          } else {
+            latestVersion = await releases.latest(signal);
+          }
+          registryUnavailable = false;
+        } catch {
+          signal?.throwIfAborted();
+          registryUnavailable = true;
+        }
       }
       const { version, enabled, previousVersion } = configuration;
+      const rollbackVersion = version && previousVersion && newer(version, previousVersion) ? previousVersion : null;
       if (!includeWorkspaces) return { canCreate: Boolean(version && enabled && !clientError) };
       const configuredModels = await settings();
       const external = await Promise.all([...externalRoutes.values()].map(async route => {
@@ -252,9 +264,15 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
           running: Boolean(current), version: current?.version ?? null };
       }));
       return {
-        version, enabled, previousVersion, registryUnavailable, busy: Boolean(mutation || leases.size), clientUI: clientDescriptor(),
+        version, enabled, previousVersion, rollbackVersion, registryUnavailable, busy: Boolean(mutation || leases.size),
+        clientUI: clientDescriptor(),
         recommendedVersion: latestVersion,
         availableUpgrade: latestVersion && version && newer(latestVersion, version) ? latestVersion : null,
+        releaseVersions: releaseCatalog?.map(release => ({
+          ...release,
+          action: !version ? 'install' : release.version === version ? 'current' : release.version === rollbackVersion
+            ? 'rollback' : newer(release.version, version) ? 'upgrade' : 'history',
+        })) ?? null,
         canCreate: Boolean(version && enabled && !clientError), repairNeeded: Boolean(clientError),
         workspaceChoices: (workspaceRegistry?.()?.list?.() ?? []).map(({ path, title }) => ({ path, title })),
         models: (configuredModels.modelProfiles ?? []).filter(item => item.enabled !== false).map(item => ({
