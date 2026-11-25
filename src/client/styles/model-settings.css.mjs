@@ -677,6 +677,31 @@ export default String.raw`
   min-height: 20px;
 }
 
+[data-studio-model-settings] .ms-capability-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 20px;
+  font-size: 12px;
+  color: var(--ms-ink-1);
+}
+[data-studio-model-settings] .ms-capability-summary .ms-capability-item {
+  white-space: nowrap;
+}
+[data-studio-model-settings] :is(.ms-model-cap, .ms-model-vision) {
+  color: var(--ms-ink-2);
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+[data-studio-model-settings] .ms-model-vision {
+  color: var(--ms-ink-1);
+  border: 1px solid var(--ms-line-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
 /* Buttons */
 [data-studio-model-settings] .ms-btn {
   display: inline-flex;

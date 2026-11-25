@@ -1,4 +1,6 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
+import { resolveModelBudgets } from '../../model-capabilities.mjs';
 import { profileKey } from './model-settings-profiles.mjs';
 import { catalogItems, createModelCatalogPicker, matchingModels } from './model-settings-catalog-picker.mjs';
 
@@ -300,9 +302,15 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
       const key = profileKey(profile, index);
       const name = profile.modelName;
       const dirty = drafts.has(key);
+      const catalog = lookupModelCapabilities(profile);
+      const budgets = resolveModelBudgets(profile, null);
+      const cap = budgets.contextWindow >= 1000000 ? `${Math.round(budgets.contextWindow / 1000000)}M` : `${Math.round(budgets.contextWindow / 1000)}K`;
+      const vision = catalog?.image || profile.input?.includes('image');
       return h('li', { key }, h('button', { type: 'button', className: 'ms-model-row', 'data-model-row': key, 'data-draft': dirty,
         onClick: () => openModel(key) },
       h('span', { className: 'ms-model-name', title: name }, name),
+      h('span', { className: 'ms-model-cap', 'data-model-cap': true, title: '上下文窗口' }, cap),
+      vision ? h('span', { className: 'ms-model-vision', title: '支持图片输入' }, '视觉') : null,
       profile.enabled === false ? h('span', { className: 'ms-row-status' }, '已停用') : null,
       profile.default && profile.enabled !== false ? h(Chip, { tone: 'accent', 'data-size': 'xs' }, '默认') : null,
       dirty ? h('span', { className: 'ms-row-status', 'data-tone': 'draft' }, '未保存') : null,

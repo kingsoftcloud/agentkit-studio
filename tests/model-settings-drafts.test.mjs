@@ -95,7 +95,7 @@ test('switching A → B → A keeps A’s unsaved edits and never prompts', asyn
 
   await selectModel(view, 1);
   assert.equal(modelName(view).props.value, 'beta-model', 'B shows its own saved values');
-  assert.equal(apiKey(view), undefined, 'credentials are edited on the provider');
+  assert.ok(apiKey(view), 'the connection block with its API Key is available in the model editor too');
   assert.equal(unsavedChip(view), undefined, 'B itself is clean');
   assert.equal(saveButton(view).props['data-dirty'], 'true', 'the form still has an unsaved draft');
   await selectProvider(view, 0);

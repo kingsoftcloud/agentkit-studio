@@ -2,6 +2,7 @@ import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, mode
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
+import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
 import { createModelSettingsDirectory } from './model-settings-directory.mjs';
@@ -724,6 +725,19 @@ export function createModelSettingsSection({
         ? [h(Chip, { key: 'text' }, '文字'), selected.input?.includes('image') ? h(Chip, { key: 'image' }, '图片') : null]
         : h('span', { className: 'ms-hint' }, capabilityHint));
 
+    // 容量与来源：让用户看到上下文窗口、最大输出的实际生效值，以及它来自
+    // 用户填写、能力目录还是内置默认，而不是一个不可见的常量。
+    const capabilityCatalog = lookupModelCapabilities(selected);
+    const capabilityBudgets = resolveModelBudgets(selected, null);
+    const capacitySource = configured => configured !== undefined ? '用户填写' : capabilityCatalog ? '目录' : '默认';
+    const capacitySummary = h('div', { className: 'ms-capability-summary', 'data-capability-summary': true },
+      h('span', { className: 'ms-label' }, '容量'),
+      h('span', { className: 'ms-capability-item' }, `上下文 ${capabilityBudgets.contextWindow.toLocaleString()}`,
+        h('span', { className: 'ms-hint' }, ` · ${capacitySource(selected.contextWindow)}`)),
+      h('span', { className: 'ms-capability-item' }, `最大输出 ${capabilityBudgets.maxOutputTokens.toLocaleString()}`,
+        h('span', { className: 'ms-hint' }, ` · ${capacitySource(selected.maxOutputTokens)}`)),
+      capabilityCatalog ? h('span', { className: 'ms-hint' }, `目录：${capabilityCatalog.providerName || 'models.dev'}`) : null);
+
     const probeReport = effortProbe.reportFor(selected.id);
     const applicableLevels = (probeReport?.outcomes || [])
       .filter(row => row.outcome === 'accepted' || row.outcome === 'confirmed').map(row => row.level);
@@ -822,8 +836,9 @@ export function createModelSettingsSection({
       h('div', { className: 'ms-grid ms-grid-2 ms-model-fields' },
         h('div', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel),
         reasoningField),
+      capacitySummary,
       capability,
-      mode === 'model' ? [
+      mode !== 'cloud' ? [
       h('div', { className: 'ms-editor-section-head' },
         h('h5', null, '连接'),
         h('span', { className: 'ms-meta' }, '凭证来源 · ', sourceLabel(profileCredential(selected).source))),
