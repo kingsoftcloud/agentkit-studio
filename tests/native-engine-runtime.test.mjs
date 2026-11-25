@@ -665,12 +665,13 @@ test('a Studio execution budget caps a durable provider backoff on the original 
 });
 
 test('redelivering the same Studio turn resumes a Run paused by continuous provider errors', {
-  timeout: 25000, skip: !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER,
+  // Allow the engine to exhaust its real retry schedule and persist the pause.
+  timeout: 120000,
 }, async t => {
   const unavailable = { status: 502, headers: { 'retry-after': '0' }, body: { error: { code: 'server_error' } } };
   const f = await setup(t, [
     toolCall('checkpoint', 'run_command', { command: 'printf done >> checkpoint.txt' }),
-    unavailable, unavailable, unavailable, unavailable, final('Continued.'),
+    unavailable,
   ]);
   const runtime = await serviceRuntime(t, f);
   const first = [];
@@ -678,16 +679,20 @@ test('redelivering the same Studio turn resumes a Run paused by continuous provi
   await assert.rejects(async () => {
     for await (const chunk of runtime.stream(options)) first.push(chunk);
   }, { code: 'NATIVE_ENGINE_RUN_INCOMPLETE', message: /模型服务暂不可用/ });
-  assert.equal(f.model.requests.length, 5);
+  const requestsAtPause = f.model.requests.length;
+  assert.ok(first.some(chunk => chunk.event?.kind === 'model.retry_scheduled'));
+  assert.ok(requestsAtPause > 2, 'the provider stayed unavailable through a retry');
   assert.equal(readFileSync(join(f.cwd, 'checkpoint.txt'), 'utf8'), 'done');
   const previousRun = first.find(chunk => chunk.event?.kind === 'run.started')?.runId;
   assert.ok(previousRun);
 
+  f.model.respond = () => final('Continued.');
   const continued = await collect(runtime.stream(options));
   const terminal = continued.find(chunk => chunk.event?.kind === 'run.terminal');
   assert.equal(terminal?.runId, previousRun);
   assert.equal(terminal?.event.title, 'completed');
-  assert.equal(f.model.requests.length, 6);
+  assert.equal(continued.findLast(chunk => chunk.type === 'text')?.text, 'Continued.');
+  assert.equal(f.model.requests.length, requestsAtPause + 1);
   assert.equal(readFileSync(join(f.cwd, 'checkpoint.txt'), 'utf8'), 'done');
 });
 
