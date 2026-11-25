@@ -282,12 +282,29 @@ test('a missing gateway on a fresh machine reports the failure instead of throwi
   assert.equal(job.error.code, 'KSXC_RELEASES_UNREACHABLE');
 });
 
-test('an installed release without an archive cannot be downloaded again', async t => {
+test('an installed release switches without needing its archive', async t => {
   const f = await fixture(t);
   await f.releases.activate('1.8.0');
   await rm(join(f.root, 'latest.json'));
   const moved = f.create({ '1.9.0': await f.second() }, { gateway: gatewayNaming('1.9.0') });
   await moved.releases.refresh();
+  // 1.8.0 is installed and runnable, so the version picker must be able to select it
+  // even though only the cached latest release carries an archive.
+  const switched = await moved.releases.activate('1.8.0');
+  assert.equal(switched.active, '1.8.0');
+  assert.equal(switched.ready, true);
+  assert.deepEqual(moved.server.downloads, { count: 0 });
+});
+
+test('a damaged local release without an archive reports that it cannot be reinstalled', async t => {
+  const f = await fixture(t);
+  await f.releases.activate('1.8.0');
+  await rm(join(f.root, 'latest.json'));
+  const moved = f.create({ '1.9.0': await f.second() }, { gateway: gatewayNaming('1.9.0') });
+  await moved.releases.refresh();
+  // The version directory still exists but its payload is gone, so nothing can run
+  // and the cached latest release is the only archive in play.
+  await rm(join(f.versions, '1.8.0', 'bin', 'codex'));
   await assert.rejects(moved.releases.activate('1.8.0'), { code: 'KSXC_RELEASE_UNAVAILABLE' });
 });
 

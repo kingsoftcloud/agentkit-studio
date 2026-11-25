@@ -47,7 +47,12 @@ export function createKsxcSettings({ React, hostRemote, window }) {
     // Polling must stop when the section unmounts: the install itself keeps running in the Host.
     const mounted = useRef(true);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-    const getStatus = managed ? cloudStatus : hostRemote.ksxcStatus;
+    // The settings page is the only caller that asks the Host to re-read the company
+    // gateway; the Agent form and the runtime catalog read the cached answer.
+    const desktopStatus = hostRemote.ksxcStatus
+      ? signal => hostRemote.ksxcStatus(signal, { refresh: true })
+      : undefined;
+    const getStatus = managed ? cloudStatus : desktopStatus;
     const login = managed ? cloudLogin : hostRemote.ksxcLogin;
     const pollLogin = managed ? cloudPoll : hostRemote.ksxcLoginResult;
     const disconnectAccount = managed ? hostRemote.ksxcCloudDisconnect : hostRemote.ksxcDisconnect;

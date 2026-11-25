@@ -6,13 +6,18 @@ import { installProgressText } from '../src/client/pages/ksxc-settings.mjs';
 
 const accounts = { status: async () => ({ connected: false }) };
 
-test('status refreshes the release catalog on every settings read', async () => {
+test('status only refreshes the release catalog when the caller asks for it', async () => {
   const seen = [];
   const route = createKsxcRoute({ accounts, releases: { status: async options => { seen.push(options); return { versions: ['1.8.0'] }; } } });
-  const result = await route('ksxc/status', {}, undefined);
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.value.release.versions, ['1.8.0']);
-  assert.deepEqual(seen, [{ refresh: true }]);
+  // The Agent form and the runtime catalog read the same status; they must not
+  // reach the company gateway, so a plain read stays local.
+  const cached = await route('ksxc/status', {}, undefined);
+  assert.equal(cached.ok, true);
+  assert.deepEqual(cached.value.release.versions, ['1.8.0']);
+  assert.deepEqual(seen, [undefined]);
+  const refreshed = await route('ksxc/status', { refresh: true }, undefined);
+  assert.equal(refreshed.ok, true);
+  assert.deepEqual(seen, [undefined, { refresh: true }]);
 });
 
 test('install endpoints hand the version and the request id to the release service', async () => {

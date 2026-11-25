@@ -289,15 +289,18 @@ export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = 
     const release = releases.find(item => item.version === version);
     // Report the network failure itself rather than "no reviewed release" when nothing local can serve it either.
     if (!release) throw failure ?? unavailable();
-    // Only the cached latest release carries an archive; an installed older release cannot be downloaded again.
-    if (release.local) throw noArchive(version);
     const installedRelease = await valid(release).then(() => true, error => {
       // A not-yet-installed release has no recorded digest, so validate() rejects
       // the empty sha256 before it looks for the file. Both mean "install it".
       if (error.code === 'RUNTIME_PROFILE_UNAVAILABLE' || (!release.sha256 && error.code === 'KSXC_PAYLOAD_INVALID')) return false;
       throw error;
     });
-    if (!installedRelease) await install(release, report);
+    // An installed release switches without downloading: it is already runnable, so
+    // the missing archive only matters when the payload has to be fetched again.
+    if (!installedRelease) {
+      if (release.local) throw noArchive(version);
+      await install(release, report);
+    }
     return { active: version, previous: current.active === version ? current.previous : current.active, enabled: true };
   }, onProgress);
   const installs = new Map();

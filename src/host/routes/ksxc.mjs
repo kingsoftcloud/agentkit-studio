@@ -6,7 +6,9 @@ export function createKsxcRoute(ksxc) {
     const { releases, accounts } = ksxc || {};
     if (endpoint === 'ksxc/status') {
       return { ok: true, value: releases && accounts
-        ? { supported: true, release: await releases.status({ refresh: true }), connection: await accounts.status(user) }
+        // Refresh is opt-in: the settings page asks for it, but the Agent form and
+        // the runtime catalog read the same status and must stay off the network.
+        ? { supported: true, release: await releases.status(payload?.refresh ? { refresh: true } : undefined), connection: await accounts.status(user) }
         : { supported: false } };
     }
     if (endpoint === 'ksxc/install-start' || endpoint === 'ksxc/install-status') {
