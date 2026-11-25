@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { KsxcRuntimeError, readKsxcCompanyConfig } from '../../providers/ksxc-command.mjs';
 import { assertKsxcCatalogModel, createKsxcRuntime, createManagedKsxcCommand } from '../../providers/ksxc-runtime.mjs';
 import { createKsxcAccounts } from './ksxc-accounts.mjs';
@@ -9,10 +11,21 @@ const unavailable = () => new KsxcRuntimeError('KSXC_HOST_UNAVAILABLE', '当前 
 // A standalone desktop Host and its credential store belong to one DSH profile.
 export const KSXC_DESKTOP_USER = 'desktop-profile';
 
-export async function createKsxcHost({ storeDir, ksxcStoreDir = storeDir, env, credentials, managedRuntime, managedResourceContext, portableRuntime }) {
+// A desktop launch inherits only launchd's environment, so no shell export can
+// reach the Host. The company configuration therefore ships with the plugin.
+const shippedCompanyConfig = fileURLToPath(new URL('./ksxc-company.json', import.meta.url));
+const shippedOrigins = new Set(Object.values(JSON.parse(readFileSync(shippedCompanyConfig, 'utf8'))).flatMap(value => {
+  try { return [new URL(value).origin]; } catch { return []; }
+}));
+
+export async function createKsxcHost({ storeDir, ksxcStoreDir = storeDir, env, credentials, managedRuntime, managedResourceContext, portableRuntime,
+  defaultCompanyConfig = shippedCompanyConfig }) {
   const managed = managedRuntime?.identity.runtimeName === 'ksxc';
   const desktop = !managedRuntime && !portableRuntime;
-  const companyConfigPath = env.AGENTKIT_KSXC_COMPANY_CONFIG_PATH;
+  // An explicit path always wins. Managed and portable Hosts must name their company.
+  const configured = String(env.AGENTKIT_KSXC_COMPANY_CONFIG_PATH ?? '').trim();
+  const companyConfigPath = configured || (desktop ? defaultCompanyConfig : '');
+  const shipped = !configured && Boolean(companyConfigPath);
   if ((!managed && !desktop) || (!managed && !companyConfigPath)) return null;
   let companyConfig, gateway;
   try {
@@ -20,7 +33,9 @@ export async function createKsxcHost({ storeDir, ksxcStoreDir = storeDir, env, c
     const api = new URL(companyConfig.baseUrl);
     gateway = new URL(env.AGENTKIT_KSXC_WPS_GATEWAY || api.origin);
     for (const url of [api, gateway]) {
-      if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && env.AGENTKIT_KSXC_ALLOW_HTTP === '1'))
+      // The shipped gateway is HTTP-only; any other plain HTTP endpoint still needs the explicit opt-in.
+      const plainHttp = (shipped && shippedOrigins.has(url.origin)) || env.AGENTKIT_KSXC_ALLOW_HTTP === '1';
+      if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && plainHttp))
         || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw unavailable();
     }
   } catch {

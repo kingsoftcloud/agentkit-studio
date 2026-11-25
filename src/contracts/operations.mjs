@@ -94,6 +94,8 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "plugins/codex-install",
   "plugins/codex-remove",
   "ksxc/status",
+  "ksxc/install-start",
+  "ksxc/install-status",
   "ksxc/activate",
   "ksxc/enable",
   "ksxc/rollback",

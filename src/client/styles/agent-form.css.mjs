@@ -47,6 +47,17 @@ export default String.raw`
 .af-row-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 .af-row-control { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex: none; max-width: 60%; }
 .af-row-control .af-select, .af-row-control .af-input { width: auto; min-width: 200px; max-width: 100%; }
+.af-row-with-footer { flex-wrap: wrap; }
+.af-row-with-footer > .af-row-text { flex: 1 1 calc(100% - 320px); }
+.af-row-with-footer > .af-progress { flex-basis: 100%; max-width: 360px; margin-top: 8px; }
+.af-progress { height: 4px; border-radius: 2px; background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2,#f4f5f6)); overflow: hidden; }
+.af-progress-bar { height: 100%; background: var(--dsw-alias-button-primary-fill,#0b0b0d); transition: width .2s ease; }
+.af-progress[data-indeterminate] .af-progress-bar { width: 100% !important; background-image: linear-gradient(90deg, transparent 0, var(--dsw-alias-button-primary-fill,#0b0b0d) 50%, transparent 100%); background-size: 32px 100%; animation: af-progress-stripe .8s linear infinite; }
+@keyframes af-progress-stripe { from { background-position: 0 0; } to { background-position: 32px 0; } }
+.af-spinner { display: inline-block; box-sizing: border-box; width: 12px; height: 12px; border: 1.5px solid var(--dsw-alias-label-primary-foreground,#fff); border-right-color: transparent; border-radius: 50%; animation: af-spinner-rotate .8s linear infinite; vertical-align: -1px; }
+.af-btn:not([data-variant="primary"]) .af-spinner { border-color: var(--dsw-alias-label-primary); border-right-color: transparent; }
+@keyframes af-spinner-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .af-progress-bar, .af-spinner, .af-progress[data-indeterminate] .af-progress-bar { animation: none; transition: none; } }
 .af-field { display: block; margin: 0 0 20px; min-width: 0; }
 .af-field-label { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 14px; font-weight: 500; line-height: 20px; color: var(--dsw-alias-label-primary); }
 .af-field-hint { display: block; margin-top: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
