@@ -69,16 +69,18 @@ function recursiveForce(args) {
   }
   return options.toLowerCase().includes('r') && options.toLowerCase().includes('f');
 }
-function checkTokens(args, path, line, depth, governed, stdin = null) {
+function checkTokens(args, path, line, depth, { governed, stdin = null, topLevel = false }) {
   limited(depth);
   const index = executableIndex(args); if (index < 0) return null;
   const command = basename(args[index]).toLowerCase(), rest = args.slice(index + 1);
-  if (governed) {
-    const result = gatewayPolicy(args) ?? (args[0] !== command ? gatewayPolicy([command, ...rest]) : null);
-    if (result) return { ...result, path, line };
-  }
+  const gateway = governed ? gatewayPolicy(args) ?? (args[0] !== command ? gatewayPolicy([command, ...rest]) : null) : null;
+  const rejection = gateway && { ...gateway, path, line };
+  // Keep the existing gateway result for direct requests and the more
+  // specific local diagnostic for formerly local-only nested commands.
+  if (topLevel && rejection) return rejection;
   if (blocked.has(command)) return finding(`shell.blocked_command.${command}`, `command '${command}' is not allowed by the local-process policy`, path, line);
   if (command === 'rm' && recursiveForce(rest)) return finding('shell.recursive_force_remove', 'recursive forced removal is not allowed', path, line);
+  if (rejection) return rejection;
   if (stdin !== null && !rest.includes('-c') && !rest.includes('-m')
     && (!rest.length || rest[0] === '-' || shell(command) && rest.includes('-s'))) {
     const result = python(command) ? checkPython(stdin, path || '<stdin>', depth + 1, governed)
@@ -98,7 +100,7 @@ function checkShell(text, path, depth, governed = false, scanEntries = false, di
     return finding('invalid_command', 'Bash combined redirection requires an explicit Bash interpreter', path);
   if (analysis.backgrounds.length) return finding('shell.background_process', 'background process syntax is not allowed', path, analysis.backgrounds[0]);
   for (const { argv, line, stdin } of analysis.commands) {
-    const result = checkTokens(argv, path, line, depth + 1, governed, stdin)
+    const result = checkTokens(argv, path, line, depth + 1, { governed, stdin, topLevel: scanEntries })
       ?? (scanEntries ? scanScripts(argv, governed) : null);
     if (result) return result;
   }
@@ -159,7 +161,7 @@ function checkPython(source, path, depth, governed) {
       if (name === 'subprocess.Popen' && keywordTrue(args, 'start_new_session'))
         return finding('python.detached_process', 'subprocess start_new_session=True is not allowed', path, line);
       const command = args.args.length ? commandLiteral(args.args[0]) : null;
-      const result = Array.isArray(command) ? checkTokens(command, path, line, depth + 1, governed)
+      const result = Array.isArray(command) ? checkTokens(command, path, line, depth + 1, { governed })
         : typeof command === 'string' && keywordTrue(args, 'shell') ? checkShell(command, path, depth + 1, governed) : null;
       if (result) return result;
     }

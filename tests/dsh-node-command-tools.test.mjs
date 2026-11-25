@@ -179,6 +179,9 @@ test('the governed parser applies the same command policy to nested literal comm
     const finding = await checkGovernedCommand(command, { cwd: workspaceRoot, allowedRoots: [workspaceRoot] });
     assert.equal(finding?.rule, 'command_rejected');
   }
+  const options = { cwd: workspaceRoot, allowedRoots: [workspaceRoot] };
+  assert.equal((await checkGovernedCommand('rm -rf scratch', options))?.rule, 'command_rejected');
+  assert.equal((await checkGovernedCommand("bash -c 'rm -rf scratch'", options))?.rule, 'shell.recursive_force_remove');
   assert.equal(await checkGovernedCommand("sh -c 'printf ok'", { cwd: workspaceRoot, allowedRoots: [workspaceRoot] }), null);
 });
 
