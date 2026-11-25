@@ -2,9 +2,25 @@ import { createFormKit } from '../components/form-kit.mjs';
 
 export const KSXC_CHANGED = 'agentkit-studio:ksxc-changed';
 
+const CATALOG_ERRORS = {
+  KSXC_RELEASES_UNREACHABLE: '无法连接 KSXC 发布源，请检查网络后重试。',
+  KSXC_RELEASE_INVALID: 'KSXC 发布源返回了无法识别的版本信息，请稍后重试。',
+};
+
+/** One line of install progress; phases without a byte count say what they are doing. */
+export function installProgressText(progress, version) {
+  if (progress.phase === 'download') {
+    const total = progress.totalBytes ? ` / ${Math.round(progress.totalBytes / 1024 / 1024)} MB` : '';
+    return `正在下载 ${version}（${Math.round(progress.receivedBytes / 1024 / 1024)}${total}）${progress.retrying ? ' · 连接中断，正在重试' : ''}`;
+  }
+  if (progress.phase === 'extract') return `正在解包 ${version}…`;
+  if (progress.phase === 'probe') return `正在校验 ${version}…`;
+  return '正在准备安装…';
+}
+
 export function createKsxcSettings({ React, hostRemote, window }) {
-  const { createElement: h, useEffect, useState } = React;
-  const { Button, Note, Row, Section, Select } = createFormKit({ React });
+  const { createElement: h, useEffect, useRef, useState } = React;
+  const { Button, Note, Progress, Row, Section, Select, Spinner } = createFormKit({ React });
   const cloudConnection = value => ({ connected: value?.Status === 'connected', account: value?.Account });
   const cloudStatus = hostRemote.ksxcCloudStatus && (async signal => ({ supported: true, connection: cloudConnection(await hostRemote.ksxcCloudStatus(signal)) }));
   const cloudLogin = async () => {
@@ -27,6 +43,10 @@ export function createKsxcSettings({ React, hostRemote, window }) {
     const [pending, setPending] = useState(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
+    const [progress, setProgress] = useState(null);
+    // Polling must stop when the section unmounts: the install itself keeps running in the Host.
+    const mounted = useRef(true);
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
     const getStatus = managed ? cloudStatus : hostRemote.ksxcStatus;
     const login = managed ? cloudLogin : hostRemote.ksxcLogin;
     const pollLogin = managed ? cloudPoll : hostRemote.ksxcLoginResult;
@@ -72,6 +92,24 @@ export function createKsxcSettings({ React, hostRemote, window }) {
       };
     }, [pending]);
 
+    async function applyInstall(selected) {
+      setBusy(true); setError('');
+      setProgress({ status: 'running', phase: 'prepare', receivedBytes: 0, totalBytes: null });
+      try {
+        const { requestId } = await hostRemote.ksxcInstallStart(selected);
+        for (;;) {
+          const next = await hostRemote.ksxcInstallStatus(requestId);
+          if (!mounted.current) return;
+          setProgress(next);
+          if (next.status === 'failed') throw Object.assign(new Error(next.error?.message || 'KSXC 安装失败。'), { code: next.error?.code });
+          if (next.status !== 'running') break;
+          await new Promise(resolve => window.setTimeout(resolve, 300));
+        }
+        await readStatus();
+        changed();
+      } catch (reason) { if (mounted.current) setError(reason.message || 'KSXC 安装失败。'); }
+      finally { if (mounted.current) { setBusy(false); setProgress(null); } }
+    }
     async function apply(operation, { login = false, disconnect = false } = {}) {
       setBusy(true);
       setError('');
@@ -87,16 +125,23 @@ export function createKsxcSettings({ React, hostRemote, window }) {
       finally { setBusy(false); }
     }
     const { release, connection } = status || {};
+    const installing = progress?.status === 'running';
+    const installLabel = release.active ? '切换版本' : '安装';
     return h(React.Fragment, null,
       error ? Note({ tone: 'danger', role: 'alert' }, error) : null,
       !getStatus || status?.supported === false ? Note(null, '当前 Host 尚未配置 KSXC。') : null,
       getStatus && !status ? Row({ title: '运行状态' },
         Button({ disabled: busy, onClick: () => apply(() => readStatus()) }, '重新读取')) : null,
-      release ? Row({ title: '桌面版本', desc: release.active ? `当前 ${release.active} · ${release.ready ? '已启用' : '暂不可运行'}` : '尚未安装' },
+      release && release.catalogError ? Note({ tone: 'warn', role: 'status' }, CATALOG_ERRORS[release.catalogError] || '无法读取 KSXC 的可用版本，请稍后重试。') : null,
+      release ? Row({ title: '桌面版本',
+        desc: installing ? installProgressText(progress, version) : release.active ? `当前 ${release.active} · ${release.ready ? '已启用' : '暂不可运行'}` : '尚未安装',
+        footer: installing ? Progress({ label: 'KSXC 安装进度', indeterminate: progress.phase !== 'download' || !progress.totalBytes,
+          value: progress.phase === 'download' ? progress.receivedBytes : 1, max: progress.phase === 'download' ? progress.totalBytes || 1 : 1 }) : null },
         Select({ value: version, 'aria-label': 'KSXC 版本', onChange: event => setVersion(event.target.value), disabled: busy || !release.versions.length },
           release.versions.length ? release.versions.map(item => h('option', { value: item, key: item }, item)) : h('option', { value: '' }, '无可用版本')),
-        Button({ disabled: busy || !version || (release.active === version && release.ready), onClick: () => apply(() => hostRemote.ksxcActivate(version)) },
-          release.active ? '切换版本' : '安装'),
+        Button({ disabled: busy || !version || (release.active === version && release.ready),
+          onClick: () => (hostRemote.ksxcInstallStart ? applyInstall(version) : apply(() => hostRemote.ksxcActivate(version))) },
+          installing ? [Spinner({ label: '安装中' }), '安装中'] : installLabel),
         release.active ? Button({ disabled: busy, onClick: () => apply(() => hostRemote.ksxcEnable(!release.enabled)) },
           release.enabled ? '停用' : '启用') : null,
         release.previous ? Button({ disabled: busy, onClick: () => apply(hostRemote.ksxcRollback) }, `回退到 ${release.previous}`) : null) : null,

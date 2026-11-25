@@ -1,0 +1,47 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createKsxcRoute } from '../src/host/routes/ksxc.mjs';
+import { STUDIO_OPERATION_IDS } from '../src/contracts/operations.mjs';
+import { installProgressText } from '../src/client/pages/ksxc-settings.mjs';
+
+const accounts = { status: async () => ({ connected: false }) };
+
+test('status refreshes the release catalog on every settings read', async () => {
+  const seen = [];
+  const route = createKsxcRoute({ accounts, releases: { status: async options => { seen.push(options); return { versions: ['1.8.0'] }; } } });
+  const result = await route('ksxc/status', {}, undefined);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.release.versions, ['1.8.0']);
+  assert.deepEqual(seen, [{ refresh: true }]);
+});
+
+test('install endpoints hand the version and the request id to the release service', async () => {
+  const calls = [];
+  const route = createKsxcRoute({ accounts, releases: {
+    startInstall: version => { calls.push(['start', version]); return { requestId: 'job-1' }; },
+    installStatus: requestId => { calls.push(['status', requestId]); return { status: 'running', phase: 'download' }; },
+  } });
+  assert.deepEqual(await route('ksxc/install-start', { version: '1.8.0' }), { ok: true, value: { requestId: 'job-1' } });
+  assert.deepEqual(await route('ksxc/install-status', { requestId: 'job-1' }), { ok: true, value: { status: 'running', phase: 'download' } });
+  assert.deepEqual(calls, [['start', '1.8.0'], ['status', 'job-1']]);
+});
+
+test('an older Host answers that it cannot install instead of failing obscurely', async () => {
+  const route = createKsxcRoute({ accounts, releases: { status: async () => ({}) } });
+  await assert.rejects(route('ksxc/install-start', { version: '1.8.0' }), { code: 'KSXC_HOST_UNAVAILABLE' });
+  await assert.rejects(route('ksxc/install-status', { requestId: 'job-1' }), { code: 'KSXC_HOST_UNAVAILABLE' });
+});
+
+test('both install operations are declared on the Studio bridge', () => {
+  assert.ok(STUDIO_OPERATION_IDS.includes('ksxc/install-start'));
+  assert.ok(STUDIO_OPERATION_IDS.includes('ksxc/install-status'));
+});
+
+test('progress text names the phase and the bytes received', () => {
+  const megabytes = 1024 * 1024;
+  assert.equal(installProgressText({ phase: 'prepare' }, '1.8.0'), '正在准备安装…');
+  assert.equal(installProgressText({ phase: 'download', receivedBytes: 50 * megabytes, totalBytes: 170 * megabytes }, '1.8.0'), '正在下载 1.8.0（50 / 170 MB）');
+  assert.equal(installProgressText({ phase: 'download', receivedBytes: 50 * megabytes, totalBytes: null, retrying: true }, '1.8.0'), '正在下载 1.8.0（50） · 连接中断，正在重试');
+  assert.equal(installProgressText({ phase: 'extract' }, '1.8.0'), '正在解包 1.8.0…');
+  assert.equal(installProgressText({ phase: 'probe' }, '1.8.0'), '正在校验 1.8.0…');
+});

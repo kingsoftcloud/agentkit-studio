@@ -456,6 +456,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         // surface mounts this object directly (no compatibility extension), so
         // compatibility-methods-only keys would be missing at runtime.
         ksxcStatus: signal => studioBridgeOperation('ksxc/status', {}, signal),
+        ksxcInstallStart: version => studioBridgeOperation('ksxc/install-start', { version }),
+        ksxcInstallStatus: requestId => studioBridgeOperation('ksxc/install-status', { requestId }),
         ksxcActivate: version => studioBridgeOperation('ksxc/activate', { version }),
         ksxcEnable: enabled => studioBridgeOperation('ksxc/enable', { enabled }),
         ksxcRollback: () => studioBridgeOperation('ksxc/rollback', {}),

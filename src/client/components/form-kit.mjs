@@ -17,13 +17,15 @@ export function createFormKit({ React: { createElement: h } }) {
       ...children);
   }
 
+  // `footer` spans the row below its text and controls, for a progress bar.
   function Row(props, ...children) {
-    const { title, desc, help, ...rest } = own(props);
-    return h('div', { className: 'af-row', ...rest },
+    const { title, desc, help, footer, ...rest } = own(props);
+    return h('div', { className: cx('af-row', footer ? 'af-row-with-footer' : undefined), ...rest },
       h('div', { className: 'af-row-text' },
         h('span', { className: 'af-row-title' }, title, help ? HelpTip(help) : null),
         desc ? h('span', { className: 'af-row-desc' }, desc) : null),
-      h('div', { className: 'af-row-control' }, ...children));
+      h('div', { className: 'af-row-control' }, ...children),
+      footer || null);
   }
 
   function Field(props, ...children) {
@@ -65,6 +67,18 @@ export function createFormKit({ React: { createElement: h } }) {
 
   const Note = (props, ...children) => { const { tone, className, ...rest } = own(props); return h('p', { className: cx('af-note', className), 'data-tone': tone, ...rest }, ...children); };
 
+  /** A spinner for work with no known duration. */
+  const Spinner = ({ label = '处理中' } = {}) => h('span', { className: 'af-spinner', role: 'status', 'aria-label': label });
+
+  /** A progress bar; `indeterminate` animates while the total is unknown. */
+  function Progress({ value = 0, max = 100, indeterminate = false, label } = {}) {
+    const percent = max > 0 ? Math.min(100, Math.max(0, Math.round((value / max) * 100))) : 0;
+    return h('div', {
+      className: 'af-progress', role: 'progressbar',
+      'aria-label': label, ...(indeterminate ? { 'data-indeterminate': '' } : { 'aria-valuenow': percent, 'aria-valuemin': 0, 'aria-valuemax': 100 }),
+    }, h('div', { className: 'af-progress-bar', style: { width: `${percent}%` } }));
+  }
+
   function Collapsible(props, ...children) {
     const { summary, ...rest } = own(props);
     return h('details', { className: 'af-details', ...rest }, h('summary', null, summary), h('div', { className: 'af-details-body' }, ...children));
@@ -73,5 +87,5 @@ export function createFormKit({ React: { createElement: h } }) {
   const Summary = ({ rows }) => h('div', { className: 'af-summary' }, rows.map(([label, value]) =>
     h('div', { key: label, className: 'af-summary-row' }, h('span', null, label), h('strong', null, value))));
 
-  return { cx, HelpTip, Section, Row, Field, Input, TextArea, Select, Switch, Choice, CheckCard, Button, Note, Collapsible, Summary };
+  return { cx, HelpTip, Section, Row, Field, Input, TextArea, Select, Switch, Choice, CheckCard, Button, Note, Spinner, Progress, Collapsible, Summary };
 }
