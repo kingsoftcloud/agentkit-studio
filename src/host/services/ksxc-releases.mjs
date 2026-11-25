@@ -50,23 +50,39 @@ async function fileSha256(path) {
   return hash.digest('hex');
 }
 
-// The desktop Host only ships macOS downloads; Windows needs a real-machine
-// probe of the payload before it joins this matrix.
+// The desktop Host ships the two macOS downloads and Windows x64. KS3 publishes
+// no Windows arm64 archive, so that target stays out of the matrix.
 const PLATFORMS = {
   'darwin-arm64': 'mac-arm64',
   'darwin-x64': 'mac-x64',
+  'win32-x64': 'win-x64',
 };
 const KS3_ORIGIN = 'https://ks3-cn-beijing.ksyuncs.com';
 const KS3_KEY_PREFIX = 'kscc/ksxc';
-const EXECUTABLE_NAME = 'codex';
-const TAR = '/usr/bin/tar';
 const DIGEST_FILE = '.executable.sha256';
 const LATEST_SCHEMA = 'agentkit.ksxc.latest/v1';
 const VERSION_TIMEOUT_MS = 15_000;
 const MIN_FREE_BYTES = 1024 ** 3;
 
-export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = fetch, target = `${process.platform}-${process.arch}`,
-  minFreeBytes = MIN_FREE_BYTES }) {
+/** The payload entry point: the Windows archive carries `codex.exe`. */
+const executableNameFor = target => (target.startsWith('win32-') ? 'codex.exe' : 'codex');
+
+/** Windows 10 1803+ ships bsdtar as `tar.exe`; a POSIX host keeps the system tar. */
+const tarPathFor = target => (target.startsWith('win32-')
+  ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+  : '/usr/bin/tar');
+
+/** bsdtar rejects the GNU-only `--no-same-owner`, and its PATH is the Windows one. */
+const tarInvocationFor = (target, archive, payload) => (target.startsWith('win32-')
+  ? { args: ['-xzf', archive, '-C', payload], env: { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', LANG: 'C' } }
+  : { args: ['--no-same-owner', '-xzf', archive, '-C', payload], env: { PATH: '/usr/bin:/bin', LANG: 'C' } });
+
+export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = fetch,
+  // The Host platform, injectable so a POSIX machine can exercise the Windows layout.
+  platform = process.platform, arch = process.arch, target = `${platform}-${arch}`,
+  minFreeBytes = MIN_FREE_BYTES,
+  executableName = executableNameFor(target),
+  tarPath = tarPathFor(target) }) {
   const stateFile = join(root, 'active.json');
   const latestFile = join(root, 'latest.json');
   const installed = join(root, 'versions');
@@ -169,8 +185,9 @@ export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = 
     catch { return undefined; }
   }
   function command(release, directory = join(installed, release.version)) {
-    return { ...resolveKsxcCommand({ executable: join(directory, 'bin', EXECUTABLE_NAME), expectedSha256: release.sha256,
-      protocolProfile: release.protocolProfile, companyConfigPath, allowedTargets: [release.target], env: {} }), version: release.version };
+    return { ...resolveKsxcCommand({ executable: join(directory, 'bin', executableName), expectedSha256: release.sha256,
+      protocolProfile: release.protocolProfile, companyConfigPath, allowedTargets: [release.target], platform, arch, env: {} }),
+    version: release.version };
   }
   async function valid(release, directory) {
     const options = command(release, directory);
@@ -235,9 +252,9 @@ export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = 
       report({ phase: 'extract' });
       // The archive digest was verified before extraction; the executable
       // digest is derived from it because the cache cannot know it in advance.
-      await runFile(TAR, ['--no-same-owner', '-xzf', archive, '-C', payload],
-        { cwd: stage, env: { PATH: '/usr/bin:/bin', LANG: 'C' }, timeout: 60_000, maxBuffer: 64 * 1024 });
-      const executable = join(payload, 'bin', EXECUTABLE_NAME);
+      const { args, env } = tarInvocationFor(target, archive, payload);
+      await runFile(tarPath, args, { cwd: stage, env, timeout: 60_000, maxBuffer: 64 * 1024 });
+      const executable = join(payload, 'bin', executableName);
       const sha256 = await fileSha256(executable);
       await valid({ ...release, sha256 }, payload);
       report({ phase: 'probe' });
@@ -245,7 +262,8 @@ export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = 
       if (probe.version.detected !== release.version) throw invalid();
       await rename(payload, join(installed, release.version));
       await writeFile(join(installed, release.version, DIGEST_FILE), sha256, { mode: 0o600 });
-    } finally { await rm(stage, { recursive: true, force: true }); }
+    // Windows antivirus keeps a handle on the freshly written payload, so the removal retries.
+    } finally { await rm(stage, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }
   }
   async function status({ refresh: shouldRefresh = false } = {}) {
     const current = await state();
@@ -264,7 +282,7 @@ export function createKsxcReleases({ root, lock, companyConfigPath, fetchImpl = 
       await mkdir(installed, { recursive: true, mode: 0o700 });
       // A Host killed mid-install never reaches its finally block, and every leftover holds 200 MB or more.
       await Promise.all((await readdir(installed)).filter(name => name.startsWith('.install-'))
-        .map(name => rm(join(installed, name), { recursive: true, force: true })));
+        .map(name => rm(join(installed, name), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })));
       const current = await state();
       const next = await task(current, await catalog(), onProgress);
       const tmp = join(root, `.active-${randomUUID()}.json`);

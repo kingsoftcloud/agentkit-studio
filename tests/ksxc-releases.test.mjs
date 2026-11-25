@@ -11,7 +11,7 @@ import { createKsxcReleases } from '../src/host/services/ksxc-releases.mjs';
 const run = promisify(execFile);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const KS3 = 'https://ks3-cn-beijing.ksyuncs.com/fe-frame/kscc/ksxc';
-const archiveUrl = version => `${KS3}/${version}/ksxc-mac-arm64-${version}.tar.gz`;
+const archiveUrl = (version, platform = 'mac-arm64') => `${KS3}/${version}/ksxc-${platform}-${version}.tar.gz`;
 const GATEWAY = 'http://mgw.example.test/cli/release/current-version?client=ksxc';
 const offline = () => new TypeError('fetch failed');
 const notFound = { ok: false, status: 404, headers: { get: () => null }, text: async () => '', json: async () => ({}) };
@@ -27,14 +27,14 @@ echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"1"}}'
 cat > /dev/null
 `;
 
-async function archiveFor(directory, version) {
+async function archiveFor(directory, version, executableName = 'codex', platform = 'mac-arm64') {
   const payload = join(directory, `release-${version}`);
   await mkdir(join(payload, 'bin'), { recursive: true });
-  const executable = join(payload, 'bin', 'codex');
+  const executable = join(payload, 'bin', executableName);
   await writeFile(executable, fakePayload(version));
   await chmod(executable, 0o755);
   await writeFile(join(payload, 'codex-package.json'), '{}');
-  const archive = join(directory, `ksxc-mac-arm64-${version}.tar.gz`);
+  const archive = join(directory, `ksxc-${platform}-${version}.tar.gz`);
   // COPYFILE_DISABLE keeps macOS from adding AppleDouble entries to the fixture.
   await run('/usr/bin/tar', ['-czf', archive, '-C', payload, 'bin', 'codex-package.json'], { env: { PATH: '/usr/bin:/bin', COPYFILE_DISABLE: '1' } });
   const bytes = await readFile(archive);
@@ -42,7 +42,7 @@ async function archiveFor(directory, version) {
 }
 
 /** Serves the company gateway, the KS3 sidecar and the archive from in-memory releases. */
-function releaseServer({ releases = {}, gateway = gatewayNaming('1.8.0'), sidecar = 'valid', drop = 'never' } = {}) {
+function releaseServer({ releases = {}, gateway = gatewayNaming('1.8.0'), sidecar = 'valid', drop = 'never', platform = 'mac-arm64' } = {}) {
   const requests = [];
   const downloads = { count: 0 };
   // The service hands fetchImpl a URL object, not a string.
@@ -53,11 +53,11 @@ function releaseServer({ releases = {}, gateway = gatewayNaming('1.8.0'), sideca
       if (gateway instanceof Error) throw gateway;
       return gateway;
     }
-    const item = Object.values(releases).find(release => archiveUrl(release.version) === url.replace(/\.sha256$/, ''));
+    const item = Object.values(releases).find(release => archiveUrl(release.version, platform) === url.replace(/\.sha256$/, ''));
     if (url.endsWith('.sha256')) {
       if (sidecar === 'missing' || !item) return notFound;
       const text = sidecar === 'malformed' ? 'checksum unavailable'
-        : `${sidecar === 'tampered' ? '0'.repeat(64) : item.digest}  ksxc-mac-arm64-${item.version}.tar.gz`;
+        : `${sidecar === 'tampered' ? '0'.repeat(64) : item.digest}  ksxc-${platform}-${item.version}.tar.gz`;
       return { ok: true, status: 200, headers: { get: () => null }, text: async () => text };
     }
     if (!item) return notFound;
@@ -78,15 +78,18 @@ async function fixture(t, { server: serverOptions = {}, ...instanceOptions } = {
   await writeFile(companyConfigPath, JSON.stringify({ baseUrl: 'http://mgw.example.test', code: 'kc',
     installerUrl: 'https://ks3-cn-beijing.ksyuncs.com/fe-frame/install.sh' }));
   const root = join(dir, 'store');
-  const first = await archiveFor(dir, '1.8.0');
+  // A Windows target carries `codex.exe`; the archive fixture has to match it.
+  const executableName = instanceOptions.executableName ?? 'codex';
+  const platform = instanceOptions.target?.startsWith('win32-') ? 'win-x64' : 'mac-arm64';
+  const first = await archiveFor(dir, '1.8.0', executableName, platform);
   const create = (releases = { '1.8.0': first }, server = {}, options = {}) => {
-    const served = releaseServer({ releases, ...server });
+    const served = releaseServer({ releases, platform, ...server });
     return { server: served, releases: createKsxcReleases({ target: 'darwin-arm64', ...options,
       root, companyConfigPath, fetchImpl: served.fetchImpl }) };
   };
   const shared = create({ '1.8.0': first }, serverOptions, instanceOptions);
-  return { dir, root, companyConfigPath, create, first, second: () => archiveFor(dir, '1.9.0'),
-    server: shared.server, releases: shared.releases, versions: join(root, 'versions'),
+  return { dir, root, companyConfigPath, create, first, second: () => archiveFor(dir, '1.9.0', executableName, platform),
+    server: shared.server, releases: shared.releases, versions: join(root, 'versions'), executableName,
     active: () => readFile(join(root, 'active.json'), 'utf8').then(JSON.parse) };
 }
 
@@ -320,8 +323,24 @@ test('active.json pointing at a deleted version is not ready and can be reinstal
 });
 
 test('an unsupported platform is not installable', async t => {
-  const { releases } = await fixture(t, { target: 'win32-x64' });
+  // KS3 publishes no Windows arm64 archive, so only x64 joins the matrix.
+  const { releases } = await fixture(t, { target: 'win32-arm64' });
   assert.equal((await releases.status()).installable, false);
+});
+
+test('a Windows x64 target installs the .exe payload', async t => {
+  // `tarPath` is injected because this machine runs the POSIX tar; a real Windows
+  // Host resolves `%SystemRoot%\System32\tar.exe` on its own.
+  const f = await fixture(t, { target: 'win32-x64', platform: 'win32', arch: 'x64',
+    executableName: 'codex.exe', tarPath: '/usr/bin/tar' });
+  const status = await f.releases.status({ refresh: true });
+  assert.equal(status.installable, true);
+  assert.deepEqual(status.versions, ['1.8.0']);
+  const job = await settle(f.releases, f.releases.startInstall('1.8.0').requestId);
+  assert.equal(job.status, 'succeeded', JSON.stringify(job.error));
+  // The recorded digest is the .exe the archive carried, not the POSIX name.
+  assert.equal(await readFile(join(f.versions, '1.8.0', '.executable.sha256'), 'utf8'), sha256(fakePayload('1.8.0')));
+  assert.equal((await f.releases.status()).ready, true);
 });
 
 test('a static lock stays authoritative and never reaches the network', async t => {
