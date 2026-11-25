@@ -724,11 +724,21 @@ export function createModelSettingsSection({
         ? [h(Chip, { key: 'text' }, '文字'), selected.input?.includes('image') ? h(Chip, { key: 'image' }, '图片') : null]
         : h('span', { className: 'ms-hint' }, capabilityHint));
 
+    const probeReport = effortProbe.reportFor(selected.id);
+    const applicableLevels = (probeReport?.outcomes || [])
+      .filter(row => row.outcome === 'accepted' || row.outcome === 'confirmed').map(row => row.level);
+    const applyProbeLevels = levels => {
+      patchProfile(selectedIndex, {
+        reasoningLevels: levels, reasoningEfforts: true,
+        defaultReasoningEffort: levels.includes('high') ? 'high' : levels[levels.length - 1],
+      });
+      setMessage(`已应用探测到的 ${levels.length} 个档位，保存后生效`);
+    };
     const reasoningField = renderModelEffortSettings(h, {
       efforts: selectedReasoning.efforts, value: reasoningValue, levels: selected.reasoningLevels,
       protocol: selected.protocol, provisional: !Array.isArray(selected.reasoningLevels) && reasoningProfileFor(selected.provider).fallback,
       probing: Boolean(effortProbe.progress), canProbe: Boolean(selected.modelName?.trim() && hostRemote.probeModelEfforts),
-      report: effortProbe.reportFor(selected.id),
+      report: probeReport, applicableLevels, onApply: applyProbeLevels,
       onProbe: probeSelectedEfforts, onChange: level => patchProfile(selectedIndex, {
         reasoningEfforts: level ? true : undefined, defaultReasoningEffort: level || undefined,
       }),

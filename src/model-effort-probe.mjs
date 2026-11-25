@@ -96,6 +96,7 @@ async function probeOnce({ baseUrl, modelName, level, wire = 'openai-chat', apiK
     const alternateChatLimit = !responses && !anthropic && requestError && text.includes(chatLimit);
     return {
       outcome: requestError && EFFORT_REJECTION.test(text) ? 'rejected' : 'unknown',
+      status: response.status,
       blocked: [401, 402, 403, 404, 429].includes(response.status),
       alternateChatLimit,
     };
@@ -136,7 +137,7 @@ export async function probeModelEfforts({ baseUrl, modelName, levels, wire, apiK
 export const untestedEfforts = levels => levels.map(level => ({ level, outcome: 'untested' }));
 
 /** Report diagnostic evidence using one invalid effort as a control. */
-export async function diagnoseModelEfforts({ levels, signal, modernChatLimit = false, timeoutMs = 6_000, budgetMs = 24_000, ...options }) {
+export async function diagnoseModelEfforts({ levels, signal, modernChatLimit = false, timeoutMs = 15_000, budgetMs = 90_000, ...options }) {
   signal?.throwIfAborted();
   const deadline = AbortSignal.timeout(budgetMs);
   const lifetime = signal ? AbortSignal.any([deadline, signal]) : deadline;
@@ -151,15 +152,35 @@ export async function diagnoseModelEfforts({ levels, signal, modernChatLimit = f
   let controlOutcome = control.outcome;
   if (controlOutcome !== 'timeout' && (control.effort === INVALID_EFFORT
     || controlOutcome !== 'rejected' && !control.usable)) controlOutcome = 'inconclusive';
-  if (controlOutcome === 'inconclusive' || controlOutcome === 'timeout') return { control: controlOutcome, outcomes };
+  // Credential/permission/rate-limit failures (blocked) still abort the run. Any
+  // other inconclusive control — e.g. a gateway that answers an invalid effort
+  // with a bare 400 that names no effort field — no longer aborts it: fall
+  // through and measure each level instead of reporting everything untested.
+  if ((controlOutcome === 'inconclusive' || controlOutcome === 'timeout') && control.blocked) {
+    return { control: controlOutcome, outcomes };
+  }
+  // A gateway that 200s even the invalid effort (and does not echo it) ignores
+  // the effort parameter, so a 200 alone cannot prove a level is supported.
+  const ignoresEffort = controlOutcome === 'accepted' && control.effort === undefined;
+  let anyAccepted = false;
   for (const row of outcomes) {
     if (lifetime.aborted) break;
     const result = await attempt(row.level);
-    row.outcome = result.outcome;
     if (result.outcome === 'accepted') {
       const acknowledged = result.effort === row.level && control.effort !== row.level;
-      const accepted = result.effort === undefined && controlOutcome === 'rejected';
+      // A 200 only counts when the reply does not echo a different effort, and
+      // the gateway is not one that ignores the parameter outright. Compared to
+      // requiring a rejected control, this also accepts levels after an
+      // inconclusive (but not blocked) control.
+      const accepted = result.effort === undefined && !ignoresEffort;
       row.outcome = result.usable && acknowledged ? 'confirmed' : result.usable && accepted ? 'accepted' : 'unknown';
+      if (row.outcome === 'accepted' || row.outcome === 'confirmed') anyAccepted = true;
+    } else if ((result.status === 400 || result.status === 422) && anyAccepted) {
+      // A lower level already ran, so this 4xx is the level being unsupported —
+      // no requirement that the error text name the effort field.
+      row.outcome = 'rejected';
+    } else {
+      row.outcome = result.outcome;
     }
     if (result.blocked) break;
   }

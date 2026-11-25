@@ -63,7 +63,7 @@ export function createUseEffortProbe({ useState, useRef, useEffect }) {
   };
 }
 
-export function renderModelEffortSettings(h, { efforts, value, levels, protocol, provisional, probing, canProbe, report, onProbe, onChange }) {
+export function renderModelEffortSettings(h, { efforts, value, levels, protocol, provisional, probing, canProbe, report, onProbe, onChange, applicableLevels = [], onApply }) {
   const wire = value ? efforts[value] : '';
   const parameter = protocol === 'openai-responses' ? 'reasoning.effort' : protocol === 'anthropic-messages' ? 'output_config.effort' : 'reasoning_effort';
   const hint = probing ? '正在发送测试请求…' : [
@@ -82,5 +82,10 @@ export function renderModelEffortSettings(h, { efforts, value, levels, protocol,
     }, h('option', { value: '' }, '沿用服务默认'),
     Object.keys(efforts).map(level => h('option', { key: level, value: level }, `${REASONING_LABELS[level] || level} → ${efforts[level]}`))),
     hint ? h('span', { role: 'status', className: 'ms-hint' }, hint) : null,
-    !probing && renderEffortReport(h, report));
+    !probing && renderEffortReport(h, report),
+    // 探测结果不再只是诊断：可用的档位可以一键写回模型配置（草稿，可撤销）。
+    !probing && applicableLevels.length > 0 && onApply
+      ? h('button', { type: 'button', className: 'ms-btn', 'data-size': 'sm', 'data-apply-probe': true,
+        onClick: () => onApply(applicableLevels) }, `应用 ${applicableLevels.length} 个可用档位`)
+      : null);
 }
