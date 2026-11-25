@@ -1,5 +1,6 @@
 import { modelCredentialName } from '../dsh/model-bridge.mjs';
 import { importedModelReasoning } from '../../model-catalog-reasoning.mjs';
+import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
 import { clearModelEffortRange, connectionRecord, headerRecord, modelConnections, normalizedConnectionAddress, stableString } from './model-settings-profiles.mjs';
 
 const providerDrafts = new Map();
@@ -85,11 +86,14 @@ export function importedProfiles(connections, picks, makeId) {
     const existing = new Set(group.models.map(({ profile }) => profile.modelName.trim()));
     for (const item of items.values()) {
       if (existing.has(item.id)) continue;
+      const baseInput = item.input || ['text'];
+      const catalog = lookupModelCapabilities({ baseUrl: group.address, provider: source.provider, modelName: item.id });
+      const input = catalog?.image && !baseInput.includes('image') ? [...baseInput, 'image'] : baseInput;
       profiles.push({
         id: makeId(item), provider: source.provider, baseUrl: group.address, credentialName: source.credentialName,
         connectionId: group.id, apiKey: source.apiKey || '', connectionName: source.connectionName,
         ...(source.headers ? { headers: source.headers } : {}),
-        modelName: item.id, input: item.input || ['text'], inputCapability: item.inputKnown === false ? 'unknown' : 'catalog',
+        modelName: item.id, input, inputCapability: item.inputKnown === false ? 'unknown' : 'catalog',
         ...importedModelReasoning(item, source),
         modelOnly: true, enabled: true, default: false,
       });

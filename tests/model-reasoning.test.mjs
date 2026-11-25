@@ -245,8 +245,18 @@ test('an explicitly added model carries its selected default without changing ca
   assert.deepEqual(provider.models.map(model => [model.id, model.reasoningEfforts]), [[reasoner.modelName, { low: 'low' }]]);
 });
 
-test('automatic reasoning uses service defaults when even an official directory omits levels', () => {
-  const item = { id: 'kimi-k3.1-pro' };
+test('the capability catalog fills levels the gateway omits (kimi-k3.1-pro)', () => {
+  // kimi-k3.1-pro reports no levels from /models; models.dev lists low/high/max.
+  assert.deepEqual(importedModelReasoning({ id: 'kimi-k3.1-pro' }, reasoner),
+    { reasoningLevels: ['low', 'high', 'max'], reasoningEfforts: true, defaultReasoningEffort: 'high' });
+});
+
+test('a catalog model that only toggles thinking gets no selectable levels', () => {
+  assert.deepEqual(importedModelReasoning({ id: 'kimi-k2.6' }, reasoner), { reasoningLevels: [] });
+});
+
+test('a model the catalog does not describe still follows the service default', () => {
+  const item = { id: 'no-such-model-xyz' };
   assert.deepEqual(importedModelReasoning(item, reasoner), { reasoningLevels: [] });
   assert.deepEqual(importedModelReasoning({ ...item, defaultReasoningEffort: 'high' }, reasoner), { reasoningLevels: [] });
   assert.deepEqual(importedModelReasoning({ ...item, reasoningLevels: [], defaultReasoningEffort: 'high' }, reasoner), { reasoningLevels: [] });

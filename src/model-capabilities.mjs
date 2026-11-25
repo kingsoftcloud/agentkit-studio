@@ -1,4 +1,5 @@
 /** Studio's implementation of the model-capabilities/v1 wire contract. */
+import { lookupModelCapabilities } from './model-capability-catalog.mjs';
 const copy = value => JSON.parse(JSON.stringify(value));
 const invariant = condition => {
   if (!condition) throw Object.assign(new Error('invalid_model_capabilities'), { code: 'invalid_model_capabilities' });
@@ -29,8 +30,18 @@ export function modelCatalogLimits(value) {
  * limits, not claims about an unreported model maximum. */
 export const DEFAULT_CONTEXT_WINDOW = 128000;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+/** The gateway's own `/models` limits win; the bundled models.dev catalog fills
+ * in what the gateway does not report (Kimi/GLM report neither). */
+function mergedCatalogLimits(profile, catalog) {
+    const vendor = modelCatalogLimits(catalog);
+    const looked = lookupModelCapabilities(profile || {});
+    return {
+        contextWindow: vendor.contextWindow ?? looked?.context,
+        maxOutputTokens: vendor.maxOutputTokens ?? looked?.output,
+    };
+}
 export function resolveModelBudgets(profile = {}, catalog) {
-    const limits = modelCatalogLimits(catalog);
+    const limits = mergedCatalogLimits(profile, catalog);
     const context = profile.contextWindow ?? limits.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     const contextWindow = Math.min(context, limits.contextWindow ?? context);
     const requestedOutput = profile.maxOutputTokens ?? Math.min(limits.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(contextWindow / 4));
@@ -44,7 +55,7 @@ export function resolveModelBudgets(profile = {}, catalog) {
         requestedOutput, advertisedMaxOutputTokens: limits.maxOutputTokens ?? null };
 }
 export function admitModelCapabilities(profile, catalog, catalogState = catalog ? 'available' : 'unavailable') {
-    const limits = modelCatalogLimits(catalog);
+    const limits = mergedCatalogLimits(profile, catalog);
     const { contextWindow, maxOutputTokens } = resolveModelBudgets(profile, catalog);
     const source = (configured, advertised, actual) => configured !== undefined && configured === actual ? 'profile' : advertised !== undefined && advertised === actual ? 'catalog' : 'default';
     const knownInput = catalog && catalog.inputKnown !== false && Array.isArray(catalog.input);

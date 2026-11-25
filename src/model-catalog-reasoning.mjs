@@ -1,4 +1,5 @@
 import { modelReasoningConfig, STUDIO_REASONING_LEVELS } from './model-reasoning.mjs';
+import { lookupModelCapabilities } from './model-capability-catalog.mjs';
 
 export function catalogReasoningMetadata(item) {
   const declared = item.reasoning_efforts ?? item.reasoningEfforts;
@@ -18,10 +19,17 @@ export function catalogReasoningMetadata(item) {
 }
 
 export function importedModelReasoning(item, connection) {
-  const { reasoningLevels = [] } = item;
-  return modelReasoningConfig({
-    provider: connection.provider, reasoningLevels,
-    reasoningEfforts: Boolean(reasoningLevels.length),
-    defaultReasoningEffort: item.defaultReasoningEffort,
-  });
+  const declared = catalogReasoningMetadata(item);
+  const catalog = lookupModelCapabilities({ baseUrl: connection.baseUrl, provider: connection.provider, modelName: item.id });
+  // The gateway's own declaration wins; otherwise the models.dev catalog
+  // supplies the levels. A catalog model that only toggles thinking gets no
+  // selectable levels, instead of the old low/high fallback.
+  const reasoningLevels = declared.reasoningLevels?.length ? declared.reasoningLevels
+    : catalog?.efforts?.length ? catalog.efforts
+    : catalog?.toggle ? []
+    : item.reasoningLevels || [];
+  const reasoningEfforts = reasoningLevels.length > 0;
+  const defaultReasoningEffort = declared.defaultReasoningEffort
+    || (reasoningLevels.includes('high') ? 'high' : reasoningLevels[reasoningLevels.length - 1]);
+  return modelReasoningConfig({ provider: connection.provider, reasoningLevels, reasoningEfforts, defaultReasoningEffort });
 }
