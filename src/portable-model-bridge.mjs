@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { dshModelSelection } from './agent-preset-admission.mjs';
 import { portableError } from './portable-resources.mjs';
 import { admitModelCapabilities } from './model-capabilities.mjs';
-import { studioReasoning } from './model-reasoning.mjs';
+import { studioReasoning, providerDisplayName } from './model-reasoning.mjs';
 import { providerWireApi } from './model-profile-contract.mjs';
 
 const OPERATING_MAX_OUTPUT_TOKENS = 8192;
@@ -32,7 +32,7 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
     const reasoning = studioReasoning(profile);
     const facts = await profileCapabilities(profile, resolveCapabilities);
     const wire = providerWireApi(profile);
-    const value = { displayName: `${profile.provider} · ${profile.modelName}`, api: wire, apiKeyEnv: profile.credentialName,
+    const value = { displayName: `${providerDisplayName(profile)} · ${profile.modelName}`, api: wire, apiKeyEnv: profile.credentialName,
       baseURL: profile.baseUrl,
       // Kspmas validates message roles and answers
       // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends the

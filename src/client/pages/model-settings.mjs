@@ -393,7 +393,14 @@ export function createModelSettingsSection({
         const discoveredProfiles = await hydrateModelInputs(profiles);
         const persistedProfiles = runtimeProfiles(discoveredProfiles);
         await hostRemote.updateSettings({ modelProfiles: persistedProfiles });
-        await dshModel.applyProfiles({ profiles: persistedProfiles, keys });
+        // 同步到对话引擎失败时把本机配置回滚到保存前，避免「Host 已改、DSH 未改」。
+        const rollbackProfiles = runtimeProfiles(savedState.profiles);
+        try {
+          await dshModel.applyProfiles({ profiles: persistedProfiles, keys });
+        } catch (reason) {
+          await hostRemote.updateSettings({ modelProfiles: rollbackProfiles }).catch(() => {});
+          throw Object.assign(new Error(`同步到对话引擎失败：${reason?.message || reason}。本机配置已回滚到保存前，请重试。`), { code: reason?.code });
+        }
         // The Host now holds these values: every draft has served its purpose.
         clearModelSettingsDrafts();
         setForm(current => ({ ...current, ...configuration,

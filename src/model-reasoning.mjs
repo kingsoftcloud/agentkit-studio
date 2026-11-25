@@ -114,6 +114,20 @@ export function reasoningLevelsFor(profile) {
   return Array.isArray(profile?.reasoningLevels) ? STUDIO_REASONING_LEVELS.filter(level => profile.reasoningLevels.includes(level)) : levels;
 }
 
+const PROVIDER_DISPLAY_NAMES = Object.freeze({
+  ksyun: '金山云模型服务', openai: 'OpenAI', deepseek: 'DeepSeek', codex: 'Codex', custom: '自定义',
+});
+
+/**
+ * The provider label a model route shows in the DSH selector. A user-named
+ * connection wins (e.g. 「星流」), then a known provider's Chinese name, and only
+ * then the raw provider id — a custom provider must never surface as `custom`.
+ */
+export function providerDisplayName(profile = {}) {
+  const provider = String(profile.provider || 'custom').trim() || 'custom';
+  return String(profile.connectionName || '').trim() || PROVIDER_DISPLAY_NAMES[provider] || provider;
+}
+
 /**
  * Resolve the reasoning declaration a profile publishes.
  * @param {object} profile - a Studio model profile.

@@ -1,7 +1,7 @@
 import { isCredentialRefName } from '../../credential-ref.mjs';
 import { harnessModelEndpoint, normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '../../model-capabilities.mjs';
-import { studioReasoning } from '../../model-reasoning.mjs';
+import { studioReasoning, providerDisplayName } from '../../model-reasoning.mjs';
 import { providerWireApi } from '../../model-profile-contract.mjs';
 import { dshModelRoute } from '../../model-route.mjs';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
@@ -94,7 +94,7 @@ export function createModelBridge({ hostRemote }) {
               ...(configured && reasoning && supportsModelDefaults && !dedicated ? { defaultReasoningEffort: reasoning.defaultEffort } : {}) };
           });
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
-          displayName: `${provider} · ${modelName}`, api: wire, apiKeyEnv: credentialName,
+          displayName: `${providerDisplayName(profile)} · ${modelName}`, api: wire, apiKeyEnv: credentialName,
           baseURL: routedBaseUrl,
           // Kspmas validates message roles and answers
           // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends
