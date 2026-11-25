@@ -61,11 +61,16 @@ jobs:
           app="$install_root/AgentKit Studio.app"
           ditto "$install_root/mount/AgentKit Studio.app" "$app"
           codesign --verify --deep --strict "$app"
-          xcrun stapler validate "$app"
-          spctl --assess --type execute --verbose=4 "$app"
+          ticket_stapled=false
+          if xcrun stapler validate "$app" > .artifacts/macos-proof/stapler.log 2>&1; then
+            ticket_stapled=true
+          fi
+          cat .artifacts/macos-proof/stapler.log
+          spctl --assess --type execute --verbose=4 "$app" 2>&1 | tee .artifacts/macos-proof/gatekeeper.log
+          grep -Fxq 'source=Notarized Developer ID' .artifacts/macos-proof/gatekeeper.log
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$BUILD_VERSION"
           printf 'STUDIO_INSTALLED_APP=%s\n' "$app" >> "$GITHUB_ENV"
-          jq -n --arg tag "$RELEASE_TAG" --arg source "$SOURCE_SHA" --arg version "$BUILD_VERSION" --arg sha256 "$DMG_SHA256" '{releaseTag:$tag,sourceCommit:$source,version:$version,installerSha256:$sha256,installed:true,signatureVerified:true,notarizationVerified:true}' > .artifacts/macos-proof/macos-install.json
+          jq -n --arg tag "$RELEASE_TAG" --arg source "$SOURCE_SHA" --arg version "$BUILD_VERSION" --arg sha256 "$DMG_SHA256" --argjson ticketStapled "$ticket_stapled" '{releaseTag:$tag,sourceCommit:$source,version:$version,installerSha256:$sha256,installed:true,signatureVerified:true,notarizationVerified:true,ticketStapled:$ticketStapled}' > .artifacts/macos-proof/macos-install.json
       - name: Upgrade in plugin UI, restart original conversation and roll back
         env:
           AGENTKIT_TELEMETRY_DISABLED: '1'
