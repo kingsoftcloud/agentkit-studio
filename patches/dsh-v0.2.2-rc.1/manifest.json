@@ -2928,12 +2928,103 @@
       },
       "sequence": 59,
       "sha256": "b4b31b3ec37ee0082a8083f91375139d8541e17aca443678c95d54c6749a7290"
+    },
+    {
+      "id": "091",
+      "file": "091-host-managed-plugin-details.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "medium",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "removeWhen": "DSH exposes its bundle detail layout to plugins with a separately managed lifecycle.",
+      "contracts": [
+        "An opted-in host-managed item uses the native plugin detail presentation.",
+        "The owning host supplies release labels and actions without using the DSH registry installer."
+      ],
+      "affectedPackages": [
+        "packages/client/ui-plugin-manager"
+      ],
+      "affectedFiles": [
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx",
+        "packages/client/ui-plugin-manager/src/client/config-ledger.ts",
+        "packages/client/ui-plugin-manager/src/client/index.ts",
+        "packages/client/ui-plugin-manager/src/client/slot-contract.ts",
+        "packages/client/ui-plugin-manager/src/client/versions.tsx"
+      ],
+      "dependsOn": [],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio signed Star Harness detail integration."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "dsh-web",
+          "installed-update"
+        ]
+      },
+      "sequence": 60,
+      "sha256": "c183c05383bfeb04b238fa99da1fb2ac18fc6aecc7972986fad114336a06ad2f"
+    },
+    {
+      "id": "092",
+      "file": "092-routemind-desktop-bundle.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "medium",
+      "maintainerRole": "Studio desktop and plugin maintainers",
+      "removeWhen": "The pinned DSH release supports switchable product bundles in the native built-ins group.",
+      "contracts": [
+        "Installation-owned RouteMind appears once in the native built-ins group, with a switch, source details and dedicated artwork. Star Harness uses its own artwork on the card and detail page.",
+        "RouteMind ships without default activation. Desktop startup preserves the user selection, including an earlier marketplace installation.",
+        "Discover identifies installation-owned bundles as provided even if the profile previously installed a copy."
+      ],
+      "affectedPackages": [
+        "apps/desktop",
+        "packages/boot/plugin-market",
+        "packages/client/ui-plugin-manager"
+      ],
+      "affectedFiles": [
+        "apps/desktop/tests/project-manager.spec.ts",
+        "packages/boot/plugin-market/src/index.ts",
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css",
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx",
+        "packages/client/ui-plugin-manager/src/client/presentation.ts",
+        "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
+      ],
+      "dependsOn": [
+        "074",
+        "087",
+        "091"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio Desktop ships a separately released RouteMind bundle."
+      },
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/project-manager.spec.ts",
+          "packages/boot/plugin-market/tests/detail-remote.spec.ts",
+          "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "product-profiles",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 61,
+      "sha256": "486c31a33b204442cce332f840608ce45dbcef58a19c668bb5a1faa85332cb5d"
     }
   ],
-  "patchedTree": "23f1ae4f6090fc1090496214580f61b91bd2913a",
-  "patchedSourceSha256": "0ef3ca4084fe1430c32696fb71b5fa28666afafc0efea6b5d7c2d167fa86522c",
+  "patchedTree": "e32887f574e19e8fbf11a45181661af51579f68c",
+  "patchedSourceSha256": "45ca34a1583e97a4891d4e5e22cfba40005dc922f1f3bd2b2ee34bea83476c6e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "046fceb9f774667824a917484f2f2fb1eef7256a3238dc3fa788d95b75118454"
+    "sha256": "f32a7186a8265ba626df663a135362b93c2584bffa85215eec0ad06bdf32944b"
   }
 }

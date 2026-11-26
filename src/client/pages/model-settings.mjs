@@ -10,6 +10,7 @@ import { bindProviders, checkImportedWires, clearProviderDrafts, importedProfile
 import { modelReasoningConfig, reasoningProfileFor, studioReasoning } from '../../model-reasoning.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import modelSettingsStyles from '../styles/model-settings.css.mjs';
+import modelCardStyles from '../styles/model-card.css.mjs';
 
 /** The settings sheet is a document-level asset shared by every mount. */
 function ensureModelSettingsStyles(document) {
@@ -18,7 +19,7 @@ function ensureModelSettingsStyles(document) {
     if (document.querySelector('style[data-agentkit-studio-model-settings]')) return () => {};
     const style = document.createElement('style');
     style.setAttribute('data-agentkit-studio-model-settings', 'true');
-    style.textContent = modelSettingsStyles;
+    style.textContent = modelSettingsStyles + modelCardStyles;
     document.head.append(style);
     return () => style.remove();
   });
@@ -82,14 +83,16 @@ const SOURCE_LABELS = {
 const PROVIDER_LABELS = { ksyun: '金山云模型服务', openai: 'OpenAI', custom: '自定义提供商', 'openai-compatible': 'OpenAI 兼容' };
 
 export function createModelSettingsSection({
-  ui: { React: { createElement: h, useEffect, useState, useRef }, SecretInput, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h, useEffect, useState, useRef }, SecretInput, DisclosureRow, Tag, InfoIcon, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent
 }) {
   const Chip = ({ children, tone = 'neutral', ...rest }) => h('span', { className: 'ms-chip', 'data-tone': tone, ...rest }, children);
   const providerLabel = provider => PROVIDER_LABELS[provider] || provider || '自定义提供商';
   const sourceLabel = source => SOURCE_LABELS[source] || source || '未配置';
   const useEffortProbe = createUseEffortProbe({ useState, useRef, useEffect });
-  const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({ h, useState, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId });
+  const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({
+    h, useState, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId, DisclosureRow, Tag, InfoIcon,
+  });
 
   function ModelSettingsSection({ dshModel, mode = 'all', onSaved }) {
     const [form, setForm] = useState({
@@ -517,6 +520,10 @@ export function createModelSettingsSection({
       }
       const stored = storedConnectionFor(profile);
       if (stored && profileCredential(stored).configured && typeof hostRemote.modelCatalog === 'function') {
+        try {
+          const catalog = await hostRemote.modelCatalogWithCards?.(stored.id);
+          if (catalog) return catalog;
+        } catch { /* The plain catalog is still available when card loading fails. */ }
         return hostRemote.modelCatalog(stored.id);
       }
       throw new Error('请先填写 API Key');

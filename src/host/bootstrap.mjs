@@ -17,6 +17,7 @@ import { createStudioServices } from './services/index.mjs';
 import { alignProfileProductPlugin } from './profile-plugin-alignment.mjs';
 import { applyDefaultBundles } from './default-bundles.mjs';
 import { createPluginMarketIndexSource } from '../plugin-market.mjs';
+import { isRouteMindPluginActive } from './services/routemind-activation.mjs';
 import dshPin from '../../dsh-pin.json' with { type: 'json' };
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
@@ -290,7 +291,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { engineServiceWorkspaces, canonicalEngineWorkspace } = await import('../providers/engine-service-workspaces.mjs');
   const externalRoutes = engineServiceWorkspaces(runtimeEnv);
   const credentials = credentialsService;
-  const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
+  const routeMindActive = () => isRouteMindPluginActive(ctx.get('pluginInventory'));
+  const models = await import('../model-service.mjs').then(({ createModelService }) =>
+    configurationPromise.then(configuration => createModelService({ configuration, credentials, routeMindActive })));
   const starHarness = !managedRuntime && !portableRuntime
     ? await import('./services/star-harness.mjs').then(async ({ createStarHarnessManager }) => createStarHarnessManager({
       root: join(studioStoreDir, 'star-harness'), env: runtimeEnv, externalRoutes,
@@ -299,6 +302,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       modelProfiles: (await models.settings()).modelProfiles,
       workspaceRegistry: () => ctx.get('workspaceRegistry'),
     })) : undefined;
+  const { registerStarHarnessClientRoute, registerStarHarnessIntroductionRoute } = await import('./routes/star-harness-client.mjs');
+  registerStarHarnessIntroductionRoute(ctx);
   if (starHarness) {
     ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
     const configuration = await configurationPromise;
@@ -307,7 +312,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     await starHarness.restoreClientAsset().catch(error => {
       console.warn('[agentkit-studio] Star Harness UI restore failed:', error?.code || 'STAR_HARNESS_UI_RESTORE_FAILED');
     });
-    const { registerStarHarnessClientRoute } = await import('./routes/star-harness-client.mjs');
     registerStarHarnessClientRoute(ctx, starHarness);
   }
   const nativeEngineRuntime = createNativeEngineRuntime({ env: runtimeEnv, viewService: nativeManagedKernel?.remote,

@@ -6,6 +6,9 @@ import { relocateReleaseSettings } from '../scripts/package-desktop.mjs';
 import { parseEnv } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { stageRouteMindArchive } from '../scripts/stage-routemind-desktop-plugin.mjs';
 
 test('one product definition supplies every desktop target and existing version sources', () => {
   for (const target of ['mac-arm64', 'mac-x64', 'win-x64']) {
@@ -16,6 +19,18 @@ test('one product definition supplies every desktop target and existing version 
     assert.equal(inputs.environment.DSH_DESKTOP_PLUGIN_BUNDLES, product.desktop.defaultBundles.join(','));
     assert.ok(inputs.environment.DSH_DESKTOP_PRODUCT_ICON.endsWith(product.desktop.platforms[target].icon));
     assert.equal(resolveProductInputs({ dshVersion: '0.2.0-rc.2' }).desktopVersion, '0.2.0-rc.2');
+  }
+});
+
+test('every desktop target ships the pinned RouteMind archive with activation off by default', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-routemind-input-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const archive = await stageRouteMindArchive(directory);
+  assert.equal(createHash('sha256').update(await readFile(archive)).digest('hex'), product.desktop.routeMindArchive.sha256);
+  for (const target of ['mac-arm64', 'mac-x64', 'win-x64']) {
+    const { environment } = resolveProductInputs({ target });
+    assert.ok(environment.DSH_DESKTOP_PLUGIN_ROOTS.split(',').includes('routemind-studio'));
+    assert.ok(!environment.DSH_DESKTOP_PLUGIN_BUNDLES.split(',').includes('routemind-studio'));
   }
 });
 

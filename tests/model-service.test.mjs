@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createModelService } from '../src/model-service.mjs';
+import { isRouteMindPluginActive } from '../src/host/services/routemind-activation.mjs';
 
 function configuration(values) {
   return {
@@ -41,7 +42,7 @@ test('model service resolves independent provider credentials and catalog capabi
     },
   });
   const catalog = await service.catalog('ksyun-vision');
-  assert.deepEqual(catalog.items, [
+  assert.deepEqual(catalog.items.map(({ card, ...item }) => item), [
     { id: 'vision', name: 'vision', input: ['text', 'image'] },
     { id: 'text', name: 'text', input: ['text'] },
   ]);
@@ -59,6 +60,7 @@ test('model endpoint probe reads an unsaved catalog with the candidate key and d
   const values = { modelProfiles: [{ id: 'existing', provider: 'ksyun', modelName: 'old', baseUrl: 'https://old.test/v1', credentialName: 'OLD_KEY', default: true }] };
   const calls = [];
   const service = createModelService({
+    routeMindActive: () => true,
     configuration: configuration(values),
     credentials: { resolve: async () => ({ value: 'stored-key' }), set: async () => {} },
     fetchImpl: async (url, init) => {
@@ -68,7 +70,9 @@ test('model endpoint probe reads an unsaved catalog with the candidate key and d
   });
   const result = await service.probe({ provider: 'openai', baseUrl: 'https://candidate.test/v1', apiKey: 'unsaved-key', modelName: 'candidate-model' });
   assert.equal(result.selectedAvailable, true);
-  assert.deepEqual(result.items[0], { id: 'candidate-model', name: 'candidate-model', input: ['text', 'image'] });
+  const { card, ...item } = result.items[0];
+  assert.deepEqual(item, { id: 'candidate-model', name: 'candidate-model', input: ['text', 'image'] });
+  assert.equal(card.displayName, 'Candidate Model');
   assert.equal(calls[0].init.headers.Authorization, 'Bearer unsaved-key');
   assert.deepEqual(values.modelProfiles, [{ id: 'existing', provider: 'ksyun', modelName: 'old', baseUrl: 'https://old.test/v1', credentialName: 'OLD_KEY', default: true }]);
 });
@@ -264,4 +268,140 @@ test('the wire probe rejects an incomplete candidate before touching the network
   });
   await assert.rejects(() => service.probeWire({ baseUrl: 'https://gw.test/v1', modelName: '  ' }), { code: 'MODEL_PROBE_INPUT_INVALID' });
   await assert.rejects(() => service.probeWire({ baseUrl: '', modelName: 'm' }), { code: 'MODEL_PROBE_INPUT_INVALID' });
+});
+
+test('model cards merge every enabled profile catalog and skip unreadable ones', async () => {
+  const service = createModelService({
+    routeMindActive: () => true,
+    configuration: configuration({ modelProfiles: [
+      { id: 'xingliu', provider: 'ksyun', modelName: 'deepseek-v4.1-flash', baseUrl: 'https://xl.test/v1', credentialName: 'K1', enabled: true },
+      { id: 'broken', provider: 'openai', modelName: 'x', baseUrl: 'https://down.test/v1', credentialName: 'K2', enabled: true },
+      { id: 'off', provider: 'openai', modelName: 'y', baseUrl: 'https://off.test/v1', credentialName: 'K3', enabled: false },
+    ] }),
+    credentials: { resolve: async () => ({ value: 'secret' }) },
+    fetchImpl: async url => {
+      if (!String(url).startsWith('https://xl.test/')) return { ok: false, status: 503 };
+      return { ok: true, async json() { return { data: [{ id: 'deepseek-v4.1-flash', pricing: { prompt: '2.0元', completion: '8.0元' } }] }; } };
+    },
+  });
+  const { cards, cardsByProvider } = await service.cards();
+  assert.deepEqual(Object.keys(cards), ['deepseek-v4.1-flash']);
+  assert.equal(cards['deepseek-v4.1-flash'].displayName, 'DeepSeek V4.1 Flash');
+  assert.equal(cards['deepseek-v4.1-flash'].pricing.input, 2);
+  assert.deepEqual(Object.keys(cardsByProvider), ['agentkit-studio-xingliu']);
+});
+
+test('RouteMind scores are a display-only request and price remains scoped to the selected gateway', async () => {
+  const calls = [], started = Promise.withResolvers(), available = Promise.withResolvers();
+  const service = createModelService({
+    routeMindActive: () => true,
+    configuration: configuration({ modelProfiles: [
+      { id: 'route', provider: 'custom', modelName: 'shared', baseUrl: 'https://fixture.test/prefix/v1', credentialName: 'ROUTE_KEY' },
+      { id: 'direct', provider: 'custom', modelName: 'shared', baseUrl: 'https://direct.test/v1', credentialName: 'DIRECT_KEY' },
+    ] }),
+    credentials: { resolve: async name => ({ value: name }) },
+    fetchImpl: async (url, init) => {
+      calls.push([url, init.headers.Authorization, init.redirect]);
+      if (url.endsWith('/routemind/models')) {
+        started.resolve();
+        return available.promise;
+      }
+      const routed = url.includes('fixture.test');
+      return { ok: true, async json() { return { data: [null, {
+        id: 'shared', context_length: 64000, owned_by: routed ? 'routemind' : 'direct',
+        pricing: { prompt: routed ? '2元' : '7元', completion: '16.8元' },
+      }] }; } };
+    },
+  });
+  const selected = await service.profile('route');
+  assert.equal((await service.capabilities(selected)).contextWindow, 64000);
+  assert.equal(calls.length, 1);
+  assert.equal((await service.catalog('route')).items[0].card, undefined);
+  const pending = service.cards();
+  await started.promise;
+  assert.equal((await service.capabilities(selected)).contextWindow, 64000);
+  available.resolve({ ok: true, async json() { return { models: [{ name: 'shared', scores: { speed: 66 } }] }; } });
+  const { cards, cardsByProvider } = await pending;
+  assert.equal(Object.hasOwn(cards, 'shared'), false);
+  const routed = cardsByProvider['agentkit-studio-route'].shared;
+  assert.equal(routed.pricing.input, 2);
+  assert.equal(routed.scores.values.speed, 66);
+  assert.equal(cardsByProvider['agentkit-studio-direct'].shared.pricing.input, 7);
+  assert.deepEqual(calls.filter(([url]) => url.endsWith('/routemind/models')), [
+    ['https://fixture.test/prefix/routemind/models', 'Bearer ROUTE_KEY', 'error'],
+  ]);
+});
+
+test('model cards and pricing follow the live RouteMind plugin inventory', async () => {
+  let entries = [];
+  const pluginInventory = { list: async () => ({ entries }) };
+  const calls = [];
+  const candidate = { id: 'route', provider: 'custom', modelName: 'glm-5.3', baseUrl: 'https://fixture.test/v1', credentialName: 'FIXTURE' };
+  const service = createModelService({
+    routeMindActive: () => isRouteMindPluginActive(pluginInventory),
+    configuration: configuration({ modelProfiles: [candidate] }),
+    credentials: { resolve: async () => ({ value: 'fixture' }) },
+    fetchImpl: async url => {
+      calls.push(url);
+      return { ok: true, json: async () => url.endsWith('/routemind/models')
+        ? { models: [{ name: candidate.modelName, scores: { speed: 70 }, pricing_per_mtok: { input: 0.4, output: 1.25, cached_input: 0.08 } }] }
+        : { data: [{ id: candidate.modelName, owned_by: 'routemind', context_length: 64000 }] } };
+    },
+  });
+  const base = { moduleName: 'routemind-studio', enabled: true, fiberPhase: 'active' };
+  const empty = { enabled: false, cards: {}, cardsByProvider: {} };
+  for (const entry of [null, { ...base, enabled: false }, { ...base, fiberPhase: 'failed' }, { ...base, moduleName: 'another-plugin' }]) {
+    entries = entry ? [entry] : [];
+    assert.deepEqual(await service.cards(), empty);
+  }
+  assert.deepEqual(calls, []);
+  assert.equal((await service.catalog('route', { includeCards: true })).items[0].card, undefined);
+  assert.equal((await service.capabilities(await service.profile('route'))).contextWindow, 64000);
+  entries = [base];
+  const active = await service.cards();
+  assert.equal(active.enabled, true);
+  const card = active.cardsByProvider['agentkit-studio-route']['glm-5.3'];
+  assert.equal(card.scores.values.speed, 70);
+  assert.deepEqual(card.pricing, { currency: 'USD', unit: '1M tokens', input: 0.4, output: 1.25, cachedInput: 0.08, tiered: false });
+  entries = [{ ...base, enabled: false }];
+  assert.deepEqual(await service.cards(), empty);
+  assert.equal((await service.probe({ ...candidate, apiKey: 'fixture' })).items[0].card, undefined);
+  assert.deepEqual(calls.filter(url => url.endsWith('/routemind/models')), ['https://fixture.test/routemind/models']);
+  assert.equal(await isRouteMindPluginActive({ list: async () => { throw Error('unavailable'); } }), false);
+  assert.equal(await isRouteMindPluginActive(), false);
+});
+
+test('ambiguous legacy routes cannot attach another gateway price or use the Star Harness route', async () => {
+  const profiles = ['a.b', 'a_b', 'harness-service', 'valid'].map(id => ({ id, provider: 'custom',
+    modelName: 'same-model', baseUrl: 'https://gateway.test/v1', credentialName: id }));
+  const reads = [];
+  const service = createModelService({
+    routeMindActive: () => true,
+    configuration: configuration({ modelProfiles: profiles }),
+    credentials: { resolve: async value => { reads.push(value); return { value }; } },
+    fetchImpl: async () => Response.json({ data: [{ id: 'same-model', pricing: { prompt: '5元', completion: '10元' } }] }),
+  });
+  const { cards, cardsByProvider } = await service.cards();
+  assert.deepEqual(reads, ['valid']);
+  assert.deepEqual(cards, {});
+  assert.deepEqual(Object.keys(cardsByProvider), ['agentkit-studio-valid']);
+  assert.equal(cardsByProvider['agentkit-studio-valid']['same-model'].pricing.input, 5);
+});
+
+test('disabling RouteMind during card loading returns the same plain catalog without another fetch', async () => {
+  let enabled = true;
+  const reads = [];
+  const service = createModelService({
+    routeMindActive: () => enabled,
+    configuration: configuration({ modelProfiles: [{ id: 'gateway', provider: 'custom', modelName: 'same-model', baseUrl: 'https://gateway.test/v1' }] }),
+    credentials: { resolve: async () => ({ value: 'fixture' }) },
+    fetchImpl: async url => {
+      reads.push(url);
+      if (url.endsWith('/routemind/models')) { enabled = false; return Response.json({ models: [] }); }
+      return Response.json({ data: [{ id: 'same-model', owned_by: 'routemind' }] });
+    },
+  });
+  const result = await service.catalog('gateway', { includeCards: true });
+  assert.equal(result.items[0].card, undefined);
+  assert.deepEqual(reads, ['https://gateway.test/v1/models', 'https://gateway.test/routemind/models']);
 });
