@@ -2965,13 +2965,13 @@
         ]
       },
       "sequence": 60,
-      "sha256": "29ec6349a5a460de3f8a5304ddc660e1d1b6dfa84efc3982c4f4512d451d22df"
+      "sha256": "c183c05383bfeb04b238fa99da1fb2ac18fc6aecc7972986fad114336a06ad2f"
     }
   ],
-  "patchedTree": "973e84f15785b9365c995fd62e0918f71d3c82c1",
-  "patchedSourceSha256": "5353f4875baa5041171e24ac30881d5fd050b7969bc3b7531a6eedb0b34fa1ad",
+  "patchedTree": "e509f2b296556798a57b287b199c08370da369e6",
+  "patchedSourceSha256": "7d4e26ab236a27d9b99cd14425a958c3a8fbf7b082d9c1f77bb8fbcad187231f",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "b6635a07c6a96baa942574d94839bd95a831cdd3d0d8105e957d35e9c73db9d0"
+    "sha256": "002adb8fe948e6fb3460d5945444dbcb5ca8c1f67c65065c654dacfbf9a21056"
   }
 }

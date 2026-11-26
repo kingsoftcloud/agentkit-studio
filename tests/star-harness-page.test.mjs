@@ -10,7 +10,7 @@ function render(status, hostRemote, events = [], view = 'page', effects = [], re
       useState: initial => [states.length ? states.shift() : initial, () => {}],
       useEffect: effect => effects.push(effect),
       useRef: current => ({ current }),
-    }, MarkdownText: 'native-markdown', BRAND: {}, buttonStyle: () => ({}), inputStyle: () => ({}) },
+    }, MarkdownText: 'native-markdown', BRAND: {}, buttonStyle: () => ({}) },
     Switch: 'native-switch', Button: 'native-button', hostRemote, window: { Event, dispatchEvent: event => events.push(event.type),
       addEventListener() {}, removeEventListener() {} },
   });
@@ -50,6 +50,7 @@ test('the Star Harness card applies an upgrade once and explains automatic works
   }, events);
   const elements = descendants(view);
   assert.doesNotMatch(JSON.stringify(view), /external-workspace/);
+  assert.ok(elements.every(node => node.type !== 'input'));
   const upgrade = elements.find(node => node.type === 'button' && node.children.includes('升级到 0.0.25'));
   assert.match(elements.find(node => node.type === 'native-markdown').props.text, /会话在 Studio 中选择的工作区/);
   const pending = upgrade.props.onClick();
@@ -85,6 +86,8 @@ test('the DSH detail lists only the recommended, current and rollback releases',
   const detail = render(status, { async installStarHarness(version) { requests.push(version); return status; } },
     [], 'page', [], presentation => presentation);
   assert.match(detail.description, /金山云自研.*AgentKit、星流模型和金山云服务/);
+  assert.match(detail.document.markdown, /子智能体协作.*原会话续跑.*Token 开销/);
+  assert.equal(detail.versions.advanced, undefined);
   assert.equal(detail.components.length, 3);
   assert.ok(descendants(detail.headerActions).some(node => node.type === 'native-button' && node.children.includes('升级到 0.0.25')));
   assert.equal(detail.versions.rows.find(row => row.version === '0.0.24').current, true);
@@ -102,6 +105,13 @@ test('the DSH detail lists only the recommended, current and rollback releases',
     {}, [], 'page', [], presentation => presentation);
   assert.equal(cleanInstall.version, undefined);
   assert.deepEqual(cleanInstall.versions.rows.map(row => row.version), ['0.0.25']);
+  assert.ok(descendants(detail.headerActions).every(node => !node.children.includes('修复当前版本')));
+
+  const repair = render({ ...status, repairNeeded: true }, {
+    async installStarHarness(version) { requests.push(version); return status; },
+  }, [], 'page', [], presentation => presentation);
+  await descendants(repair.headerActions).find(node => node.children.includes('修复当前版本')).props.onClick();
+  assert.equal(requests.at(-1), status.version);
 });
 
 

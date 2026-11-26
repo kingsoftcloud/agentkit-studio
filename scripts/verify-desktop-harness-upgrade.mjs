@@ -137,26 +137,20 @@ async function expandVersionList(panel) {
 
 async function install(version, action) {
   let panel = await pluginPage();
-  const label = action === '安装' ? '安装 ' + version : action === '升级' ? '升级到 ' + version : action;
+  const label = action + '到 ' + version;
   const nativeList = panel.locator('[data-plugin-versions]');
   const native = await panel.getAttribute('data-plugin-detail') !== null;
-  let control = (native ? nativeList : panel).getByRole('button', { name: label, exact: true });
-  if (action === '安装' || action === '升级') {
+  const control = (native ? nativeList : panel).getByRole('button', { name: label, exact: true });
+  if (action === '升级') {
     await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
   }
   if (native) await expandVersionList(panel);
-  if (native && (action === '安装' || action === '升级') && !await control.isVisible()) {
-    // The curated list shows the recommended release. A pinned qualification
-    // version uses the same signed installer through the exact-version form.
-    await nativeList.getByText('按版本号安装或修复', { exact: true }).click();
-    await nativeList.getByRole('textbox', { name: '版本', exact: true }).fill(version);
-    control = nativeList.getByRole('button', { name: action, exact: true });
-  } else if (action === '安装' || action === '升级') {
-    await expect(control).toBeVisible({ timeout: pluginControlTimeout });
+  await expect(control).toBeVisible({ timeout: pluginControlTimeout });
+  await control.click({ timeout: pluginControlTimeout });
+  if (action === '升级') {
     proof.selectedFromCatalog ??= {};
     proof.selectedFromCatalog[version] = true;
   }
-  await control.click({ timeout: pluginControlTimeout });
   await expect.poll(async () => {
     try { return (await rpc('star-harness/status')).version; }
     catch (error) {
@@ -301,7 +295,7 @@ try {
     await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
   } else {
     await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible();
-    await expect(panel.getByText('执行多步任务', { exact: true })).toBeVisible();
+    await expect(panel.getByText(/执行多步任务|AgentKit 里的多步任务/).first()).toBeVisible();
   }
   await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible();
   await page.screenshot({ path: join(output, 'plugin-overview.png'), timeout: 60000 });
@@ -312,7 +306,15 @@ try {
     return response.status === 404 ? null : response.json();
   }, rendererRoute), null);
   await record('Studio opened settings and plugin management before Harness UI installation');
-  await install(baseline, '安装');
+  // The older fixture predates the recommended version shown on a fresh profile.
+  const seeded = await rpc('star-harness/install', { version: baseline });
+  assert.equal(seeded.version, baseline);
+  await page.reload();
+  const baselinePanel = await pluginPage();
+  if (await baselinePanel.getAttribute('data-plugin-detail') !== null) await expandVersionList(baselinePanel);
+  await expect(baselinePanel.locator('[aria-current="true"]')).toHaveText('v' + baseline, { timeout });
+  await page.screenshot({ path: join(output, 'plugin-' + baseline + '.png'), timeout: 60000 });
+  await record('The disposable profile started from the pinned signed baseline');
   await createConversation();
   await send(turns[0], firstModel);
   const original = page.getByRole('treeitem').filter({ hasText: new RegExp(turns[0].input + '|' + turns[0].answer, 'i') }).last();
@@ -339,7 +341,7 @@ try {
   await page.screenshot({ path: join(output, 'conversation-resumed.png'), timeout: 60000 });
   await record('The new process resumed the original conversation with the upgraded signed engine and renderer');
 
-  await install(baseline, '回退到 ' + baseline);
+  await install(baseline, '回退');
   await reopenFirstConversation();
   await submit(turns[3]);
   await expect.poll(() => proof.modelRequests.some(entry => entry.input === turns[3].input && entry.throughHarness),

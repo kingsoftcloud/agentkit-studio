@@ -206,7 +206,7 @@ index f5908227a43d4a8e3d03df87f3f905198cccbc9a..703d93fd1708ab8f6fee7b4e8427c475
            'plugins.bundle.config': { kind: 'keyed', scope: 'root' },
            'plugins.row.config': { kind: 'keyed', scope: 'root' },
 diff --git a/packages/client/ui-plugin-manager/src/client/slot-contract.ts b/packages/client/ui-plugin-manager/src/client/slot-contract.ts
-index 1450f2bb96cc71e4674d7944a4c13420fe6aa09c..d5be1527f388979a68264faafa65b43d62d0032f 100644
+index 1450f2bb96cc71e4674d7944a4c13420fe6aa09c..63611c4a8e7e6ef327494795cff0102ed1162b8b 100644
 --- a/packages/client/ui-plugin-manager/src/client/slot-contract.ts
 +++ b/packages/client/ui-plugin-manager/src/client/slot-contract.ts
 @@ -19,6 +19,7 @@
@@ -217,7 +217,7 @@ index 1450f2bb96cc71e4674d7944a4c13420fe6aa09c..d5be1527f388979a68264faafa65b43d
  import type { BundleInfo } from '@deepseek-ai/dsh-api-remotes/client'
  import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
  
-@@ -58,6 +59,50 @@ export interface PluginPackageRef {
+@@ -58,6 +59,49 @@ export interface PluginPackageRef {
    readonly rows: readonly PluginRowRef[]
  }
  
@@ -258,7 +258,6 @@ index 1450f2bb96cc71e4674d7944a4c13420fe6aa09c..d5be1527f388979a68264faafa65b43d
 +    readonly current: boolean
 +    readonly action?: ReactNode
 +  }[]
-+  readonly advanced?: ReactNode
 +}
 +
 +export interface ManagedItemDetailProps {
@@ -268,7 +267,7 @@ index 1450f2bb96cc71e4674d7944a4c13420fe6aa09c..d5be1527f388979a68264faafa65b43d
  /** What a detail page is about: a bundle, one row of a bundle, or an official plugin listed by its `plugins.item` id. */
  export type PluginsSubject =
    | { readonly kind: 'bundle'; readonly pkg: PluginPackageRef }
-@@ -134,6 +179,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+@@ -134,6 +178,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       * `plugins.bundle.config` or `plugins.row.config` instead.
       */
      'plugins.item': { kind: 'list'; scope: 'root'; owner: PluginConfigViewProps }
@@ -278,7 +277,7 @@ index 1450f2bb96cc71e4674d7944a4c13420fe6aa09c..d5be1527f388979a68264faafa65b43d
       * A bundle's own configuration, keyed by the bundle's package name and
       * rendered on the bundle's page between its description and its rows
 diff --git a/packages/client/ui-plugin-manager/src/client/versions.tsx b/packages/client/ui-plugin-manager/src/client/versions.tsx
-index dfb352a89035f9266c050999e51c3836aecf4ed5..b7e003a90df8e4d3a14074103d1620e91b7c72ae 100644
+index dfb352a89035f9266c050999e51c3836aecf4ed5..c133c0016a45558412075e6ca3872f020d1bee69 100644
 --- a/packages/client/ui-plugin-manager/src/client/versions.tsx
 +++ b/packages/client/ui-plugin-manager/src/client/versions.tsx
 @@ -14,6 +14,7 @@ import {
@@ -289,7 +288,7 @@ index dfb352a89035f9266c050999e51c3836aecf4ed5..b7e003a90df8e4d3a14074103d1620e9
  import css from './PluginManagerPage.module.css'
  
  /** The tone of a summary or outcome glyph. */
-@@ -299,6 +300,60 @@ export function VersionSection({ pkg, check, t, busy, onEnsure, onCheck, onUpdat
+@@ -299,6 +300,59 @@ export function VersionSection({ pkg, check, t, busy, onEnsure, onCheck, onUpdat
    )
  }
  
@@ -342,7 +341,6 @@ index dfb352a89035f9266c050999e51c3836aecf4ed5..b7e003a90df8e4d3a14074103d1620e9
 +          </ul>
 +        </div> : null}
 +      </div>
-+      {versions.advanced}
 +    </section>
 +  )
 +}
