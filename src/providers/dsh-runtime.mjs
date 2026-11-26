@@ -16,7 +16,8 @@ import { HARNESS_SERVICE_MODEL_PROVIDER, NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT
 import { dshModelFailure } from '../model-failure.mjs';
 import { startDesktopRun } from '../telemetry/host-run.mjs';
 import { createCodexToolRecorder, createResponsesToolRecorder } from './codex-tool-events.mjs';
-import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
+import { gatewayHistory, isDshUserInput, isDshAgentNotice, textOf } from './dsh-messages.mjs';
+import { nativeSessionRunOptions } from './dsh-native-run.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
@@ -112,44 +113,6 @@ export function routeDshRuntime(options, next, owner, requestOrigin) {
   if (!route || (requestOrigin && !requestOrigin(options))) return next();
   return streamDshRuntime(options, route, owner);
 }
-function textOf(message) {
-  if (!message || typeof message !== 'object') return '';
-  const content = message.content;
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.filter(part => part?.type === 'text' || part?.kind === 'text')
-    .map(part => String(part.text || part.value || '')).join('');
-}
-function previousNativeRun(agent, sessionId) {
-  const session = agent?.session;
-  if (!sessionId || session?.id !== sessionId || typeof session.snapshotEvents !== 'function'
-    || typeof session.isOwnSeq !== 'function') return null;
-  const entry = session.snapshotEvents().findLast(event => event.type === NATIVE_ENGINE_EVENT
-    && event.ignorable === true && session.isOwnSeq(event.seq));
-  if (!entry || entry.data?.event?.kind === 'run.terminal') return null;
-  return { runId: entry.data?.runId, cursor: entry.data?.event?.seq };
-}
-function nativeInboxGuidance(agent, messages) {
-  if (!agent?.inbox || !agent.session || typeof agent.session.append !== 'function') return {};
-  const { inbox, session } = agent;
-  const displayed = new Set((messages ?? []).filter(message => message.role === 'user').map(message => message.id));
-  return {
-    nextGuidance() {
-      const message = inbox.nextStep[0];
-      if (message?.source?.kind !== 'user' || typeof message.id !== 'string'
-        || !Array.isArray(message.content) || !message.content.every(part => part.type === 'text')) return null;
-      return { id: message.id, text: textOf(message), message };
-    },
-    commitGuidance({ id, text, message }) {
-      if (!displayed.has(id)) {
-        session.append('user/message', message, { surfaceOp: 'append' });
-        displayed.add(id);
-      }
-      if (inbox.nextStep.some(queued => queued.id === id && textOf(queued) === text)) inbox.remove(id);
-    },
-  };
-}
-
 function isUserInput(message, includeTeamMessages = false) {
   return isDshUserInput(message) || (includeTeamMessages && isDshAgentNotice(message));
 }
@@ -756,10 +719,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               ...(runtime === 'native-engine' ? { inputImages: Array.isArray(content) ? content.filter(part => part.type === 'image_url') : [] }
                 : { imageInputs: history.flatMap(message => Array.isArray(message.content)
                   ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : []) }),
-              ...(runtime === 'native-engine' ? {
-                ...nativeInboxGuidance(toolAgent, options.messages),
-                previousRun: () => previousNativeRun(toolAgent, String(options.sessionId || '')),
-              } : {}),
+              ...(runtime === 'native-engine'
+                ? nativeSessionRunOptions(toolAgent, options.messages, String(options.sessionId || '')) : {}),
               signal: options.signal,
               systemPrompt: resources.systemPrompt || '',
               dynamicTools,
