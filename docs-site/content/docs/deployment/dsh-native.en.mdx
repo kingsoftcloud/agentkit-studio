@@ -65,7 +65,7 @@ Do **not** choose it when you need cross-process resume (`resume`) or child task
 | Check | Expected value | Source |
 | --- | --- | --- |
 | Agent definition | `spec.runtime.type === 'dsh-native'` | `src/authoring-defaults.mjs:4` |
-| Agent list badge | Shows `DSH Native Harness` with the `accent` tone | `src/client/theme.mjs:29`, `src/client/pages/overview.mjs:81` |
+| Agent runtime label | Shows `DSH Native Harness` from `RUNTIME_LABELS` | `src/client/theme.mjs`, `src/client/pages/overview.mjs` |
 | Editing an existing Agent | Keeps its original runtime; `dsh-native` is only the fallback when no definition exists | `src/client/pages/agent-form.mjs:48` |
 | Session history | Served by the native DSH list; selecting an Agent never filters history | No Studio-side filter extension |
 

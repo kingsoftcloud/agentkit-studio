@@ -79,7 +79,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createNavigation({ ui }));
   Object.assign(ui, createOperationalComponents({ ui }));
   ui.StartChecks = createStartChecks({ ui, hostRemote, window, CustomEvent });
-  ui.OverviewPage = createOverviewPage({ ui, hostRemote, window, CustomEvent });
+  ui.OverviewPage = createOverviewPage({ ui, hostRemote, actions, window, CustomEvent });
   ui.AgentContextSelector = createAgentSelector({ ui, hostRemote, readConversationAgent, writeConversationAgent });
   ui.CloudPermissionPresentation = createCloudPermissionPresentation({ ui, hostRemote, window });
   ui.CloudSessionStatus = createCloudSessionStatus({ ui, hostRemote });
