@@ -80,23 +80,35 @@ export function createAgentForm({
       };
     }, [editing, allowHarnessRuntime]);
     const [ksxcReady, setKsxcReady] = useState(false);
+    const [ksxcGateway, setKsxcGateway] = useState({ checked: false, reachable: false });
     const [ksxcRevision, refreshKsxc] = useState(0);
+    const localKsxcEditing = editing && !cloudEditing && form.runtime === 'ksxc';
     useEffect(() => {
       const changed = () => refreshKsxc(value => value + 1);
       window?.addEventListener(KSXC_CHANGED, changed);
       return () => window?.removeEventListener(KSXC_CHANGED, changed);
     }, []);
     useEffect(() => {
-      if (editing || !hostRemote.ksxcStatus) return;
-      const controller = new AbortController();
-      hostRemote.ksxcStatus(controller.signal).then(value => {
-        if (!controller.signal.aborted) setKsxcReady(value.release?.ready === true);
-      }, () => { if (!controller.signal.aborted) setKsxcReady(false); });
-      return () => controller.abort();
-    }, [editing, ksxcRevision]);
-    const creatableRuntime = type => type === 'ksxc' ? editing || ksxcReady : type !== 'harness' || editing || allowHarnessRuntime || starHarnessReady;
+      if (!editing || localKsxcEditing) {
+        if (!hostRemote.ksxcStatus) return;
+        const controller = new AbortController();
+        hostRemote.ksxcStatus(controller.signal).then(value => {
+          if (controller.signal.aborted) return;
+          setKsxcReady(value.release?.ready === true);
+          setKsxcGateway({ checked: true, reachable: value.supported === true && value.gateway?.reachable === true });
+        }, () => {
+          if (!controller.signal.aborted) {
+            setKsxcReady(false);
+            setKsxcGateway({ checked: true, reachable: false });
+          }
+        });
+        return () => controller.abort();
+      }
+    }, [editing, localKsxcEditing, ksxcRevision]);
+    const creatableRuntime = type => type === 'ksxc' ? editing || (ksxcReady && ksxcGateway.reachable) : type !== 'harness' || editing || allowHarnessRuntime || starHarnessReady;
     const runtimeOptions = [
-      ...ALLOWED_RUNTIME_TYPES.filter(type => !creatableRuntime(type) || !creationSeed?.runtimes || creationSeed.runtimes.includes(type)).map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] })),
+      ...ALLOWED_RUNTIME_TYPES.filter(type => (type !== 'ksxc' || editing || ksxcGateway.reachable)
+        && (!creatableRuntime(type) || !creationSeed?.runtimes || creationSeed.runtimes.includes(type))).map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] })),
       // A cloud Agent's server-owned framework is not a local authoring
       // runtime option, but it must remain visible while editing.
       ...(cloudEditing && form.runtime && !ALLOWED_RUNTIME_TYPES.includes(form.runtime)
@@ -104,6 +116,7 @@ export function createAgentForm({
         : []),
     ];
     const runtimeLabel = runtimeOptions.find(item => item.runtimeType === form.runtime)?.displayName || form.runtime;
+    const ksxcCreationUnavailable = !editing && form.runtime === 'ksxc' && ksxcGateway.checked && !ksxcGateway.reachable;
     const templates = [['blank', '通用助手', '通用问答起点，可自由修改提示词。', '你是一个可靠的通用助手，请直接回答用户问题；信息不足时先提出澄清问题。'], ['research', '研究助手', '适合资料检索、分析和带来源输出。', '你是研究助手。先明确问题与范围，优先使用已绑定的检索资源验证事实；回答给出来源，区分确认事实与推测。缺少资源或证据时直接说明，不得编造引用。']];
     const chooseTemplate = value => setForm(previous => {
       const next = templates.find(item => item[0] === value), old = templates.find(item => item[0] === previous.template);
@@ -141,7 +154,9 @@ export function createAgentForm({
             setSelectedTools(nativeDefaultToolsFromCatalog(next.tool));
           const defaultId = results[0]?.value?.defaultModel || next.model?.[0]?.resourceId || '';
           if (form.runtime === 'ksxc') {
-            setSelectedModel(current => next.model.some(item => item.resourceId === current) ? current : editing ? '' : results[0]?.value?.defaultModel || '');
+            setSelectedModel(current => next.model.some(item => item.resourceId === current) ? current
+              : editing && results[0]?.status === 'rejected' ? current
+                : editing ? '' : results[0]?.value?.defaultModel || '');
             setSelectedModels([]);
             if (next.model.length) setError('');
           } else if (!editing || form.runtime === 'codex') {
@@ -152,7 +167,8 @@ export function createAgentForm({
           else {
             setCatalogStatus('error');
             const failed = results.find(result => result.status === 'rejected');
-            setError(failed?.reason?.message || (form.runtime === 'ksxc' ? '这个 KSXC 账号还没有可用模型。' : '模型资源目录读取失败'));
+            setError(form.runtime === 'ksxc' && editing && !ksxcGateway.reachable ? ''
+              : failed?.reason?.message || (form.runtime === 'ksxc' ? '这个 KSXC 账号还没有可用模型。' : '模型资源目录读取失败'));
           }
         });
       return () => { alive = false; };
@@ -342,7 +358,11 @@ export function createAgentForm({
         Button({ size: 'sm', onClick: () => refreshKsxc(value => value + 1) }, '刷新目录')) : null,
       !cloudEditing && form.runtime === 'codex' ? Note({ role: 'status' }, '可选 Codex 账户模型或已配置的网关模型；网关模型使用对应提供商的凭证和 API 设置。导出运行包时只支持网关模型。') : null,
       !cloudEditing ? Section({ title: '模型' },
-        Row({ title: '默认模型' }, Select({ 'aria-label': '默认模型', value: selectedModel, onChange: event => { setSelectedModel(event.target.value); setSelectedModels(current => current.includes(event.target.value) ? current : [event.target.value, ...current]); } }, h('option', { value: '' }, catalogStatus === 'loading' ? '正在读取模型…' : '请选择模型'), catalog.model.map(resource => h('option', { key: resource.resourceId, value: resource.resourceId }, resource.displayName || resource.name || resource.resourceId)))),
+        Row({ title: '默认模型' }, Select({ 'aria-label': '默认模型', value: selectedModel, onChange: event => { setSelectedModel(event.target.value); setSelectedModels(current => current.includes(event.target.value) ? current : [event.target.value, ...current]); } },
+          h('option', { value: '' }, catalogStatus === 'loading' ? '正在读取模型…' : '请选择模型'),
+          form.runtime === 'ksxc' && editing && selectedModel && !catalog.model.some(item => item.resourceId === selectedModel)
+            ? h('option', { value: selectedModel }, `${selectedModel}（当前绑定，目录暂不可用）`) : null,
+          catalog.model.map(resource => h('option', { key: resource.resourceId, value: resource.resourceId }, resource.displayName || resource.name || resource.resourceId)))),
         form.runtime === 'ksxc' ? null : Row({ title: '可用模型', help: '对话中可切换到这些模型；默认模型始终可用。' },
           h('div', { className: 'af-selected-chips' }, catalog.model.filter(resource => selectedModels.includes(resource.resourceId)).map(resource => h('span', { key: resource.resourceId, className: 'af-runtime-tag' }, resource.displayName || resource.name || resource.resourceId))),
           Collapsible({ summary: '添加', className: 'af-binding-picker' }, h('div', { className: 'af-choices' }, catalog.model.map(resource => CheckCard({ key: resource.resourceId, checked: selectedModels.includes(resource.resourceId), title: resource.displayName || resource.name || resource.resourceId,
@@ -394,6 +414,12 @@ export function createAgentForm({
           disabled: !(editing || index <= step), onClick: () => setStep(index),
         }, h('span', { className: 'af-step-index', 'aria-hidden': 'true' }, index < step ? '✓' : index + 1), label))),
         h('div', { className: 'af-body' },
+          localKsxcEditing && ksxcGateway.checked && !ksxcGateway.reachable
+            ? Note({ role: 'status', tone: 'warn' }, '当前无法连接 KSXC 模型网关，请检查飞连或企业网络。已有 Agent 配置保留显示，网络恢复后可继续运行。') : null,
+          ksxcCreationUnavailable
+            ? Note({ role: 'status', tone: 'warn' }, creationSeed
+              ? '当前无法连接 KSXC 模型网关。可以选择模板允许的其他运行时，或检查飞连和企业网络，恢复后再使用 KSXC 创建。'
+              : '当前无法连接 KSXC 模型网关。已保留你的 KSXC 选择，请检查飞连或企业网络，恢复后再创建；也可以选择其他运行时。') : null,
           stepContent,
           error ? Note({ role: 'alert', tone: 'danger', style: { marginTop: '16px' } }, error) : null,
           conflict && onReload ? Button({ disabled: saving, onClick: onReload }, '读取最新版本') : null,

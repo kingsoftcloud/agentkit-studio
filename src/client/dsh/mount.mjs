@@ -11,6 +11,7 @@ import { installNativeToolViews } from './native-tool-view.mjs';
 import { installTaskTimeline } from './task-timeline.mjs';
 import { installPromptPrediction } from './prompt-prediction.mjs';
 import { installModelLabel } from './model-label.mjs';
+import { installKsxcVisibility } from './ksxc-visibility.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
@@ -286,9 +287,9 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-models', order: 190, label: '模型与凭证',
   }, () => h(ModelSettingsSection, { dshModel })));
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'agentkit-ksxc', order: 195, label: 'KSXC',
-  }, () => h(KsxcSettings)));
+  ctx.effect(() => installKsxcVisibility({
+    ctx, hostRemote, window, CustomEvent, render: () => h(KsxcSettings),
+  }), 'agentkit-studio: KSXC gateway visibility');
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-studio', order: 200, label: PRODUCT_BRAND.name,
   }, StudioSettingsSection));

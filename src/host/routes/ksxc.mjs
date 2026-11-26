@@ -3,13 +3,18 @@ import { KSXC_DESKTOP_USER } from '../services/ksxc.mjs';
 export function createKsxcRoute(ksxc) {
   return async (endpoint, payload, signal) => {
     const user = { userId: KSXC_DESKTOP_USER };
-    const { releases, accounts } = ksxc || {};
+    const { releases, accounts, gatewayStatus } = ksxc || {};
     if (endpoint === 'ksxc/status') {
-      return { ok: true, value: releases && accounts
-        // Refresh is opt-in: the settings page asks for it, but the Agent form and
-        // the runtime catalog read the same status and must stay off the network.
-        ? { supported: true, release: await releases.status(payload?.refresh ? { refresh: true } : undefined), connection: await accounts.status(user) }
-        : { supported: false } };
+      if (!releases || !accounts) return { ok: true, value: { supported: false } };
+      if (payload?.gatewayOnly) {
+        return { ok: true, value: { supported: true, gateway: await gatewayStatus?.status() } };
+      }
+      const [release, connection, gateway] = await Promise.all([
+        releases.status(payload?.refresh ? { refresh: true } : undefined),
+        accounts.status(user),
+        gatewayStatus?.status({ refresh: payload?.refresh === true }),
+      ]);
+      return { ok: true, value: { supported: true, release, connection, gateway } };
     }
     if (endpoint === 'ksxc/install-start' || endpoint === 'ksxc/install-status') {
       if (!releases?.startInstall) throw Object.assign(new Error('当前 Studio Host 不支持安装 KSXC。'), { code: 'KSXC_HOST_UNAVAILABLE' });

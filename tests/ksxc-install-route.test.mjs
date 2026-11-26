@@ -8,10 +8,11 @@ import { createProductClient } from '../src/remote/control-client.mjs';
 const accounts = { status: async () => ({ connected: false }) };
 
 test('status only refreshes the release catalog when the caller asks for it', async () => {
-  const seen = [];
-  const route = createKsxcRoute({ accounts, releases: { status: async options => { seen.push(options); return { versions: ['1.8.0'] }; } } });
-  // The Agent form and the runtime catalog read the same status; they must not
-  // reach the company gateway, so a plain read stays local.
+  const seen = [], gatewaySeen = [];
+  const route = createKsxcRoute({ accounts, releases: { status: async options => { seen.push(options); return { versions: ['1.8.0'] }; } },
+    gatewayStatus: { status: async options => { gatewaySeen.push(options); return { reachable: true, checkedAt: 1 }; } } });
+  // Release reads stay cached unless requested; gateway reachability has its own
+  // short-lived cache and is shared by the settings, form and runtime catalog.
   const cached = await route('ksxc/status', {}, undefined);
   assert.equal(cached.ok, true);
   assert.deepEqual(cached.value.release.versions, ['1.8.0']);
@@ -19,6 +20,8 @@ test('status only refreshes the release catalog when the caller asks for it', as
   const refreshed = await route('ksxc/status', { refresh: true }, undefined);
   assert.equal(refreshed.ok, true);
   assert.deepEqual(seen, [undefined, { refresh: true }]);
+  assert.deepEqual(gatewaySeen, [{ refresh: false }, { refresh: true }]);
+  assert.equal(refreshed.value.gateway.reachable, true);
 });
 
 test('only the settings page asks the bridge for a refresh', async () => {
@@ -30,7 +33,21 @@ test('only the settings page asks the bridge for a refresh', async () => {
   await client.ksxcStatus();
   await client.ksxcStatus(undefined, { refresh: false });
   await client.ksxcStatus(new AbortController().signal, { refresh: true });
-  assert.deepEqual(calls, [['ksxc/status', {}], ['ksxc/status', {}], ['ksxc/status', { refresh: true }]]);
+  await client.ksxcStatus(undefined, { gatewayOnly: true });
+  assert.deepEqual(calls, [['ksxc/status', {}], ['ksxc/status', {}], ['ksxc/status', { refresh: true }], ['ksxc/status', { gatewayOnly: true }]]);
+});
+
+test('gateway-only polling avoids release and credential reads', async () => {
+  let releaseReads = 0, accountReads = 0;
+  const route = createKsxcRoute({
+    accounts: { status: async () => { accountReads++; return { connected: false }; } },
+    releases: { status: async () => { releaseReads++; return {}; } },
+    gatewayStatus: { status: async () => ({ reachable: true, checkedAt: 1 }) },
+  });
+  const result = await route('ksxc/status', { gatewayOnly: true });
+  assert.deepEqual(result.value, { supported: true, gateway: { reachable: true, checkedAt: 1 } });
+  assert.equal(releaseReads, 0);
+  assert.equal(accountReads, 0);
 });
 
 test('install endpoints hand the version and the request id to the release service', async () => {

@@ -4,7 +4,7 @@ import { createStatusText } from '../components/status-text.mjs';
 import { ALLOWED_RUNTIME_TYPES as DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
 
 export function createRuntimeCatalogPage({
-  ui: { React: { createElement: h, useEffect, useState }, EmptyState, SectionHeading, buttonStyle, ALLOWED_RUNTIME_TYPES = DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
+  ui: { React: { createElement: h, useEffect, useState, useRef }, EmptyState, SectionHeading, buttonStyle, ALLOWED_RUNTIME_TYPES = DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
   hostRemote, window = globalThis.window, CustomEvent = globalThis.CustomEvent
 }) {
   const Pill = createStatusText(h);
@@ -15,8 +15,10 @@ export function createRuntimeCatalogPage({
     const [starHarnessReady, setStarHarnessReady] = useState(false);
     const [error, setError] = useState('');
     const [ksxcReady, setKsxcReady] = useState(false);
+    const loadRevision = useRef(0);
     const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
     const load = async () => {
+      const revision = ++loadRevision.current;
       setStatus('loading'); setError('');
       try {
         const [result, pluginResult, star, ksxc] = await Promise.all([
@@ -25,8 +27,9 @@ export function createRuntimeCatalogPage({
           directServerMode ? null : hostRemote.starHarnessStatus?.({ includeWorkspaces: false }).catch(() => null),
           directServerMode ? null : hostRemote.ksxcStatus?.().catch(() => null),
         ]);
+        if (revision !== loadRevision.current) return;
         const rows = (result?.items || []).filter(item => ALLOWED_RUNTIME_TYPES.includes(item.runtimeType) && item.runtimeType !== 'ksxc');
-        if (ksxc?.supported) rows.push({ runtimeType: 'ksxc', description: '在 Studio 设置中管理桌面版本和 WPS 企业账号。' });
+        if (ksxc?.supported && ksxc.gateway?.reachable === true) rows.push({ runtimeType: 'ksxc', description: '在 Studio 设置中管理桌面版本和 WPS 企业账号。' });
         setItems(rows);
         setKsxcReady(ksxc?.release?.ready === true);
         if (!directServerMode && pluginResult) {
@@ -35,13 +38,16 @@ export function createRuntimeCatalogPage({
         }
         setStarHarnessReady(star?.canCreate === true);
         setStatus('ready');
-      } catch (reason) { setError(reason?.message || 'Host 尚未连接'); setStatus('error'); }
+      } catch (reason) {
+        if (revision === loadRevision.current) { setError(reason?.message || 'Host 尚未连接'); setStatus('error'); }
+      }
     };
     useEffect(() => {
       void load();
       window.addEventListener(STAR_HARNESS_CHANGED, load);
       window.addEventListener(KSXC_CHANGED, load);
       return () => {
+        loadRevision.current++;
         window.removeEventListener(STAR_HARNESS_CHANGED, load);
         window.removeEventListener(KSXC_CHANGED, load);
       };
