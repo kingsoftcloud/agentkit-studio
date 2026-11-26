@@ -1,4 +1,4 @@
-name: Resume signed Studio macOS nightly publication
+name: Finish signed Studio macOS nightly publication
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
       STUDIO_PRODUCT_NAME: AgentKit Studio
       STUDIO_PRODUCT_APP_ID: com.kingsoftcloud.agentkit-studio
       STUDIO_PRODUCT_UPDATE_ENV: production
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     environment: studio-signing
     timeout-minutes: 60
     concurrency:
@@ -111,8 +111,7 @@ jobs:
             exit 0
           fi
           test "$current" = "$EXPECTED_PREVIOUS"
-          node scripts/verify-ks3-multipart.mjs --origin "$STORAGE_ORIGIN" \
-            --output "$GITHUB_WORKSPACE/candidate/.desktop-release/ks3-multipart-probe.json"
+          node "$GITHUB_WORKSPACE/scripts/stage-macos-nightly-zip.mjs" "$zip"
           args=(publish --candidate "$GITHUB_WORKSPACE/candidate" --origin "$EXPECTED_UPDATE_ORIGIN"
             --storage-origin "$STORAGE_ORIGIN" --layout "$RELEASE_LAYOUT" --update-mode "$UPDATE_MODE"
             --channel 'nightly')
