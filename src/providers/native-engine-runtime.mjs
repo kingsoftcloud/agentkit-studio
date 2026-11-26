@@ -137,6 +137,42 @@ export function resolveEngineCommand(env = process.env) {
   throw failure('NATIVE_ENGINE_UNAVAILABLE', '请设置 AGENTKIT_ENGINE_COMMAND 指向独立安装的 Harness 可执行文件。');
 }
 
+const CONTINUE_RUN = /^(?:继续(?:修|执行|运行)?|continue|resume)[。！.!]?$/i;
+const STUDIO_RUN_ID = /^studio-[a-f0-9]{32}$/;
+const RUN_NOT_FOUND = -32011;
+const RUN_BUSY = -32012;
+
+async function recoverableRun(binding, candidate, signal) {
+  if (!candidate || !STUDIO_RUN_ID.test(candidate.runId) || !Number.isSafeInteger(candidate.cursor)
+    || candidate.cursor < 1) return null;
+  signal?.throwIfAborted();
+  const observer = connectEngineService({ ...binding, observeOnly: true });
+  const abort = () => void observer.close().catch(() => {});
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    await observer.initialize();
+    signal?.throwIfAborted();
+    const status = await observer.status(candidate.runId);
+    signal?.throwIfAborted();
+    if (status.runId !== candidate.runId || status.terminal !== false) return null;
+    if (status.running === true) throw nativeRunBusy();
+    if (status.running !== false || !Number.isSafeInteger(status.cursor) || status.cursor < candidate.cursor)
+      throw failure('NATIVE_ENGINE_RESUME_INVALID', '无法核对上一轮任务的运行记录。');
+    return candidate;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error.code === RUN_NOT_FOUND) return null;
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', abort);
+    await observer.close();
+  }
+}
+
+function nativeRunBusy() {
+  return failure('NATIVE_ENGINE_RUN_BUSY', '上一轮任务仍在运行，请等它结束后再发送新消息。');
+}
+
 export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnEngine = defaultSpawnEngine, resolveCommand = resolveEngineCommand, viewService, externalRoutes, starHarness } = {}) {
   if (!text(stateRoot)) throw failure('NATIVE_ENGINE_CONFIG_INVALID', 'Native 引擎缺少状态目录。');
   const views = createEngineViewStore(stateRoot);
@@ -207,7 +243,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         finally { signal?.removeEventListener('abort', abort); await engine.close(); }
       } finally { lease?.release(); }
     },
-    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, expectedServiceModel, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance,
+    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, expectedServiceModel, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance, previousRun,
       hostContext, hostHooks, executionPolicy } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
@@ -280,8 +316,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         } catch (error) { return { status: 'error', content: { message: String(error?.message || error).slice(0, 2000) } }; }
       };
       let diagnostics = '';
-      const runId = `studio-${createHash('sha256').update(`${session}\n${text(turnId) ? turnId : randomUUID()}\n${objective}`).digest('hex').slice(0, 32)}`;
-      const verification = nativeEngineVerification({ objective, runId });
+      let runId = `studio-${createHash('sha256').update(`${session}\n${text(turnId) ? turnId : randomUUID()}\n${objective}`).digest('hex').slice(0, 32)}`;
       const onReadContext = hostContext && ((request, callbackSignal) => {
         if (request?.runId !== runId || !contextDefinition.sources.some(source =>
           request.sourceId === source.sourceId && request.bindingDigest === source.bindingDigest))
@@ -306,11 +341,16 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const abort = () => { cancellation ??= engine.cancel(runId).catch(() => {}); };
       try {
         signal?.throwIfAborted();
-        engine = useService ? connectEngineService({ endpoint: service.endpoint,
-          token: service.token, sessionId: createHash('sha256').update(session).digest('hex'),
+        const binding = useService ? { endpoint: service.endpoint, token: service.token,
+          sessionId: createHash('sha256').update(session).digest('hex'), fetchImpl: service.fetchImpl } : null;
+        const recovered = route?.managed && !inputImages.length && CONTINUE_RUN.test(objective.trim())
+          ? await recoverableRun(binding, previousRun?.(), signal) : null;
+        if (recovered) runId = recovered.runId;
+        const verification = nativeEngineVerification({ objective, runId });
+        engine = useService ? connectEngineService({ ...binding,
           runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify,
           onReadContext, onInvokeHook, requiredToolPolicy: policy?.contract,
-          requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: service.fetchImpl }) : spawnEngine({ command, args: [...args, '--workspace', workspaceRoot, '--state-dir', stateDir, '--session', session, '--approval', standing],
+          requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol) }) : spawnEngine({ command, args: [...args, '--workspace', workspaceRoot, '--state-dir', stateDir, '--session', session, '--approval', standing],
           env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: harnessModelEndpoint(modelProvider.baseUrl, modelProvider.protocol),
             AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
             ...(modelProvider.protocol ? { AGENTKIT_ENGINE_MODEL_PROTOCOL: modelProvider.protocol } : {}),
@@ -355,16 +395,24 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             .map(tool => [tool.name, policy.rules[hostTools.originalName(tool.name)]])),
         } };
         // The remote start can be committed before its response reaches Studio.
-        if (useService) signal?.addEventListener('abort', abort, { once: true });
+        if (useService && !recovered) signal?.addEventListener('abort', abort, { once: true });
         const reportRun = useService ? undefined : startDesktopRun('native-harness', runId);
-        const started = await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
-          ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}),
-          ...(verification ? { hostVerification: verification.definition } : {}),
-          ...(contextDefinition ? { hostContext: contextDefinition } : {}),
-          ...(hookDefinition ? { hostHooks: hookDefinition } : {}),
-          ...(runExecutionPolicy ? { executionPolicy: runExecutionPolicy } : {}),
-          ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
-        if (!useService) signal?.addEventListener('abort', abort, { once: true });
+        let started;
+        try {
+          started = recovered ? await engine.resume(runId) : await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
+            ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}),
+            ...(verification ? { hostVerification: verification.definition } : {}),
+            ...(contextDefinition ? { hostContext: contextDefinition } : {}),
+            ...(hookDefinition ? { hostHooks: hookDefinition } : {}),
+            ...(runExecutionPolicy ? { executionPolicy: runExecutionPolicy } : {}),
+            ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
+        } catch (error) {
+          if (recovered && error.code === RUN_BUSY) throw nativeRunBusy();
+          if (route?.managed && error.message === 'session_already_active')
+            throw failure('NATIVE_ENGINE_RESUME_REQUIRED', '上一轮任务尚未结束，请等待它结束，或发送「继续」恢复已中断的任务。');
+          throw error;
+        }
+        if (!useService || recovered) signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();
         // A remote Run retains its original view after an engine upgrade.
         let view = null;
@@ -384,7 +432,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           && hello.capabilities?.methods?.includes('run/guide');
         let pendingGuidance = null;
         const contextWindow = hello.engine?.model?.contextWindow;
-        for (let cursor = 0; ;) {
+        for (let cursor = recovered?.cursor ?? 0; ;) {
           if (canGuide && !pendingGuidance) {
             const item = nextGuidance();
             if (item && text(item.text) && item.text.length <= 32768) {
