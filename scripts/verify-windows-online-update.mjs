@@ -53,19 +53,22 @@ try {
  await expect(guide).toBeVisible({timeout:120000});
  await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
  await guide.getByRole('button',{name:/^(开始设置|去配置模型凭证)$/}).click();
+ const models=guide.locator('[data-onboarding-mode=model]');
+ const save=models.getByRole('button',{name:'保存并继续',exact:true});
+ await expect(save).toBeEnabled({timeout:90000});
+ await models.getByRole('combobox',{name:'提供商',exact:true}).selectOption('custom');
+ const endpoint=models.getByLabel('API 地址',{exact:true});
+ await endpoint.fill(`http://127.0.0.1:${server.address().port}/v1`);
+ await endpoint.press('Tab');
+ await models.getByLabel('API Key',{exact:true}).fill('qualification-local-only');
+ await models.getByRole('button',{name:'读取模型',exact:true}).click();
+ const model=models.getByRole('combobox',{name:'选择模型',exact:true});
+ await expect(model.locator('option[value="upgrade-proof"]')).toHaveCount(1,{timeout:60000});
+ await model.selectOption('upgrade-proof');
+ await save.click();
+ await expect(guide.locator('[data-onboarding-mode=cloud]')).toBeVisible({timeout:90000});
+ await guide.getByRole('button',{name:'跳过，开始对话',exact:true}).click();
  await expect(guide).toBeHidden({timeout:30000});
- // Configure through the installed product's settings. A Studio config file
- // alone does not register the native DSH provider/model preference namespace.
- const models=page.locator('[data-studio-model-settings]');
- await expect(models.getByRole('button',{name:'保存配置',exact:true})).toBeEnabled({timeout:90000});
- await models.getByRole('combobox',{name:/^提供商/}).first().selectOption('custom');
- await models.getByLabel('模型名称',{exact:true}).first().fill('upgrade-proof');
- await models.getByLabel('API 地址',{exact:true}).first().fill(`http://127.0.0.1:${server.address().port}/v1`);
- await models.getByLabel(/^API Key/).first().fill('qualification-local-only');
- await models.getByRole('button',{name:'保存配置',exact:true}).click();
- await expect(models).toContainText('已保存多个模型配置',{timeout:90000});
- await page.keyboard.press('Escape');
- await expect(models).toBeHidden({timeout:30000});
  // The global New session action opens an inert workspace picker. Create a
  // retained Session using the default workspace's own new-session action.
  await page.getByRole('treeitem').filter({hasText:/Default workspace|默认工作区/}).first().hover();
