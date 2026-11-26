@@ -52,7 +52,10 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
   };
   const models = createModelService({ configuration: { resolve: async () => ({ values: { modelProfiles: ['first', 'second'].map(id => ({
     id, connectionId: 'shared', provider: 'openai-compatible', modelName: id + '-model', baseUrl: 'https://model.invalid/v1',
-  })) } }) }, credentials: { resolve: async () => ({ value: 'model-secret' }) } });
+  })) } }) }, credentials: { resolve: async () => ({ value: 'model-secret' }) },
+    // A gateway catalog read must not reach the network: the fixture domain does
+    // not resolve, and the test only needs the configured model names.
+    fetchImpl: async url => Response.json({ data: ['first', 'second'].map(id => ({ id: id + '-model' })) }) });
   const counts = new Map();
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, models, ledger: store,
     renderPrompt: () => 'Report only the actual admitted components.', fetchImpl: async (_url, options) => {
