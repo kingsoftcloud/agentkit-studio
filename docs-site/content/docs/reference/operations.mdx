@@ -1,17 +1,17 @@
 ---
 title: "控制协议"
-description: "146 个 operation id 的完整清单，按 26 个域分组，每条给出 Host 侧处理器位置。"
+description: "147 个 operation id 的完整清单，按 26 个域分组，每条给出 Host 侧处理器位置。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 传输约定
 
-控制通道固定为 `/agentkit`，共 146 个 operation id，分布在 26 个域。
+控制通道固定为 `/agentkit`，共 147 个 operation id，分布在 26 个域。
 
 | 约定 | 值 | 源码 |
 | --- | --- | --- |
-| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:155` |
+| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:156` |
 | 请求信封 | `{ operationId, payload }`，payload 必须是可序列化 JSON | `src/contracts/wire.mjs` |
 | 响应信封 | `{ ok: true, value }` 或 `{ ok: false, error }` | `src/contracts/wire.mjs` |
 | 取消 | 第四个参数 `AbortSignal`；取消后只回一个终态信封，不重试未知副作用 | `src/contracts/definitions.mjs:8` |
@@ -32,7 +32,7 @@ description: "146 个 operation id 的完整清单，按 26 个域分组，每�
 | `team-templates` | 2 | 专家团模板的列表与详情。 |
 | `sessions` | 24 | 会话导出、原生恢复、子任务、A2A、审批与命令输出。最大的一个域。 |
 | `agents` | 11 | Agent 的本地与云端生命周期、执行策略与会话视图。 |
-| `models` | 8 | 模型目录、凭证同步与 Codex 模型目录。 |
+| `models` | 9 | 模型目录、凭证同步与 Codex 模型目录。 |
 | `resources` | 2 | 资源目录的列出与删除。 |
 | `mcp` | 4 | MCP Server 的创建、更新、探测与删除。 |
 | `credentials` | 1 | 凭证写入。 |
@@ -123,10 +123,11 @@ description: "146 个 operation id 的完整清单，按 26 个域分组，每�
 | `models` | `models/credential-status` | 查询凭证状态 | `src/host/routes/models.mjs:6` |
 | `models` | `models/create` | 创建 | `src/host/routes/models.mjs:8` |
 | `models` | `models/catalog` | 读取目录 | `src/host/routes/models.mjs:14` |
-| `models` | `models/probe` | 探测 | `src/host/routes/models.mjs:16` |
-| `models` | `models/wire` | wire | `src/host/routes/models.mjs:18` |
-| `models` | `models/efforts` | efforts | `src/host/routes/models.mjs:20` |
-| `models` | `models/codex` | 读取 Codex 目录 | `src/host/routes/models.mjs:22` |
+| `models` | `models/cards` | cards | `src/host/routes/models.mjs:21` |
+| `models` | `models/probe` | 探测 | `src/host/routes/models.mjs:23` |
+| `models` | `models/wire` | wire | `src/host/routes/models.mjs:25` |
+| `models` | `models/efforts` | efforts | `src/host/routes/models.mjs:27` |
+| `models` | `models/codex` | 读取 Codex 目录 | `src/host/routes/models.mjs:29` |
 | `resources` | `resources/list` | 列出 | `src/host/routes/resources.mjs:8` |
 | `resources` | `resources/delete` | 删除 | `src/host/routes/resources.mjs:36` |
 | `mcp` | `mcp/create` | 创建 | `src/host/routes/resources.mjs:23` |
@@ -217,7 +218,7 @@ description: "146 个 operation id 的完整清单，按 26 个域分组，每�
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| operation id 数 | `146` | 新增或删除都是破坏性变更 |
+| operation id 数 | `147` | 新增或删除都是破坏性变更 |
 | 域数 | `26` | 新增域需要同步本页与路由 |
 | 通道 | `/agentkit` | 客户端硬编码，不可配置 |
 

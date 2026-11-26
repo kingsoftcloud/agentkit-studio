@@ -58,8 +58,8 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   const { SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction } = createStudioPrimitives({ React, ReactDOM });
   const { inputStyle, buttonStyle, pagerButtonStyle } = createFormStyles(BRAND);
   const ResourceDialog = createResourceDialog({ React, buttonStyle });
-  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button } = primitives;
-  const ui = { React, ReactDOM, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button };
+  const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, IconInfoOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button, Tag } = primitives;
+  const ui = { React, ReactDOM, BRAND, PANELS, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, DEPLOYMENT_LABELS, SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction, inputStyle, buttonStyle, pagerButtonStyle, ResourceDialog, IconSettingsOutlineMedium, IconChevronDownOutlineRegular, InfoIcon: IconInfoOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button, Tag };
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = readProductVersions(window.__AGENTKIT_STUDIO__);
   const connectionOwner = createConnectionOwner();
   const hostRemote = createProductClient(connectionOwner.connection, { window });
@@ -93,7 +93,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createResourcePages({ ui, hostRemote, actions, window }));
   Object.assign(ui, createCodexPluginPages({ ui, hostRemote }));
   ui.KsxcSettings = createKsxcSettings({ React, hostRemote, window });
-  ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window, Switch: primitives.Switch });
+  ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window, Switch: primitives.Switch, Button: primitives.Button, RefreshIcon: primitives.IconRefreshOutlineRegular });
   Object.assign(ui, createDeliveryPages({ ui, hostRemote, actions, window, document }));
   Object.assign(ui, createScheduleDelivery({ ui, hostRemote }));
   Object.assign(ui, createAutomationPage({ ui, hostRemote, actions, window, document }));

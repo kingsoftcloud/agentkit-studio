@@ -2928,12 +2928,50 @@
       },
       "sequence": 59,
       "sha256": "b4b31b3ec37ee0082a8083f91375139d8541e17aca443678c95d54c6749a7290"
+    },
+    {
+      "id": "091",
+      "file": "091-host-managed-plugin-details.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "medium",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "removeWhen": "DSH exposes its bundle detail layout to plugins with a separately managed lifecycle.",
+      "contracts": [
+        "An opted-in host-managed item uses the native plugin detail presentation.",
+        "The owning host supplies release labels and actions without using the DSH registry installer."
+      ],
+      "affectedPackages": [
+        "packages/client/ui-plugin-manager"
+      ],
+      "affectedFiles": [
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx",
+        "packages/client/ui-plugin-manager/src/client/config-ledger.ts",
+        "packages/client/ui-plugin-manager/src/client/index.ts",
+        "packages/client/ui-plugin-manager/src/client/slot-contract.ts",
+        "packages/client/ui-plugin-manager/src/client/versions.tsx"
+      ],
+      "dependsOn": [],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio signed Star Harness detail integration."
+      },
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "dsh-web",
+          "installed-update"
+        ]
+      },
+      "sequence": 60,
+      "sha256": "c183c05383bfeb04b238fa99da1fb2ac18fc6aecc7972986fad114336a06ad2f"
     }
   ],
-  "patchedTree": "23f1ae4f6090fc1090496214580f61b91bd2913a",
-  "patchedSourceSha256": "0ef3ca4084fe1430c32696fb71b5fa28666afafc0efea6b5d7c2d167fa86522c",
+  "patchedTree": "e509f2b296556798a57b287b199c08370da369e6",
+  "patchedSourceSha256": "7d4e26ab236a27d9b99cd14425a958c3a8fbf7b082d9c1f77bb8fbcad187231f",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "046fceb9f774667824a917484f2f2fb1eef7256a3238dc3fa788d95b75118454"
+    "sha256": "002adb8fe948e6fb3460d5945444dbcb5ca8c1f67c65065c654dacfbf9a21056"
   }
 }

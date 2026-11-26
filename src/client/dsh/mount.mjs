@@ -10,6 +10,7 @@ import { installProductCopy } from '../../product-copy.mjs';
 import { installNativeToolViews } from './native-tool-view.mjs';
 import { installTaskTimeline } from './task-timeline.mjs';
 import { installPromptPrediction } from './prompt-prediction.mjs';
+import { installModelLabel } from './model-label.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
@@ -19,6 +20,7 @@ export function mountStudio(ctx, app) {
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote }, ui.installHarnessTimeline);
   installPromptPrediction(ctx, { React, h, window });
+  installModelLabel(ctx, { React, Tag: ui.Tag, hostRemote, window });
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
@@ -49,6 +51,9 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agentkit-star-harness', order: 91, label: 'Star Harness',
   }, props => h(StarHarnessItem, props)));
+  ctx.slots.inject('plugins.item.detail', () => ctx.slots.register({
+    name: 'plugins.item.detail', key: 'agentkit-star-harness',
+  }, props => h(StarHarnessItem, { ...props, view: 'page' })));
   ctx.effect(() => {
     const open = () => ctx.layout?.selectPanel?.('plugins');
     window.addEventListener('agentkit-studio:open-plugin-center', open);
