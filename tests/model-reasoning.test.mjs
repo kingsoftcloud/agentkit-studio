@@ -147,7 +147,7 @@ function bridgeContext(catalog, { modelDefaults = false } = {}) {
 const reasoner = {
   id: 'reasoner', provider: 'ksyun', modelName: 'deepseek-v4.1-flash-1017',
   baseUrl: 'http://kspmas.ksyun.com/v1', credentialName: 'AGENTKIT_MODEL_API_KEY',
-  reasoningEfforts: true, defaultReasoningEffort: 'high',
+  connectionId: 'reasoner', reasoningEfforts: true, defaultReasoningEffort: 'high',
 };
 
 test('a route serving a single model keeps its own reasoning default', async () => {
@@ -173,18 +173,18 @@ test('a route serving a single model keeps its own reasoning default', async () 
   assert.equal(writes.filter(([ns]) => ns === 'llm-pi-ai').length, 1);
 });
 
-test('each route serves only its own model', async () => {
+test('models on one connection share a single route', async () => {
   const other = { ...reasoner, id: 'other', modelName: 'other-model', defaultReasoningEffort: 'low' };
   const plain = { ...reasoner, id: 'plain', modelName: 'plain-model', reasoningEfforts: false };
-  // The provider omits one configured model from discovery.
   const { bridge, providers } = bridgeContext([{ id: reasoner.modelName }, { id: plain.modelName }], { modelDefaults: true });
   await bridge.applyProfiles({ profiles: [reasoner, other, plain] });
 
-  for (const profile of [reasoner, other, plain]) {
-    const route = providers[`agentkit-studio-${profile.id}`];
-    assert.equal(route.models.length, 1, `${profile.id} route must serve only its own model`);
-    assert.equal(route.models[0].id, profile.modelName);
-  }
+  // One connection is one DSH route: the selector shows one provider with
+  // three models, not three providers with one model each.
+  const routes = Object.keys(providers);
+  assert.equal(routes.length, 1, JSON.stringify(routes));
+  const route = providers[routes[0]];
+  assert.deepEqual(route.models.map(model => model.id).sort(), ['deepseek-v4.1-flash-1017', 'other-model', 'plain-model']);
 });
 
 test('a Responses route never sets the chat-only store compat', async () => {
@@ -323,7 +323,7 @@ test('the portable bridge publishes the same declaration', async () => {
     id: 'portable', provider: 'ksyun', modelName: 'deepseek-v4.1-flash',
     baseUrl: 'http://kspmas.ksyun.com/v1', credentialName: 'KEY', reasoningEfforts: true,
   }] });
-  const value = providers['agentkit-studio-portable'];
+  const value = providers['agentkit-studio-ksyun-http-kspmas-ksyun-com-v1'];
   assert.equal(value.reasoning, 'high');
   // Kspmas rejects the `developer` role pi-ai would otherwise send for a
   // reasoning model, so every Studio route keeps the system role.
@@ -335,7 +335,7 @@ test('the portable bridge publishes the same declaration', async () => {
     id: 'plain', provider: 'ksyun', modelName: 'seedream-5.0',
     baseUrl: 'http://kspmas.ksyun.com/v1', credentialName: 'KEY',
   }] });
-  assert.equal(providers['agentkit-studio-plain'].models[0].reasoningEfforts, undefined);
+  assert.equal(providers['agentkit-studio-ksyun-http-kspmas-ksyun-com-v1'].models[0].reasoningEfforts, undefined);
 });
 
 test('empty assistant turns are dropped on both wires, and every other item is preserved', () => {

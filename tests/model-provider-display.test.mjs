@@ -17,7 +17,7 @@ test('the route label prefers the connection name over the provider id', () => {
 // what showed in the model selector. The published displayName must use the
 // connection name instead.
 test('a custom provider is published to DSH with the connection name, not "custom"', async () => {
-  const profile = { id: 'p1', provider: 'custom', modelName: 'glm-5.3', baseUrl: 'http://kspmas.ksyun.com/v1', connectionName: '星流', credentialName: 'KEY', enabled: true, default: true, input: ['text'] };
+  const profile = { id: 'p1', provider: 'custom', modelName: 'glm-5.3', baseUrl: 'http://kspmas.ksyun.com/v1', connectionName: '星流', connectionId: 'p1', credentialName: 'KEY', enabled: true, default: true, input: ['text'] };
   const namespaces = [
     { ns: DSH_MODEL_SETTINGS_NS, revision: 1, value: { providers: {} } },
     { ns: DSH_DEFAULT_MODEL_SETTINGS_NS, revision: 1, value: {} },
@@ -31,6 +31,6 @@ test('a custom provider is published to DSH with the connection name, not "custo
   }, credentials: { set: () => {} } } });
   await bridge.applyProfiles({ profiles: [profile] });
   const value = writes[0].ops.find(op => op.op === 'set').value;
-  assert.equal(value.displayName, '星流 · glm-5.3');
+  assert.equal(value.displayName, '星流');
   assert.ok(!value.displayName.startsWith('custom'));
 });

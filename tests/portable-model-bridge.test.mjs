@@ -12,8 +12,8 @@ test('headless import registers exact model routes via public DSH Settings and p
  const profiles=[{id:'bound-model',provider:'custom',modelName:'upstream-model',baseUrl:'https://model.example/v1',credentialName:'TARGET_KEY',input:['text','image']}];
  await syncPortableModelProfiles({settings,profiles});
  assert.deepEqual(providers.existing,{api:'existing'});
- assert.equal(providers['agentkit-studio-bound-model'].models[0].id,'upstream-model');
- assert.equal(providers['agentkit-studio-bound-model'].apiKeyEnv,'TARGET_KEY');
+ assert.equal(providers['agentkit-studio-custom-https-model-example-v1'].models[0].id,'upstream-model');
+ assert.equal(providers['agentkit-studio-custom-https-model-example-v1'].apiKeyEnv,'TARGET_KEY');
  await syncPortableModelProfiles({settings,profiles});assert.equal(writes.length,1);
 });
 
@@ -30,7 +30,7 @@ test('advertised catalog window replaces the default without inflating the outpu
  const profiles=[{id:'default',modelName:'deepseek-v4.1-flash-1017',provider:'openai-compatible',baseUrl:'http://gateway.example/v1',credentialName:'AGENTKIT_MODEL_API_KEY'}];
  // The gateway advertises "1024k" context and "384k" completion budget.
  await syncPortableModelProfiles({settings,profiles,capabilities:profile=>admitModelCapabilities(profile,{context_length:'1024k',max_completion_tokens:'384k'})});
- const models=providers['agentkit-studio-default'].models;
+ const models=providers['agentkit-studio-openai-compatible-http-gateway-example-v1'].models;
  assert.equal(models[0].contextWindow,1048576);
  assert.equal(models[0].maxTokens,8192);
  await syncPortableModelProfiles({settings,profiles,capabilities:profile=>admitModelCapabilities(profile,{context_length:'1024k'})});
@@ -41,6 +41,6 @@ test('an unreachable catalog keeps the historical admitted defaults', async () =
  const providers={},settings={describe:()=>[{ns:'llm-pi-ai',revision:1,value:{providers}}],mutate:async(ns,ops)=>{for(const op of ops)providers[op.path[1]]=op.value;}};
  const profiles=[{id:'default',modelName:'model',provider:'openai-compatible',baseUrl:'https://gateway.example/v1',credentialName:'AGENTKIT_MODEL_API_KEY'}];
  await syncPortableModelProfiles({settings,profiles,capabilities:async()=>{throw new Error('gateway unreachable');}});
- assert.equal(providers['agentkit-studio-default'].models[0].contextWindow,128000);
- assert.equal(providers['agentkit-studio-default'].models[0].maxTokens,8192);
+ assert.equal(providers['agentkit-studio-openai-compatible-https-gateway-example-v1'].models[0].contextWindow,128000);
+ assert.equal(providers['agentkit-studio-openai-compatible-https-gateway-example-v1'].models[0].maxTokens,8192);
 });
