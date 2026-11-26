@@ -100,7 +100,8 @@ const modelServer = createServer(async (request, response) => {
 modelServer.listen(0, '127.0.0.1'); await once(modelServer, 'listening');
 const baseUrl = `http://127.0.0.1:${modelServer.address().port}/v1`;
 const fixtureId = randomUUID().slice(0, 8);
-const profiles = ['a', 'b'].map(letter => ({ id: `frozen-${letter}-${fixtureId}`, modelName: `model-${letter}`, provider: 'openai-compatible', baseUrl, credentialName: 'STUDIO_FROZEN_FIXTURE_KEY', enabled: true, default: letter === 'a' }));
+// Both models sit on one gateway, so they share a connection and therefore one DSH route.
+const profiles = ['a', 'b'].map(letter => ({ id: `frozen-${letter}-${fixtureId}`, connectionId: `frozen-${fixtureId}`, modelName: `model-${letter}`, provider: 'openai-compatible', baseUrl, credentialName: 'STUDIO_FROZEN_FIXTURE_KEY', enabled: true, default: letter === 'a' }));
 await writeFile(join(home, 'config.yaml'), JSON.stringify({
   modelProfiles: profiles,
   modelProfileKeys: { STUDIO_FROZEN_FIXTURE_KEY: 'synthetic-frozen-fixture' },

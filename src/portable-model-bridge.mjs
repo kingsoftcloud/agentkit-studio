@@ -25,22 +25,23 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
   const namespace = settings.describe({ redactSecrets: true }).find(item => item.ns === 'llm-pi-ai');
   if (!namespace) throw portableError('PORTABLE_MODEL_BRIDGE_UNAVAILABLE', '目标 Profile 未加载 DSH 模型提供商');
   const routes = new Map(), operations = [];
-  /** Two profiles belong to one route only when they share a connection. */
-  const connectionOf = profile => String(profile.connectionId || profile.id || '');
+  // Two profiles share a route only when they share a connection. Compare the
+  // raw identity: the connection id when present, else the profile id (a
+  // profile without one is its own connection). The route name is normalized,
+  // so two different identities can normalize onto one name and would
+  // otherwise silently overwrite each other.
+  const identityOf = profile => String(profile.connectionId || profile.id || '').trim();
   for (const profile of profiles) {
     const route = dshModelSelection({ spec: { bindings: { modelProfileId: profile.id } } }, { values: { modelProfiles: profiles } })?.provider;
     if (!route) throw portableError('PORTABLE_MODEL_ROUTE_COLLISION', '模型配置生成了重复的 DSH 路由，请修改模型资源 ID');
-    // One connection is one route: several models of the same gateway share it.
-    // A different connection normalizing onto the same route is a real
-    // collision — the two gateways would overwrite each other.
     const group = routes.get(route);
-    if (group && connectionOf(group[0]) !== connectionOf(profile)) {
+    if (group && group.identity !== identityOf(profile)) {
       throw portableError('PORTABLE_MODEL_ROUTE_COLLISION', '模型配置生成了重复的 DSH 路由，请修改模型资源 ID');
     }
-    if (!group) routes.set(route, []);
-    routes.get(route).push(profile);
+    if (!group) routes.set(route, { identity: identityOf(profile), members: [] });
+    routes.get(route).members.push(profile);
   }
-  for (const [route, members] of routes) {
+  for (const [route, { members }] of routes) {
     const profile = members[0];
     const reasoning = studioReasoning(profile);
     const wire = providerWireApi(profile);
