@@ -2,7 +2,7 @@
 import { CLOUD_EXECUTION_POLICY_CAPABILITY, EXECUTION_MODES, readExecutionMode, readExecutionPolicy } from './execution-policy.mjs';
 import { ksxcAgentPreference } from './host/services/ksxc.mjs';
 import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDeploymentVersion,
-  cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
+  managedRuntimeReceipt, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { verifyDeploymentStorage } from './deployment-storage.mjs';
@@ -17,10 +17,10 @@ async function inspectManagedDeployment({ remote, record, endpoint, token, fetch
   const { plan, cloudAgentId } = record;
   const state = remote.DeploymentState;
   const runtime = remote.Deployment?.RuntimeConfig || remote.RuntimeConfig;
+  const receipt = managedRuntimeReceipt(remote, plan);
   if (state?.Ready !== true || typeof state.ObservedVersionId !== 'string' || !state.ObservedVersionId
     || state.ObservedVersionId !== state.DesiredVersionId || runtime?.ManifestFormat !== DSH_MANIFEST_FORMAT
-    || runtime.Name !== plan.runtime || runtime.Version !== plan.runtimeVersion
-    || !/^[a-f0-9]{64}$/.test(plan.managedManifestSha256 || '') || runtime.ManifestSha256 !== plan.managedManifestSha256) return null;
+    || !/^[a-f0-9]{64}$/.test(plan.managedManifestSha256 || '') || !receipt) return null;
 
   // The public bootstrap asks Server to verify the managed Host with its own runtime credential.
   const response = await fetchImpl(`${endpoint}/agentengine/api/v1/GetAgentUiBootstrap`, {

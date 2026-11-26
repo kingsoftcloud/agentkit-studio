@@ -22,7 +22,7 @@ import { parseManagedRuntimeManifest } from '../src/managed-runtime-manifest.mjs
 import { managedResourceBindings } from '../src/managed-resource-contract.mjs';
 import { createMcpLoopbackService } from './fixtures/mcp-loopback-service.mjs';
 
-async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', bindings: bindingOverrides = {}, createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0, customMcp } = {}) {
+async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', bindings: bindingOverrides = {}, systemPrompt = 'You are a helpful assistant.', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0, customMcp } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-deploy-')); t.after(() => rm(root, { force: true, recursive: true }));
   const agentId = 'ar-local-1234567890abcdef', cloudAgentId = 'ar-cloud-test';
   const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: deploymentType === 'ManagedRuntime' ? '' : 'private-test' };
@@ -47,7 +47,7 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
     adapters = createLocalResourceAdapters({ resourceStore, skillDiscovery, credentials });
     t.after(() => adapters.close());
   }
-  const built = await build.build({ agentId, revision: 2, metadata: { id: agentId, name: 'Agent', local: true, revision: 2 }, spec: { runtime: { type: runtime }, bindings }, bindings });
+  const built = await build.build({ agentId, revision: 2, metadata: { id: agentId, name: 'Agent', local: true, revision: 2 }, spec: { runtime: { type: runtime }, instructions: { system: systemPrompt }, bindings }, bindings });
   const portableBundles = createPortableBundles({ storeDir: root, build, models, adapters, configuration });
   const ksxc = runtime === 'ksxc';
   const release = { id: '0.0.1-test', version: '0.0.1-test', label: 'Test', channel: 'preview', enabled: true, runtimeIdentity: true, image: `hub-vpc-cn-beijing-6.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`,
@@ -887,5 +887,38 @@ test('Studio creates and updates KSXC using canonical manifest receipts, without
   f.remote.Deployment.RuntimeConfig.ManifestSha256 = 'b'.repeat(64);
   const mismatched = await f.service.refresh(creation.id);
   assert.equal(mismatched.status, 'ACTION_REQUIRED');
+  assert.equal(mismatched.failure.code, 'DEPLOYMENT_PROVENANCE_MISMATCH');
+});
+
+test('a platform-canonicalized declaration keeps managed provenance for non-KSXC runtimes', async t => {
+  const f = await fixture(t, { runtime: 'dsh-native', deploymentType: 'ManagedRuntime',
+    systemPrompt: '先确定变更范围和预期行为。\n围绕正确性与回归风险检查代码。' });
+  const creation = await f.service.create(f.request); await f.settled();
+  const record = JSON.parse(await readFile(join(f.root, 'deployments', `${creation.id}.json`), 'utf8'));
+  const manifest = record.plan.managedManifest;
+  // Studio serializes a multi-line prompt as a block literal; the platform re-dumps
+  // the declaration with PyYAML, which quotes and folds it instead. The canonical
+  // bytes therefore never equal the Studio bytes, and neither do the digests.
+  assert.match(manifest, /prompt: \|-/);
+  const canonical = `# canonicalized by the platform fixture\n${manifest}`;
+  assert.notEqual(sha256(canonical), record.plan.managedManifestSha256);
+  Object.assign(f.remote.Deployment, {
+    ManagedRuntimeConfig: { Manifest: canonical },
+    RuntimeConfig: { Name: record.plan.runtime, Version: record.plan.runtimeVersion,
+      ImageDigest: record.plan.image.image, ManifestFormat: 'agentengine.dsh-manifest/v1', ManifestSha256: sha256(canonical) },
+  });
+  f.remote.DeploymentState = { Ready: true, ObservedVersionId: 'v1', DesiredVersionId: 'v1' };
+  // The Pod reports the platform-canonical digest it mounted, not the Studio one.
+  f.access.runtimeIdentity = { format: 'agentengine.managed-runtime/v1', status: 'ready', agentId: record.plan.agentId,
+    versionId: record.plan.runtimeVersion, manifestSha256: sha256(canonical) };
+  const ready = await f.service.refresh(creation.id);
+  assert.equal(ready.state, 'READY', JSON.stringify(ready.failure));
+  assert.equal(ready.failure, null);
+  // The declaration itself must still match: only the byte-level comparison is relaxed.
+  const changed = canonical.replace('围绕正确性与回归风险检查代码。', '只写风格建议。');
+  f.remote.Deployment.ManagedRuntimeConfig.Manifest = changed;
+  f.remote.Deployment.RuntimeConfig.ManifestSha256 = sha256(changed);
+  const mismatched = await f.service.refresh(creation.id);
+  assert.equal(mismatched.state, 'ACTION_REQUIRED');
   assert.equal(mismatched.failure.code, 'DEPLOYMENT_PROVENANCE_MISMATCH');
 });

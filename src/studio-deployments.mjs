@@ -13,7 +13,7 @@ import { resolveMcpConnection } from './local-resource-adapters.mjs';
 import { managedRuntimeModelConfig } from './managed-runtime-model.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
 import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, probeDeploymentVersion, deploymentVersionId,
-  readyKsxcDeployment, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
+  managedDeclaration, readyKsxcDeployment, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymentStorage } from './deployment-storage.mjs';
 import { validManagedMcpCredential, validateManagedResources } from './managed-resource-contract.mjs';
@@ -440,7 +440,10 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
           // GetAgent masks sensitive environment values. Prove token alignment
           // through runtime validation without starting a model run or session.
           const probe = await probeAccess(endpoint, key);
-          const versionReady = !record.activeVersion || await probeDeploymentVersion({ fetchImpl, endpoint, token: key, plan: currentDeployment(record).plan, versionId: deploymentVersionId(record) });
+          // The Pod reports the platform-canonical digest it mounted, so the probe
+          // must compare against the digest GetAgent froze, not Studio's serialization.
+          const versionReady = !record.activeVersion || await probeDeploymentVersion({ fetchImpl, endpoint, token: key, plan: currentDeployment(record).plan,
+            versionId: deploymentVersionId(record), manifestSha256: managedDeclaration(remote).runtime.ManifestSha256 });
           next.state = !probe.ready ? 'TOKEN_PENDING' : !versionReady ? 'STARTING' : basic.Status === 'UPDATING' ? 'AVAILABLE_UPDATING' : 'READY';
           next.tokenBound = probe.ready;
         }
@@ -460,7 +463,11 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
           failure: CLOUD_AGENT_GONE_FAILURE }));
       }
       const lastCheckedAt = new Date().toISOString();
-      if (record.plan.runtime === 'ksxc' && error?.code === 'DEPLOYMENT_PROVENANCE_MISMATCH') {
+      // Provenance is permanent until an operator reconciles the cloud Agent, so the
+      // record must not stay in a transient state such as PROVISIONING: only READY,
+      // STARTING and ACTION_REQUIRED may be updated, and the other two would strand
+      // it behind a disabled "检查更新" for every runtime, not just KSXC.
+      if (error?.code === 'DEPLOYMENT_PROVENANCE_MISMATCH') {
         return publicRecord(await store.update(id, { state: 'ACTION_REQUIRED', tokenBound: false, failure: failure(error), lastCheckedAt }));
       }
       // Polling failures are retried by the next health check; reporting them
