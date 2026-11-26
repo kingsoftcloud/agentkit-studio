@@ -288,16 +288,21 @@ try {
   assert.notEqual(identity.pid, proof.processes.at(-1).pid);
   const opened = performance.now();
   const panel = await pluginPage();
+  // The plugin page renders its sections from the `star-harness/status` RPC,
+  // which reaches the signed release registry on a cold start. Playwright's
+  // 5s default `expect` timeout is below that worst case on a loaded Windows
+  // runner, and the components section is absent until the RPC resolves, so
+  // every assertion here uses the same control timeout as the rest of the file.
   if (await panel.getAttribute('data-plugin-detail') !== null) {
-    await expect(panel.getByRole('heading', { name: 'Star Harness', exact: true })).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'Star Harness', exact: true })).toBeVisible({ timeout: pluginControlTimeout });
     const image = panel.getByRole('img', { name: /金山云自研 Agent 运行框架/ });
-    await expect(image).toBeVisible();
+    await expect(image).toBeVisible({ timeout: pluginControlTimeout });
     await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
   } else {
-    await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible();
-    await expect(panel.getByText(/执行多步任务|AgentKit 里的多步任务/).first()).toBeVisible();
+    await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible({ timeout: pluginControlTimeout });
+    await expect(panel.getByText(/执行多步任务|AgentKit 里的多步任务/).first()).toBeVisible({ timeout: pluginControlTimeout });
   }
-  await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible();
+  await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible({ timeout: pluginControlTimeout });
   await page.screenshot({ path: join(output, 'plugin-overview.png'), timeout: 60000 });
   await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
   proof.firstPluginControlsMs = Math.round(performance.now() - opened);

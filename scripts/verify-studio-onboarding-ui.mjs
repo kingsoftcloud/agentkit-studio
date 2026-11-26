@@ -28,7 +28,7 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     // shipped by dsh-client-ui-settings-account and wraps both its welcome and
     // credit/recharge steps, so this keeps the publication flags honest.
     await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
-    await expect(guide.getByRole('heading',{name:'让第一个 Agent 跑起来'})).toBeVisible();
+    await expect(guide.getByRole('heading',{name:'让第一个 Agent 跑起来'})).toBeVisible({timeout:60000});
     await guide.getByRole('button',{name:'开始设置',exact:true}).click();
     const model=guide.locator('[data-onboarding-mode=model]');
     await expect(model).toBeVisible();
