@@ -150,7 +150,7 @@ const reasoner = {
   reasoningEfforts: true, defaultReasoningEffort: 'high',
 };
 
-test('a gateway catalog route never declares a route default its siblings cannot take', async () => {
+test('a route serving a single model keeps its own reasoning default', async () => {
   const { bridge, providers, writes } = bridgeContext([
     { id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] },
     { id: 'seedream-5.0', name: 'Seedream', input: ['text', 'image'] },
@@ -158,30 +158,22 @@ test('a gateway catalog route never declares a route default its siblings cannot
   await bridge.applyProfiles({ profiles: [reasoner] });
 
   const provider = providers['agentkit-studio-reasoner'];
-  // DSH applies a route default to every model the route serves, and catalog
-  // siblings declare no `reasoningEfforts`. A route default there makes every
-  // turn on a sibling fail with UNSUPPORTED_REASONING_EFFORT before the
-  // request leaves DSH — the `reasoning: max` + `kimi-k3.1-pro-highspeed`
-  // combination this route used to publish.
-  assert.equal(provider.reasoning, undefined);
-  // Kspmas answers `400 Invalid request: role 'developer' is not allowed`, and
-  // pi-ai sends the system prompt as `developer` to every reasoning model on a
-  // route it cannot detect as non-standard.
+  // A route serves exactly its own model — no catalog siblings to inherit a
+  // route default that they never declared.
+  assert.equal(provider.models.length, 1);
+  assert.equal(provider.models[0].id, 'deepseek-v4.1-flash-1017');
+  // Kspmas answers `400 Invalid request: role 'developer' is not allowed`.
   assert.deepEqual(provider.compat, { supportsDeveloperRole: false, supportsStore: false });
-  const routed = provider.models.find(model => model.id === 'deepseek-v4.1-flash-1017');
-  assert.deepEqual(routed.reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
-  assert.equal(routed.defaultReasoningEffort, undefined);
-  // The sibling catalog entry must not inherit a capability its profile never
-  // declared, or picking it would promise reasoning the gateway cannot do.
-  assert.equal(provider.models.find(model => model.id === 'seedream-5.0').reasoningEfforts, undefined);
-  // Default thinking now rides the default selection, which names this very
-  // model, instead of a route default every sibling must also accept.
+  assert.deepEqual(provider.models[0].reasoningEfforts, { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
+  // A single-model route takes its default from the route-level `reasoning`.
+  assert.equal(provider.reasoning, 'high');
+  // Default thinking also rides the default selection.
   const [, defaultOps] = writes.find(([ns]) => ns === 'agent-default-model');
   assert.deepEqual(defaultOps.find(op => op.path[0] === 'reasoningEffort'), { op: 'set', path: ['reasoningEffort'], value: 'high' });
   assert.equal(writes.filter(([ns]) => ns === 'llm-pi-ai').length, 1);
 });
 
-test('existing models keep their own defaults while legacy catalog siblings stay routable', async () => {
+test('each route serves only its own model', async () => {
   const other = { ...reasoner, id: 'other', modelName: 'other-model', defaultReasoningEffort: 'low' };
   const plain = { ...reasoner, id: 'plain', modelName: 'plain-model', reasoningEfforts: false };
   // The provider omits one configured model from discovery.
@@ -190,13 +182,8 @@ test('existing models keep their own defaults while legacy catalog siblings stay
 
   for (const profile of [reasoner, other, plain]) {
     const route = providers[`agentkit-studio-${profile.id}`];
-    assert.equal(route.reasoning, undefined);
-    for (const model of route.models) {
-      assert.equal(model.defaultReasoningEffort,
-        model.id === profile.modelName && profile.reasoningEfforts ? profile.defaultReasoningEffort : undefined);
-    }
-    assert.ok(route.models.some(model => model.id === profile.modelName));
-    assert.ok(route.models.some(model => model.id === plain.modelName));
+    assert.equal(route.models.length, 1, `${profile.id} route must serve only its own model`);
+    assert.equal(route.models[0].id, profile.modelName);
   }
 });
 

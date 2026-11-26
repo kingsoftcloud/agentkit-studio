@@ -81,8 +81,11 @@ export function createModelBridge({ hostRemote }) {
         const items = catalogs[index]?.items || [];
         const fallback = { id: modelName, name: modelName, input: profile.input || ['text'] };
         const configuredModel = items.find(item => item.id === modelName);
-        // Keep catalog siblings on legacy routes for existing selections.
-        const routedModels = profile.modelOnly ? [configuredModel || fallback] : configuredModel ? items : [...items, fallback];
+        // A route serves exactly the model it was configured for. Reusing the
+        // whole vendor catalog here (`items`) made every model of one provider
+        // appear once per route — and dragged embeddings, video and speech
+        // models into the chat selector. Only the configured model belongs here.
+        const routedModels = [configuredModel || fallback];
         const dedicated = routedModels.length === 1;
         const models = routedModels
           .map(model => {
