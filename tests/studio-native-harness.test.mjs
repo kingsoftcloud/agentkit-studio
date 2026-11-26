@@ -51,7 +51,7 @@ async function setup(t, { spec = {}, profile = {}, respond, renderPrompt, catalo
   const retireContext = (contextSources?.(record) ?? []).map(source => bridge.nativeContextSources.register(source));
   const events = [], definitions = new Map(), requests = [], instructionObservations = [];
   let apiKey = 'secret-one', unregisters = 0;
-  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1', ...profile }] };
+  const values = { modelProfiles: [{ id: 'fixture', connectionId: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1', ...profile }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: apiKey }) },
     fetchImpl: async () => new Response(JSON.stringify({data:catalog}), { headers: { 'content-type': 'application/json' } }) });
   const session = { id: 'session', append: (type, data, options) => events.push({ type, data, ...options, seq: events.length + 1 }) };
@@ -755,7 +755,7 @@ for (const frozen of [false, true]) test(`Native Host binds a separate screensho
           : { tool_calls: [{ index: 0, id: 'inspect-page', type: 'function',
             function: { name: 'browser_inspect_workspace', arguments: '{"path":"app.html"}' } }] },
       finish_reason: body.model === 'screenshot-model' || body.messages.some(message => message.role === 'tool') ? 'stop' : 'tool_calls' }] }) });
-  h.values.modelProfiles.push({ id: 'observer', provider: 'openai-compatible', modelName: 'screenshot-model',
+  h.values.modelProfiles.push({ id: 'observer', connectionId: 'observer', provider: 'openai-compatible', modelName: 'screenshot-model',
     baseUrl: 'https://observer.invalid/v1', input: ['text', 'image'], requestTimeoutMs: 150000 });
   let browserCalls = 0, releases = 0;
   h.payload.binding.nativeTools = { definitions: () => [studioBrowserDefinition()], releaseSession: async () => { releases++; },
@@ -792,7 +792,7 @@ for (const frozen of [false, true]) test(`Native Host binds a separate screensho
 test('Native Host rejects a missing or non-image observer before starting a Run', async t => {
   const h = await setup(t, { spec: { bindings: { visionModelProfileId: 'observer' } } });
   await assert.rejects(h.host.executeTurn(h.payload), { code: 'MODEL_NOT_FOUND' });
-  h.values.modelProfiles.push({ id: 'observer', provider: 'openai-compatible', modelName: 'text-only', baseUrl: 'https://observer.invalid/v1' });
+  h.values.modelProfiles.push({ id: 'observer', connectionId: 'observer', provider: 'openai-compatible', modelName: 'text-only', baseUrl: 'https://observer.invalid/v1' });
   await assert.rejects(h.host.executeTurn(h.payload), /studio_native_vision_model_image_input_required/);
   assert.equal(h.head(), null); assert.equal(h.requests.length, 0);
 });

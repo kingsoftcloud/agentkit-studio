@@ -235,7 +235,15 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
         if (!Array.isArray(value) || value.some(profile => !record(profile) || !scalar(profile.modelName) || !scalar(profile.provider))) return Promise.reject(new ConfigurationError('模型目录格式无效'));
         if (value.some(profile => !/^[A-Za-z][A-Za-z0-9._:-]{0,127}$/.test(String(profile.id || '').trim())
           || profile.credentialName !== undefined && String(profile.credentialName).trim() && !isCredentialRefName(profile.credentialName))) return Promise.reject(new ConfigurationError('模型 ID 或凭证引用格式无效'));
-        if (value.some(profile => profile.enabled !== false && dshModelRoute(profile) === HARNESS_SERVICE_MODEL_PROVIDER))
+        // A route is keyed on the connection id, falling back to provider+endpoint
+        // and finally the profile id. Reserve the Harness service route against
+        // every spelling a profile could produce, so a connection id (not just an
+        // id) cannot shadow it either.
+        if (value.some(profile => profile.enabled !== false && [
+          dshModelRoute(profile),
+          dshModelRoute({ ...profile, connectionId: undefined }),
+          dshModelRoute({ ...profile, connectionId: String(profile.id || '') }),
+        ].includes(HARNESS_SERVICE_MODEL_PROVIDER)))
           return Promise.reject(new ConfigurationError('模型 ID 与 Star Harness 内部路由冲突，请修改模型 ID'));
         if (value.some(profile => profile.codexApi && !['responses', 'chat-completions'].includes(profile.codexApi))) return Promise.reject(new ConfigurationError('Codex 模型接口格式无效'));
         try { value.forEach(nativeModelOptions); } catch (error) { return Promise.reject(error); }

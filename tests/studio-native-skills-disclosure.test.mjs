@@ -51,7 +51,7 @@ async function setup(t, plan = calls, intercept = async () => {}) {
       resourceBase: { kind: 'directory', path: skillRoot } }] }, workspaceRoot, stateDir: join(root, 'state'),
     commandEnvironment: {} });
   const models = createModelService({ configuration: { resolve: async () => ({ values: { modelProfiles: [{
-    id: 'model', provider: 'openai-compatible', modelName: 'skills-model', baseUrl: 'https://model.invalid/v1',
+    id: 'model', connectionId: 'model', provider: 'openai-compatible', modelName: 'skills-model', baseUrl: 'https://model.invalid/v1',
   }] } }) }, credentials: { resolve: async () => ({ value: 'model-secret' }) } });
   const bodies = [];
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, models, ledger: store,
