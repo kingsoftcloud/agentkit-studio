@@ -24,15 +24,36 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
   if (!settings?.describe || !settings?.mutate) throw portableError('PORTABLE_MODEL_BRIDGE_UNAVAILABLE', '目标 Host 缺少 DSH Settings 服务');
   const namespace = settings.describe({ redactSecrets: true }).find(item => item.ns === 'llm-pi-ai');
   if (!namespace) throw portableError('PORTABLE_MODEL_BRIDGE_UNAVAILABLE', '目标 Profile 未加载 DSH 模型提供商');
-  const routes = new Set(), operations = [];
+  const routes = new Map(), operations = [];
+  /** Two profiles belong to one route only when they share a connection. */
+  const connectionOf = profile => String(profile.connectionId || profile.id || '');
   for (const profile of profiles) {
     const route = dshModelSelection({ spec: { bindings: { modelProfileId: profile.id } } }, { values: { modelProfiles: profiles } })?.provider;
-    if (!route || routes.has(route)) throw portableError('PORTABLE_MODEL_ROUTE_COLLISION', '模型配置生成了重复的 DSH 路由，请修改模型资源 ID');
-    routes.add(route);
+    if (!route) throw portableError('PORTABLE_MODEL_ROUTE_COLLISION', '模型配置生成了重复的 DSH 路由，请修改模型资源 ID');
+    // One connection is one route: several models of the same gateway share it.
+    // A different connection normalizing onto the same route is a real
+    // collision — the two gateways would overwrite each other.
+    const group = routes.get(route);
+    if (group && connectionOf(group[0]) !== connectionOf(profile)) {
+      throw portableError('PORTABLE_MODEL_ROUTE_COLLISION', '模型配置生成了重复的 DSH 路由，请修改模型资源 ID');
+    }
+    if (!group) routes.set(route, []);
+    routes.get(route).push(profile);
+  }
+  for (const [route, members] of routes) {
+    const profile = members[0];
     const reasoning = studioReasoning(profile);
-    const facts = await profileCapabilities(profile, resolveCapabilities);
     const wire = providerWireApi(profile);
-    const value = { displayName: `${providerDisplayName(profile)} · ${profile.modelName}`, api: wire, apiKeyEnv: profile.credentialName,
+    const models = [];
+    for (const member of members) {
+      const facts = await profileCapabilities(member, resolveCapabilities);
+      const memberReasoning = studioReasoning(member);
+      models.push({ id: member.modelName, name: member.modelName,
+        contextWindow: facts.contextWindow,
+        maxTokens: member.maxOutputTokens ?? Math.min(facts.maxOutputTokens, OPERATING_MAX_OUTPUT_TOKENS),
+        input: facts.input, ...(memberReasoning ? { reasoningEfforts: memberReasoning.efforts } : {}) });
+    }
+    const value = { displayName: providerDisplayName(profile), api: wire, apiKeyEnv: profile.credentialName,
       baseURL: profile.baseUrl,
       // Kspmas validates message roles and answers
       // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends the
@@ -49,10 +70,7 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
       // sets it while no model speaks that protocol, which is what a profile
       // declaring `protocol: openai-responses` would otherwise hit.
       compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
-      ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}), models: [{ id: profile.modelName, name: profile.modelName,
-        contextWindow: facts.contextWindow,
-        maxTokens: profile.maxOutputTokens ?? Math.min(facts.maxOutputTokens, OPERATING_MAX_OUTPUT_TOKENS),
-        input: facts.input, ...(reasoning ? { reasoningEfforts: reasoning.efforts } : {}) }] };
+      ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}), models };
     if (!isDeepStrictEqual(namespace.value?.providers?.[route], value)) operations.push({ op: 'set', path: ['providers', route], value });
   }
   if (operations.length) await settings.mutate('llm-pi-ai', operations, namespace.revision);

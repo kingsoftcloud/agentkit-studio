@@ -21,10 +21,11 @@ export function catalogReasoningMetadata(item) {
 export function importedModelReasoning(item, connection) {
   const declared = catalogReasoningMetadata(item);
   const catalog = lookupModelCapabilities({ baseUrl: connection.baseUrl, provider: connection.provider, modelName: item.id });
-  // The gateway's own declaration wins; otherwise the models.dev catalog
-  // supplies the levels. A catalog model that only toggles thinking gets no
-  // selectable levels, instead of the old low/high fallback.
-  const reasoningLevels = declared.reasoningLevels?.length ? declared.reasoningLevels
+  // The gateway's own declaration wins — including an explicit "no levels"
+  // (`reasoningLevels: []`), which must not fall through to the catalog.
+  // Only an absent declaration lets models.dev supply the levels; a catalog
+  // model that merely toggles thinking gets no selectable levels.
+  const reasoningLevels = declared.reasoningLevels !== undefined ? declared.reasoningLevels
     : catalog?.efforts?.length ? catalog.efforts
     : catalog?.toggle ? []
     : item.reasoningLevels || [];

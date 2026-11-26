@@ -98,10 +98,16 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const response = await fetchImpl(`${selected.baseUrl}/models`, { headers, signal: AbortSignal.timeout(15000), redirect: 'error' });
     if (!response.ok) throw Object.assign(new Error(`读取模型目录失败（${response.status}）`), { code: 'MODEL_CATALOG_FAILED' });
     const data = await response.json();
-    const items = (data.data || data.models || []).filter(item => typeof item.id === 'string').map(item => ({ id: item.id, name: item.name || item.id, input: modelInput(item),
-      ...modelCatalogLimits(item),
-      ...catalogReasoningMetadata(item),
-      ...(Array.isArray(inputModalities(item)) && inputModalities(item).length ? {} : { inputKnown: false }) }));
+    const items = (data.data || data.models || []).filter(item => typeof item.id === 'string').map(item => {
+      // `inputKnown` distinguishes "the gateway reported modalities" from "it
+      // reported none": only the former may be trusted as text-only, so the
+      // catalog cannot add vision to a model the vendor declared text-only.
+      const known = Array.isArray(inputModalities(item)) && inputModalities(item).length > 0;
+      return { id: item.id, name: item.name || item.id, input: modelInput(item),
+        ...modelCatalogLimits(item),
+        ...catalogReasoningMetadata(item),
+        ...(known ? { inputKnown: true } : { inputKnown: false }) };
+    });
     if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);
     catalogs.set(key, { items, expires: Date.now() + 60000 });
     return items;

@@ -109,6 +109,8 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
     // 填好地址和 Key 后自动拉取目录，不必先点「测试连接」。用 ref 去重，
     // 避免 setProviderForm 触发的重渲染把同一份配置重复拉取。
     // 简化测试 harness 不提供 useRef/useEffect 时自动拉取不启用，其余功能不变。
+    // 防抖 400ms：API Key 是受控输入、逐字符触发，直接请求会把半截密钥发给
+    // 网关（50 字符约 50 次请求），有触发账号风控的实际风险。
     const autoCheckRef = typeof useRef === 'function' ? useRef('') : { current: '' };
     if (typeof useEffect === 'function') useEffect(() => {
       if (!providerForm || providerForm.id) return;
@@ -117,8 +119,11 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
       if (check?.state === 'loading' || check?.state === 'success') return;
       const token = JSON.stringify([provider, baseUrl, apiKey]);
       if (autoCheckRef.current === token) return;
-      autoCheckRef.current = token;
-      void testProvider();
+      const timer = setTimeout(() => {
+        autoCheckRef.current = token;
+        void testProvider();
+      }, 400);
+      return () => clearTimeout(timer);
     }, [providerForm]);
 
     const renderNewProviderCatalog = () => {

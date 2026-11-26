@@ -345,7 +345,9 @@ export function createModelSettingsSection({
           const budgets = resolveModelBudgets(profile, null);
           if (!budgets.adjusted) return profile;
           clampedOutputs.push(`${profile.modelName} → ${budgets.maxOutputTokens}`);
-          return { ...profile, maxOutputTokens: budgets.maxOutputTokens };
+          // Persist the window too: a user-typed 2,000,000 would otherwise leave
+          // the Host claiming a capacity DSH actually caps at 1,000,000.
+          return { ...profile, contextWindow: budgets.contextWindow, maxOutputTokens: budgets.maxOutputTokens };
         });
         const activeDefaultIndex = rawProfiles.findIndex(profile => profile.enabled !== false && profile.default);
         const firstEnabledIndex = rawProfiles.findIndex(profile => profile.enabled !== false);
@@ -377,12 +379,22 @@ export function createModelSettingsSection({
         if (mode === 'all' || providerDraftCount()) payload.modelConnections = configuration.providers.map(providerMetadata).filter(Boolean);
         if (configuration.cloudAccessKey?.trim()) payload.cloudAccessKey = configuration.cloudAccessKey.trim();
         if (configuration.cloudSecretKey?.trim()) payload.cloudSecretKey = configuration.cloudSecretKey.trim();
+        // Snapshot every field this save writes, so a failed DSH sync restores
+        // the whole configuration — a partial rollback would leave a deleted
+        // connection beside a resurrected profile.
+        const rollbackPayload = {
+          modelProfiles: runtimeProfiles(savedState.profiles),
+          ...(payload.modelConnections ? { modelConnections: savedState.storedProviders } : {}),
+          ...(payload.modelProfileKeys ? { modelProfileKeys: Object.fromEntries(savedState.profiles.map((profile, index) => [profile.credentialName, ''])) } : {}),
+          cloudAccountId: savedState.cloud?.cloudAccountId ?? '', cloudRegion: savedState.cloud?.cloudRegion ?? '',
+          cloudServerUrl: savedState.cloud?.cloudServerUrl ?? '', cloudBucket: savedState.cloud?.cloudBucket ?? '',
+        };
         await hostRemote.updateSettings(payload);
         await hostRemote.syncModelCredential();
         const discoveredProfiles = await hydrateModelInputs(profiles);
         const persistedProfiles = runtimeProfiles(discoveredProfiles);
         await hostRemote.updateSettings({ modelProfiles: persistedProfiles });
-        await applyProfilesWithRollback({ dshModel, persistedProfiles, keys, hostRemote, rollbackProfiles: runtimeProfiles(savedState.profiles) });
+        await applyProfilesWithRollback({ dshModel, persistedProfiles, keys, hostRemote, rollbackProfiles: rollbackPayload.modelProfiles, rollbackPayload });
         // The Host now holds these values: every draft has served its purpose.
         clearModelSettingsDrafts();
         setForm(current => ({ ...current, ...configuration,
@@ -517,7 +529,7 @@ export function createModelSettingsSection({
     }, signal);
     const probeSelectedEfforts = () => effortProbe.progress ? effortProbe.stop() : effortProbe.run([{ key: selected.id }],
       (_job, signal) => probeEfforts(selected, selected.modelName, signal, Boolean(selected.modelOnly && !selected.protocol && !savedProfile(profileKey(selected)))));
-    const { probeAllEfforts } = createProbeAll({ allProbe, form, lookupModelCapabilities, probeEfforts, setMessage, profileKey, useEffect, patchProfile, applicableProbeLevels, hostRemote, setModelCapabilityCatalog });
+    const { probeAllEfforts } = createProbeAll({ allProbe, form, lookupModelCapabilities, probeEfforts, setMessage, profileKey, useEffect, useRef, patchProfile, applicableProbeLevels, hostRemote, setModelCapabilityCatalog });
     const fetchCatalog = async profile => {
       if (profile.apiKey?.trim() && typeof hostRemote.probeModelEndpoint === 'function') {
         return hostRemote.probeModelEndpoint(candidateFor(profile));

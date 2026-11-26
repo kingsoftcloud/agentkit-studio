@@ -49,11 +49,12 @@ export function saveFailureMessage(reason) {
 
 /** Sync to DSH, rolling the Host config back to its pre-save state on failure
  * so the two never end up out of sync. */
-export async function applyProfilesWithRollback({ dshModel, persistedProfiles, keys, hostRemote, rollbackProfiles }) {
+export async function applyProfilesWithRollback({ dshModel, persistedProfiles, keys, hostRemote, rollbackProfiles, rollbackPayload }) {
   try {
     await dshModel.applyProfiles({ profiles: persistedProfiles, keys });
   } catch (reason) {
-    await hostRemote.updateSettings({ modelProfiles: rollbackProfiles }).catch(() => {});
+    // Restore every field the save touched, not just the profiles.
+    await hostRemote.updateSettings(rollbackPayload || { modelProfiles: rollbackProfiles }).catch(() => {});
     throw Object.assign(new Error(`同步到对话引擎失败：${reason?.message || reason}。本机配置已回滚到保存前，请重试。`), { code: reason?.code });
   }
 }
@@ -65,9 +66,15 @@ export function createProbeAllJobs({ profiles, lookupModelCapabilities, profileK
 }
 
 /** "Probe all levels" runner plus the batch write-back effect. */
-export function createProbeAll({ allProbe, form, lookupModelCapabilities, probeEfforts, setMessage, profileKey, useEffect, patchProfile, applicableProbeLevels, hostRemote, setModelCapabilityCatalog }) {
-  // 拉取 Host 后台刷新的最新能力目录（内置目录是离线兜底），更新内存缓存。
-  if (hostRemote.capabilityCatalog) hostRemote.capabilityCatalog().then(catalog => { if (catalog) setModelCapabilityCatalog(catalog); }).catch(() => {});
+export function createProbeAll({ allProbe, form, lookupModelCapabilities, probeEfforts, setMessage, profileKey, useEffect, useRef, patchProfile, applicableProbeLevels, hostRemote, setModelCapabilityCatalog }) {
+  // Pull the Host's refreshed catalog once per mount. Doing this in the render
+  // body sent a 1.2 MB readFile+JSON.parse round trip on every keystroke.
+  const catalogFetched = typeof useRef === 'function' ? useRef(false) : { current: false };
+  if (typeof useEffect === 'function') useEffect(() => {
+    if (catalogFetched.current || !hostRemote.capabilityCatalog) return;
+    catalogFetched.current = true;
+    hostRemote.capabilityCatalog().then(catalog => { if (catalog) setModelCapabilityCatalog(catalog); }).catch(() => {});
+  }, []);
   const probeAllEfforts = () => {
     if (allProbe.progress) { allProbe.stop(); return; }
     const jobs = createProbeAllJobs({ profiles: form.profiles, lookupModelCapabilities, profileKey });

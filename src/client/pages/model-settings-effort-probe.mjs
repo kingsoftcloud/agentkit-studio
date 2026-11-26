@@ -74,10 +74,12 @@ export function renderModelEffortSettings(h, { efforts, value, levels, protocol,
     h('div', { className: 'ms-field-head' },
       h('span', { className: 'ms-label' }, '思考等级'),
       // A compact icon, not a full-height button: a 32px control here pushed the
-      // label down and misaligned this column against 模型名称.
-      h('button', { type: 'button', className: 'ms-probe-icon', 'data-size': 'sm', onClick: onProbe, disabled: !canProbe,
+      // label down and misaligned this column against 模型名称. Hidden entirely
+      // once the catalog already describes the model — there is nothing to
+      // probe, so a disabled icon would only be noise.
+      canProbe ? h('button', { type: 'button', className: 'ms-probe-icon', 'data-size': 'sm', onClick: onProbe,
         title: probing ? '停止探测' : '探测档位', 'aria-label': probing ? '停止探测' : '探测档位' },
-        probing ? '◼' : '⟳')),
+        probing ? '◼' : '⟳') : null),
     h('select', {
       className: 'ms-select', 'aria-label': '思考等级', 'data-model-reasoning': wire,
       title: provisional ? '未识别的提供商使用低、高两档作为候选。可探测模型实际接受的档位。' : undefined,

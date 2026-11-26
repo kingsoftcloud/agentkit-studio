@@ -756,8 +756,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     await bindRuntime();
   }
   const capabilityCatalog = (await import('./services/model-capability-refresh.mjs')).createModelCapabilityRefresh({ storeDir: studioStoreDir });
-  capabilityCatalog.start();
-  ctx.effect(() => capabilityCatalog.stop(), 'agentkit-studio: model capability refresh');
+  // `ctx.effect` runs the callback now and treats its return value as the
+  // disposer, so returning `stop()` would clear the interval immediately.
+  ctx.effect(() => { capabilityCatalog.start(); return () => capabilityCatalog.stop(); }, 'agentkit-studio: model capability refresh');
   const routes = createStudioRoutes(ctx, {
     capabilityCatalog,
     ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
