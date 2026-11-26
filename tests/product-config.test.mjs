@@ -22,7 +22,7 @@ test('one product definition supplies every desktop target and existing version 
   }
 });
 
-test('every desktop target includes and selects the pinned RouteMind archive', async t => {
+test('every desktop target ships the pinned RouteMind archive with activation off by default', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'studio-routemind-input-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const archive = await stageRouteMindArchive(directory);
@@ -30,7 +30,7 @@ test('every desktop target includes and selects the pinned RouteMind archive', a
   for (const target of ['mac-arm64', 'mac-x64', 'win-x64']) {
     const { environment } = resolveProductInputs({ target });
     assert.ok(environment.DSH_DESKTOP_PLUGIN_ROOTS.split(',').includes('routemind-studio'));
-    assert.ok(environment.DSH_DESKTOP_PLUGIN_BUNDLES.split(',').includes('routemind-studio'));
+    assert.ok(!environment.DSH_DESKTOP_PLUGIN_BUNDLES.split(',').includes('routemind-studio'));
   }
 });
 

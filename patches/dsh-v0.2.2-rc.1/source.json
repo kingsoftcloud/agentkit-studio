@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "3aa1651a8d077da2f7397245bab01753a96b38c5",
+  "headCommit": "0e27e711bb3e84ef0b9b9f565ebd894c336514c3",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "658aa67cc8a3e6385c55114945bf0697138cf587",
-  "sourceSha256": "787beeaa09d975e6e2ecd7a83342cc6bcbcfc0919d1dc0114a7d64eea650bc0b",
+  "tree": "e32887f574e19e8fbf11a45181661af51579f68c",
+  "sourceSha256": "45ca34a1583e97a4891d4e5e22cfba40005dc922f1f3bd2b2ee34bea83476c6e",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "48c02ea5a5cc0ebd8f530ddeed9656df900f71f4d6388cc5e77c1e17e8fe2fb1"
+    "sha256": "81dfcea484232e39ba421f34bb39a4c8e5eefcf7b7c5bceda9588678f36eb339"
   },
   "commits": [
     {
@@ -374,8 +374,8 @@
     {
       "id": "092",
       "file": "092-routemind-desktop-bundle.patch",
-      "commit": "3aa1651a8d077da2f7397245bab01753a96b38c5",
-      "sha256": "76d90c8913cd6d913ef37cfea1b64e3f2e990feb0bfd154ed6043688b651714c"
+      "commit": "0e27e711bb3e84ef0b9b9f565ebd894c336514c3",
+      "sha256": "486c31a33b204442cce332f840608ce45dbcef58a19c668bb5a1faa85332cb5d"
     }
   ]
 }

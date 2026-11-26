@@ -2979,7 +2979,7 @@
       "removeWhen": "The pinned DSH release supports switchable product bundles in the native built-ins group.",
       "contracts": [
         "Installation-owned RouteMind appears once in the native built-ins group, with a switch, source details and dedicated artwork. Star Harness uses its own artwork on the card and detail page.",
-        "Desktop defaults select RouteMind for fresh profiles and profiles without a previous installation. Existing selection and subsequent opt-out persist.",
+        "RouteMind ships without default activation. Desktop startup preserves the user selection, including an earlier marketplace installation.",
         "Discover identifies installation-owned bundles as provided even if the profile previously installed a copy."
       ],
       "affectedPackages": [
@@ -2988,8 +2988,6 @@
         "packages/client/ui-plugin-manager"
       ],
       "affectedFiles": [
-        "apps/desktop/src/bundled-plugin-alignment.ts",
-        "apps/desktop/src/project-manager.ts",
         "apps/desktop/tests/project-manager.spec.ts",
         "packages/boot/plugin-market/src/index.ts",
         "packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css",
@@ -2999,9 +2997,7 @@
       ],
       "dependsOn": [
         "074",
-        "078",
         "087",
-        "088",
         "091"
       ],
       "upstreamStatus": {
@@ -3022,13 +3018,13 @@
         ]
       },
       "sequence": 61,
-      "sha256": "76d90c8913cd6d913ef37cfea1b64e3f2e990feb0bfd154ed6043688b651714c"
+      "sha256": "486c31a33b204442cce332f840608ce45dbcef58a19c668bb5a1faa85332cb5d"
     }
   ],
-  "patchedTree": "658aa67cc8a3e6385c55114945bf0697138cf587",
-  "patchedSourceSha256": "787beeaa09d975e6e2ecd7a83342cc6bcbcfc0919d1dc0114a7d64eea650bc0b",
+  "patchedTree": "e32887f574e19e8fbf11a45181661af51579f68c",
+  "patchedSourceSha256": "45ca34a1583e97a4891d4e5e22cfba40005dc922f1f3bd2b2ee34bea83476c6e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "55134b1c5258679546f414da87e20af577ad2dde8f9491c48654bb3b18293710"
+    "sha256": "f32a7186a8265ba626df663a135362b93c2584bffa85215eec0ad06bdf32944b"
   }
 }

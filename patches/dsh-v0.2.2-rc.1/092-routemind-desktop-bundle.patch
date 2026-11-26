@@ -1,41 +1,12 @@
-diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
-index 7a4bcea62e5249468227ba2d4b2cceff5365a3ad..edf1afd53d13f132f079be96ddd4cc489a8e886b 100644
---- a/apps/desktop/src/bundled-plugin-alignment.ts
-+++ b/apps/desktop/src/bundled-plugin-alignment.ts
-@@ -505,7 +505,8 @@ export function alignBundledProductPlugins(options: PluginAlignmentOptions): rea
-     for (const packageName of bundles) {
-       // Installation-owned bundles (`@deepseek-ai/*`) resolve from the sealed
-       // runtime by contract and are never managed as profile product plugins.
--      if (packageName.startsWith(INSTALLATION_SCOPE)) continue
-+      // RouteMind also resolves from the installation, but remains user-switchable.
-+      if (packageName.startsWith(INSTALLATION_SCOPE) || packageName === 'routemind-studio') continue
-       const installedDir = join(options.profile, 'node_modules', packageName)
-       const installedPresent = existsSync(installedDir)
-       const installedVersion = readManifest(installedDir)?.version
-diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
-index 6b14a5c3e82a349722e3f44a5274057f510879b1..28bcf0bbfe77e00c1caf2055c00a02cbd5405fec 100644
---- a/apps/desktop/src/project-manager.ts
-+++ b/apps/desktop/src/project-manager.ts
-@@ -244,7 +244,9 @@ export function createPluginProfile(projectDir: string, bundles: readonly string
-   if (!Array.isArray(current) || current.some(name => typeof name !== 'string' || name.trim() === '')) {
-     throw new Error('desktop project: invalid profile bundle list')
-   }
--  const missing = added.filter(name => !current.includes(name))
-+  // A marketplace install without a selection was already turned off.
-+  const missing = added.filter(name => !current.includes(name)
-+    && (name !== 'routemind-studio' || !Object.hasOwn(manifest.dependencies ?? {}, name)))
-   if (missing.length > 0) writeProfileManifest(projectDir, {
-     ...manifest,
-     dsh: { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles: [...current, ...missing] } },
 diff --git a/apps/desktop/tests/project-manager.spec.ts b/apps/desktop/tests/project-manager.spec.ts
-index c312697a2c083328fddc3077e99d3e956521807e..1161b7523add0ec4a5c6db7186c2d175a18572c7 100644
+index c312697a2c083328fddc3077e99d3e956521807e..2ec8e6f89c8ca54c72dff217c145a51b0963c647 100644
 --- a/apps/desktop/tests/project-manager.spec.ts
 +++ b/apps/desktop/tests/project-manager.spec.ts
-@@ -75,6 +75,33 @@ describe('desktop external plugin profile', () => {
+@@ -75,6 +75,40 @@ describe('desktop external plugin profile', () => {
      expect(bundles).toContain('@kingsoftcloud/agentkit-studio')
    })
  
-+  it.each(['fresh', 'new-default', 'market-enabled', 'market-disabled'])('honors the RouteMind selection for %s profiles', async (kind) => {
++  it.each(['fresh', 'existing-studio', 'market-enabled', 'market-disabled'])('ships RouteMind disabled unless previously selected for %s profiles', async (kind) => {
 +    const { manager } = setup()
 +    const routeMind = 'routemind-studio'
 +    const manifestPath = join(manager.paths.profile, 'package.json')
@@ -49,14 +20,21 @@ index c312697a2c083328fddc3077e99d3e956521807e..1161b7523add0ec4a5c6db7186c2d175
 +        writeFileSync(manifestPath, JSON.stringify(manifest))
 +      }
 +    }
-+    writeFileSync(releaseManifest, JSON.stringify({ dsh: { profile: { bundles: ['@kingsoftcloud/agentkit-studio', routeMind] } } }))
++    writeFileSync(releaseManifest, JSON.stringify({
++      dependencies: { [routeMind]: '0.1.2' },
++      dsh: { profile: { bundles: ['@kingsoftcloud/agentkit-studio'] } },
++    }))
 +    await manager.applyRelease()
 +    const read = () => readProfileManifest('dsh', manager.paths.profile)
 +    const manifest = read()
-+    expect(manifest.dsh?.profile?.bundles?.includes(routeMind)).toBe(kind !== 'market-disabled')
++    expect(manifest.dsh?.profile?.bundles?.includes(routeMind)).toBe(kind === 'market-enabled')
 +    expect(manifest.dependencies?.[routeMind]).toBe(kind.startsWith('market-') ? '0.1.2' : undefined)
 +    const next = manifest.dsh!.profile!
-+    next.bundles = (next.bundles ?? []).filter(name => name !== routeMind)
++    next.bundles = [...new Set([...(next.bundles ?? []), routeMind])]
++    writeFileSync(manifestPath, JSON.stringify(manifest))
++    await manager.applyRelease()
++    expect(read().dsh?.profile?.bundles).toContain(routeMind)
++    next.bundles = next.bundles.filter(name => name !== routeMind)
 +    writeFileSync(manifestPath, JSON.stringify(manifest))
 +    await manager.applyRelease()
 +    expect(read().dsh?.profile?.bundles).not.toContain(routeMind)
@@ -321,7 +299,7 @@ index e532eadc9e1dd0093882d38ad8f2c65590bfeeb9..355d8c749038b3fb178358888a17f2a9
      title: pkg.meta?.title === undefined ? pkg.name : resolveText(pkg.meta.title),
      description: pkg.meta?.description === undefined ? undefined : resolveText(pkg.meta.description) || undefined,
 diff --git a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
-index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..c16f1c7aa6b4b46c9cc72d23aa562ec63bfc5c84 100644
+index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..ea305088c3cf04d6f7419be4f24d8700099c54c7 100644
 --- a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
 +++ b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
 @@ -21,7 +21,7 @@ import type { PluginTab } from '../src/client/tab-ledger.ts'
@@ -346,18 +324,18 @@ index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..c16f1c7aa6b4b46c9cc72d23aa562ec6
  }
  
  describe('PluginManagerPage', () => {
-+  it.each([false, true])('renders bundled RouteMind once in built-ins, with an old marketplace dependency: %s', (installed) => {
++  it.each([[false, false], [true, true], [true, false]])('renders bundled RouteMind once in built-ins (market install: %s, enabled: %s)', (installed, enabled) => {
 +    const name = 'routemind-studio'
-+    const { actions } = renderTab({ packages: [pkg({ name, availability: 'installation', version: '0.1.2', installed, removable: false })] })
++    const { actions } = renderTab({ packages: [pkg({ name, availability: 'installation', version: '0.1.2', installed, enabled, removable: false })] })
 +    const selector = '[data-plugin-package="routemind-studio"]'
 +    expect(document.querySelectorAll(selector)).toHaveLength(1)
 +    const basic = document.querySelector('[data-plugin-group="basic"]') as HTMLElement
 +    expect(basic.querySelector(selector)).toBeTruthy()
 +    expect(basic.querySelector('[data-studio-plugin-artwork="routemind"]')).toBeTruthy()
 +    const toggle = within(basic).getByRole('switch', { name: 'Enable RouteMind' })
-+    expect(toggle.getAttribute('aria-checked')).toBe('true')
++    expect(toggle.getAttribute('aria-checked')).toBe(String(enabled))
 +    fireEvent.click(toggle)
-+    expect(actions.setEnabled).toHaveBeenCalledExactlyOnceWith(name, false)
++    expect(actions.setEnabled).toHaveBeenCalledExactlyOnceWith(name, !enabled)
 +    fireEvent.click(within(basic).getByRole('button', { name: 'View RouteMind' }))
 +    expect(screen.getByRole('heading', { name: 'RouteMind' })).toBeTruthy()
 +    expect(document.querySelector('[data-plugin-detail="routemind-studio"] [data-studio-plugin-artwork="routemind"]')).toBeTruthy()
