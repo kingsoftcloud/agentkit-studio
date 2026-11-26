@@ -15,29 +15,78 @@ const react = values => {
 };
 const ui = values => ({ React: react(values), BRAND: {}, buttonStyle: () => ({}), SectionHeading: 'SectionHeading', EmptyState: 'EmptyState', StartChecks: 'StartChecks', Pill: 'Pill' });
 
-test('overview start cards and workspace use only existing actions and totals', () => {
-  const events = [], routes = [];
-  const Page = createOverviewPage({ ui: ui([{ status: 'ready', agents: 3, runtimes: 2 }, { status: 'ready', configured: false }]), hostRemote: {}, window: { dispatchEvent: event => events.push(event.type) }, CustomEvent: class { constructor(type) { this.type = type; } } });
+test('overview populated workspace renders real agents, activity and creation actions', () => {
+  const events = [], routes = [], bound = [];
+  const agents = [
+    { metadata: { id: 'agent-code', name: '代码助手', revision: 2, createdAt: '2026-11-26T08:00:00Z' }, spec: { runtime: { type: 'codex' } }, builds: [{ status: 'SUCCEEDED', revision: 2 }] },
+    { metadata: { id: 'agent-doc', name: '文档助手', revision: 1, createdAt: '2026-11-25T08:00:00Z' }, spec: { runtime: { type: 'dsh-native' } } },
+  ];
+  const connection = {
+    status: 'ready', agents: 3, runtimes: 2, agentItems: agents,
+    traceOverview: { total: 12, successRate: 0.75 },
+    traces: [{ traceId: 'trace-1', agentId: 'agent-code', status: 'SUCCEEDED', durationMs: 1200, startedAt: '2026-11-26T09:00:00Z' }],
+    schedules: [{ taskId: 'task-1', displayName: '每日总结', target: { agentId: 'agent-code' }, enabled: true, nextRunAt: '2026-11-27T09:00:00Z' }],
+  };
+  const Page = createOverviewPage({ ui: ui([connection, { status: 'ready', configured: false }, '']), actions: { bindAgent: async agentId => { bound.push(agentId); } }, hostRemote: {}, window: { dispatchEvent: event => events.push(event.type) }, CustomEvent: class { constructor(type) { this.type = type; } } });
   const tree = Page({ onNavigate: route => routes.push(route) }), all = nodes(tree);
-  assert.equal(all.filter(node => node.props.className === 'studio-start-card').length, 3);
-  assert.equal(all.filter(node => node.props.className === 'studio-stats studio-panel')[0].children.length, 4);
-  const stats = all.find(node => node.props.className === 'studio-stats studio-panel');
-  assert.deepEqual(stats.children.map(cell => cell.children.map(text)), [['3', 'Agent'], ['2', '运行时'], ['—', '资源'], ['—', '交付']]);
-  for (const label of ['对话创建', '手动配置', '从模板开始', '去配置']) all.find(node => node.type === 'button' && (text(node) === label || node.children.some(child => child.type === 'strong' && text(child) === label))).props.onClick();
+  assert.equal(all.filter(node => node.props.className === 'studio-start-card').length, 0);
+  assert.equal(all.filter(node => node.props['data-overview-agent']).length, 2);
+  assert.equal(all.filter(node => node.props.className === 'studio-overview-activity-row').length, 2);
+  const metrics = all.find(node => node.props.className === 'studio-overview-metrics');
+  assert.deepEqual(metrics.children.map(cell => cell.children.map(text)), [
+    ['Agent', '3', '本地与云端 Agent'], ['可用运行时', '2', '当前 Host 可创建的运行目标'],
+    ['24 小时运行', '12', 'Trace 运行记录'], ['运行完成率', '75%', '近 24 小时已完成运行'],
+  ]);
+  for (const label of ['对话创建', '手动配置', '从模板开始', '去配置']) all.find(node => node.type === 'button' && text(node).includes(label)).props.onClick();
   assert.deepEqual(events, ['agentkit-studio:open-authoring', 'agentkit-studio:create-manual-agent', 'agentkit-studio:open-settings']);
   assert.deepEqual(routes, ['agents', 'experts']);
-  assert.equal(all.some(node => node.props.onClick && text(node).startsWith('运行时')), false);
+  all.find(node => node.type === 'button' && text(node) === '对话').props.onClick();
+  assert.deepEqual(bound, ['agent-code']);
+  assert.equal(all.some(node => node.type === 'EmptyState'), false);
 });
 
-test('overview empty/loading and error states keep recovery and credential warnings', () => {
+test('overview explains DSH runtimes and an empty activity sample without placeholder dashes', () => {
+  const connection = {
+    status: 'ready', agents: 1, runtimes: null,
+    agentItems: [{ metadata: { id: 'agent-one', name: '示例 Agent', revision: 1 }, spec: { runtime: { type: 'dsh-native' } } }],
+    traceOverview: { total: 0 }, traces: [], schedules: [],
+  };
+  const Page = createOverviewPage({ ui: ui([connection, { status: 'ready', configured: true }, '']), hostRemote: {}, window: {} });
+  const all = nodes(Page({}));
+  const metrics = all.find(node => node.props.className === 'studio-overview-metrics');
+  assert.deepEqual(metrics.children[1].children.map(text), ['可用运行时', '1', 'DSH Native Harness']);
+  assert.deepEqual(metrics.children[3].children.map(text), ['运行完成率', '暂无', '还没有运行记录']);
+  assert.equal(metrics.children.some(cell => cell.children.some(child => text(child) === '—')), false);
+});
+
+test('overview offers model settings when credentials exist but no model is usable', () => {
+  const events = [];
+  const connection = { status: 'ready', agents: 1, runtimes: null, agentItems: [{ metadata: { id: 'agent-one', name: '示例 Agent' }, spec: {} }], traceOverview: { total: 0 }, traces: [], schedules: [] };
+  const Page = createOverviewPage({ ui: ui([connection, { status: 'ready', configured: true, modelConfigured: false }, '']), hostRemote: {}, window: { dispatchEvent: event => events.push(event.type) }, CustomEvent: class { constructor(type) { this.type = type; } } });
+  const all = nodes(Page({}));
+  assert.ok(all.some(node => node.props.role === 'status' && text(node).includes('还没有可用的模型')));
+  const action = all.find(node => node.type === 'button' && text(node) === '无可用模型 · 去配置');
+  action.props.onClick();
+  assert.deepEqual(events, ['agentkit-studio:open-settings']);
+});
+
+test('overview zero-agent onboarding avoids empty workspace widgets and keeps recovery states', () => {
   for (const status of ['loading', 'error', 'ready']) {
-    const Page = createOverviewPage({ ui: ui([{ status, agents: 0, runtimes: null, error: 'Host offline', warning: 'Runtime unavailable' }, { status: 'ready', configured: true }]), hostRemote: {}, window: {} });
+    const Page = createOverviewPage({ ui: ui([{ status, agents: 0, runtimes: null, agentItems: [], traces: [], schedules: [], error: 'Host offline', warning: 'Runtime unavailable' }, { status: 'ready', configured: true }, '']), hostRemote: {}, window: {} });
     const all = nodes(Page({}));
-    const stats = all.find(node => node.props.className === 'studio-stats studio-panel');
-    assert.deepEqual(stats.children.map(cell => text(cell.children[0])), [status === 'ready' ? '0' : '—', '—', '—', '—']);
+    assert.equal(all.some(node => node.props.className === 'studio-overview-metrics'), false);
+    assert.equal(all.some(node => node.props.className === 'studio-overview-grid-secondary'), false);
     assert.equal(all.some(node => node.type === 'EmptyState'), status !== 'ready');
     assert.equal(all.some(node => text(node) === '去配置'), false);
     assert.ok(all.some(node => node.props.role === 'status' && text(node) === 'Runtime unavailable'));
+    if (status === 'ready') {
+      assert.equal(all.filter(node => node.props.className === 'studio-start-card').length, 3);
+      assert.equal(all.filter(node => node.props.className === 'studio-overview-guide-number').length, 3);
+      assert.equal(all.some(node => text(node) === '最近 Agent'), false);
+      assert.equal(all.some(node => text(node) === '最近运行'), false);
+    } else {
+      assert.equal(all.filter(node => node.props.className === 'studio-start-card').length, 0);
+    }
     if (status === 'error') assert.equal(all.find(node => node.type === 'EmptyState').props.detail, 'Host offline');
   }
 });

@@ -381,7 +381,7 @@ test('Studio owns the browser favicon and uses line icons for product panels', (
   assert.match(clientSource, /encodeURIComponent\(STUDIO_MARK_SVG\)/);
   assert.match(clientSource, /studio-overview/);
   assert.match(clientSource, /studio-resources/);
-  assert.match(clientSource, /const knowledgeBaseCount = platformCount/);
-  assert.match(clientSource, /`记忆库 \$\{memoryCount\}`/);
-  assert.match(clientSource, /`Skill Center \$\{skillSpaceCount\}`/);
+  assert.match(clientSource, /data-overview-agent/);
+  assert.match(clientSource, /studio-overview-grid/);
+  assert.match(clientSource, /RUNTIME_LABELS\[runtime\]/);
 });

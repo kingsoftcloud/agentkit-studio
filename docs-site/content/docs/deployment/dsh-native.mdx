@@ -65,7 +65,7 @@ status: new
 | 检查点 | 期望值 | 依据 |
 | --- | --- | --- |
 | Agent 定义 | `spec.runtime.type === 'dsh-native'` | `src/authoring-defaults.mjs:4` |
-| 智能体列表徽标 | 显示 `DSH Native Harness`，色板为 `accent` | `src/client/theme.mjs:29`、`src/client/pages/overview.mjs:81` |
+| 智能体运行时标签 | 显示 `DSH Native Harness`，文案来自 `RUNTIME_LABELS` | `src/client/theme.mjs`、`src/client/pages/overview.mjs` |
 | 编辑既有 Agent | 保留原运行时；只有新建且无原定义时才回落 `dsh-native` | `src/client/pages/agent-form.mjs:48` |
 | 会话历史 | 由 DSH 原生列表承载，选择 Agent 不过滤历史 | 无 Studio 侧过滤扩展 |
 
