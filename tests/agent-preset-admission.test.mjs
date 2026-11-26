@@ -286,10 +286,10 @@ test('explicit Studio Web bindings replace the same-scope base plugin for both l
 
 test('a single Agent model resolves to the Studio-published DSH session route', () => {
   const revision = agent({ spec: { runtime: { type: 'harness' }, bindings: { modelProfileIds: ['deepseek-v4-flash'] } } });
-  assert.deepEqual(dshModelSelection(revision, { values: { modelProfiles: [{ id: 'ksyun:deepseek-v4-flash', provider: 'ksyun', modelName: 'deepseek-v4-flash', enabled: true }] } }), {
+  assert.deepEqual(dshModelSelection(revision, { values: { modelProfiles: [{ id: 'ksyun:deepseek-v4-flash', provider: 'ksyun', modelName: 'deepseek-v4-flash', connectionId: 'ksyun-deepseek-v4-flash', enabled: true }] } }), {
     provider: 'agentkit-studio-ksyun-deepseek-v4-flash', model: 'deepseek-v4-flash',
   });
-  assert.deepEqual(dshModelSelection(agent({ spec: { bindings: { modelProfileIds: ['deepseek-v4-flash', 'other-model'] } } }), { values: { modelProfiles: [{ id: 'profile', provider: 'ksyun', modelName: 'deepseek-v4-flash', enabled: true }] } }), {
+  assert.deepEqual(dshModelSelection(agent({ spec: { bindings: { modelProfileIds: ['deepseek-v4-flash', 'other-model'] } } }), { values: { modelProfiles: [{ id: 'profile', provider: 'ksyun', modelName: 'deepseek-v4-flash', connectionId: 'profile', enabled: true }] } }), {
     provider: 'agentkit-studio-profile', model: 'deepseek-v4-flash',
   });
 });

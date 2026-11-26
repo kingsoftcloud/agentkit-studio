@@ -1,5 +1,6 @@
 import { modelCredentialName } from '../dsh/model-bridge.mjs';
 import { importedModelReasoning } from '../../model-catalog-reasoning.mjs';
+import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
 import { clearModelEffortRange, connectionRecord, headerRecord, modelConnections, normalizedConnectionAddress, stableString } from './model-settings-profiles.mjs';
 
 const providerDrafts = new Map();
@@ -29,8 +30,15 @@ export function rememberProviders(providers, saved) {
 
 /** Migrate inferred providers in memory while keeping their original model IDs. */
 export function bindProviders(profiles, groups) {
-  const ids = new Map(groups.flatMap(group => group.models.map(({ index }) => [index, group.id])));
-  return profiles.map((profile, index) => ({ ...profile, connectionId: ids.get(index) }));
+  const byIndex = new Map(groups.flatMap(group => group.models.map(({ index }) => [index, group])));
+  // Carry the connection's display name onto the profile too: a config that only
+  // named the connection (modelConnections[].connectionName) would otherwise
+  // fall back to 「自定义」 in the DSH route.
+  return profiles.map((profile, index) => {
+    const group = byIndex.get(index);
+    const connectionName = group?.connection?.connectionName?.trim() || profile.connectionName;
+    return { ...profile, connectionId: group?.id, ...(connectionName ? { connectionName } : {}) };
+  });
 }
 
 export function providerMetadata(record) {
@@ -85,11 +93,17 @@ export function importedProfiles(connections, picks, makeId) {
     const existing = new Set(group.models.map(({ profile }) => profile.modelName.trim()));
     for (const item of items.values()) {
       if (existing.has(item.id)) continue;
+      const baseInput = item.input || ['text'];
+      const catalog = lookupModelCapabilities({ baseUrl: group.address, provider: source.provider, modelName: item.id });
+      // Only fill vision from the catalog when the gateway did not report
+      // modalities: a vendor that declared text-only must not gain image input.
+      const input = item.inputKnown !== true && catalog?.image && !baseInput.includes('image')
+        ? [...baseInput, 'image'] : baseInput;
       profiles.push({
         id: makeId(item), provider: source.provider, baseUrl: group.address, credentialName: source.credentialName,
         connectionId: group.id, apiKey: source.apiKey || '', connectionName: source.connectionName,
         ...(source.headers ? { headers: source.headers } : {}),
-        modelName: item.id, input: item.input || ['text'], inputCapability: item.inputKnown === false ? 'unknown' : 'catalog',
+        modelName: item.id, input, inputCapability: item.inputKnown === false ? 'unknown' : 'catalog',
         ...importedModelReasoning(item, source),
         modelOnly: true, enabled: true, default: false,
       });

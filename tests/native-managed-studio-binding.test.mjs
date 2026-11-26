@@ -57,7 +57,7 @@ async function setup(t, { spec = {}, profile = {}, respond, publishStreamFrame, 
   const record = await agents.create({ name: 'Managed', runtimeType: 'harness', spec: fullSpec });
   const events = [], definitions = new Map(), requests = [];
   let apiKey = 'secret-managed';
-  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned',
+  const values = { modelProfiles: [{ id: 'fixture', connectionId: 'fixture', provider: 'openai-compatible', modelName: 'pinned',
     baseUrl: 'https://model.invalid/v1', ...profile }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) },
     credentials: { resolve: async () => ({ value: apiKey }) },

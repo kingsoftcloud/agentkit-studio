@@ -16,8 +16,8 @@ test('Studio UI and Native admission share actual normalized capacities rather t
     describe:async()=>({ok:true,value:{namespaces}}),mutate:async(ns,ops)=>{writes.push({ns,ops});return {ok:true};}},credentials:{set:()=>assert.fail('No credential write requested')}}});
   await bridge.applyProfiles({profiles:[profile]});
   const models=writes[0].ops.find(op=>op.op==='set').value.models;
+  assert.equal(models.length,1,'a route serves exactly its own model, never the whole vendor catalog');
   assert.equal(models[0].contextWindow,a.contextWindow);assert.equal(models[0].maxTokens,a.maxOutputTokens);assert.deepEqual(models[0].input,a.input);
-  assert.equal(models[1].contextWindow,32000);assert.equal(models[1].maxTokens,4096);assert.deepEqual(models[1].input,['text']);
   assert.equal(JSON.stringify(writes).includes('private'),false);
 });
 test('unavailable model catalogs expose unknown maxima and a bounded operating fallback without copying provider errors',async()=>{

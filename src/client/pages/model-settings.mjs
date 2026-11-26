@@ -1,6 +1,9 @@
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, modelCredentialName, modelProfileId } from '../dsh/model-bridge.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { resolveModelBudgets } from '../../model-capabilities.mjs';
+import { lookupModelCapabilities, setModelCapabilityCatalog } from '../../model-capability-catalog.mjs';
+import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback, createProbeAllJobs, applyAllProbeResults, createProbeAll, renderCloudField } from './model-settings-capability.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
 import { createModelSettingsDirectory } from './model-settings-directory.mjs';
@@ -91,10 +94,10 @@ export function createModelSettingsSection({
   const sourceLabel = source => SOURCE_LABELS[source] || source || '未配置';
   const useEffortProbe = createUseEffortProbe({ useState, useRef, useEffect });
   const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({
-    h, useState, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId, DisclosureRow, Tag, InfoIcon,
+    h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId, DisclosureRow, Tag, InfoIcon,
   });
 
-  function ModelSettingsSection({ dshModel, mode = 'all', onSaved }) {
+  function ModelSettingsSection({ dshModel, mode = 'all', onSaved, simple = false }) {
     const [form, setForm] = useState({
       profiles: [{ id: 'default', provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: DEFAULT_KSYUN_MODEL, credentialName: DSH_MODEL_CREDENTIAL, apiKey: '', enabled: true, default: true }],
       providers: [],
@@ -257,13 +260,12 @@ export function createModelSettingsSection({
     const setHeaderRow = (rowIndex, key, value) => updateHeaderRows(selectedIndex,
       rows => rows.map((row, cursor) => cursor === rowIndex ? { ...row, [key]: value } : row));
     const removeHeaderRow = rowIndex => updateHeaderRows(selectedIndex, rows => rows.filter((_, cursor) => cursor !== rowIndex));
-    const setDefaultProfile = index => {
-      form.profiles.forEach((profile, cursor) => {
-        if ((cursor === index) !== (profile.default === true)) rememberDraft(profile, cursor, { default: cursor === index });
-      });
-      setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => ({ ...profile, default: cursor === index })) }));
+    const setDefaultProfile = async index => {
+      const next = form.profiles.map((profile, cursor) => ({ ...profile, default: cursor === index }));
+      setForm(current => ({ ...current, profiles: next }));
+      await saveConfiguration({ ...form, profiles: next });
     };
-    const toggleProfileEnabled = index => {
+    const toggleProfileEnabled = async index => {
       const target = form.profiles[index];
       if (!target) return;
       if (target.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1) {
@@ -277,16 +279,10 @@ export function createModelSettingsSection({
       const activeDefault = flipped.findIndex(profile => profile.enabled !== false && profile.default === true);
       const fallbackDefault = activeDefault >= 0 ? activeDefault : enabledIndexes[0];
       const next = flipped.map((profile, cursor) => ({ ...profile, default: cursor === fallbackDefault }));
-      next.forEach((profile, cursor) => {
-        const before = form.profiles[cursor];
-        const fields = {};
-        if (profile.enabled !== before.enabled) fields.enabled = profile.enabled;
-        if (profile.default !== before.default) fields.default = profile.default;
-        if (Object.keys(fields).length) rememberDraft(profile, cursor, fields);
-      });
       setForm(current => ({ ...current, profiles: next }));
+      await saveConfiguration({ ...form, profiles: next });
     };
-    const removeProfile = index => {
+    const removeProfile = async index => {
       if (form.profiles.length <= 1) return;
       const target = form.profiles[index];
       if (target.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1) {
@@ -298,14 +294,10 @@ export function createModelSettingsSection({
       const nextDefaultIndex = target.default ? remaining.findIndex(profile => profile.enabled !== false) : -1;
       const next = nextDefaultIndex < 0 ? remaining
         : remaining.map((profile, cursor) => ({ ...profile, default: cursor === nextDefaultIndex }));
-      // A pending removal is a draft too: it survives closing the sheet and only
-      // reaches storage on 「保存配置」; 「重新读取」 brings the model back.
-      if (isNewProfile(target, index)) modelDrafts.delete(profileKey(target, index));
-      else modelDrafts.set(profileKey(target, index), { kind: MODEL_DRAFT_REMOVED });
-      if (nextDefaultIndex >= 0) rememberDraft(next[nextDefaultIndex], nextDefaultIndex, { default: true });
       if (remaining[neighbourIndex]) setSelectedKey(profileKey(remaining[neighbourIndex], neighbourIndex));
       if (mode === 'all') setEditing(false);
       setForm(current => ({ ...current, profiles: next }));
+      await saveConfiguration({ ...form, profiles: next });
     };
     // 取消新增：这份新草稿还没进过存储，直接丢弃，列表与选中项回到添加前。
     // 撤销修改：只丢掉当前模型的草稿，回到已保存的那份配置。
@@ -336,6 +328,7 @@ export function createModelSettingsSection({
       if (saveLock.current || status !== 'ready') return false;
       saveLock.current = true;
       setSaving(true); setMessage(''); setError('');
+      const failure = saveFailureMessage;
       try {
         if (mode === 'cloud') {
           const access = configuration.cloudAccessKey.trim(), secret = configuration.cloudSecretKey.trim();
@@ -347,7 +340,18 @@ export function createModelSettingsSection({
           onSaved?.();
           return true;
         }
-        const rawProfiles = configuration.profiles.map(modelProfilePayload);
+        // 保存前把输出预算折算到上下文窗口以内，与运行时 admission 保持一致：
+        // Host 里存的值就是 DSH 实际生效值，用户不必自己算「窗口的一半」。
+        const clampedOutputs = [];
+        const rawProfiles = configuration.profiles.map(modelProfilePayload).map(profile => {
+          if (profile.maxOutputTokens === undefined && profile.contextWindow === undefined) return profile;
+          const budgets = resolveModelBudgets(profile, null);
+          if (!budgets.adjusted) return profile;
+          clampedOutputs.push(`${profile.modelName} → ${budgets.maxOutputTokens}`);
+          // Persist the window too: a user-typed 2,000,000 would otherwise leave
+          // the Host claiming a capacity DSH actually caps at 1,000,000.
+          return { ...profile, contextWindow: budgets.contextWindow, maxOutputTokens: budgets.maxOutputTokens };
+        });
         const activeDefaultIndex = rawProfiles.findIndex(profile => profile.enabled !== false && profile.default);
         const firstEnabledIndex = rawProfiles.findIndex(profile => profile.enabled !== false);
         const defaultIndex = activeDefaultIndex >= 0 ? activeDefaultIndex : firstEnabledIndex;
@@ -378,24 +382,37 @@ export function createModelSettingsSection({
         if (mode === 'all' || providerDraftCount()) payload.modelConnections = configuration.providers.map(providerMetadata).filter(Boolean);
         if (configuration.cloudAccessKey?.trim()) payload.cloudAccessKey = configuration.cloudAccessKey.trim();
         if (configuration.cloudSecretKey?.trim()) payload.cloudSecretKey = configuration.cloudSecretKey.trim();
+        // Snapshot every field this save writes, so a failed DSH sync restores
+        // the whole configuration — a partial rollback would leave a deleted
+        // connection beside a resurrected profile.
+        const rollbackPayload = {
+          modelProfiles: runtimeProfiles(savedState.profiles),
+          ...(payload.modelConnections ? { modelConnections: savedState.storedProviders } : {}),
+          ...(payload.modelProfileKeys ? { modelProfileKeys: Object.fromEntries(savedState.profiles.map((profile, index) => [profile.credentialName, ''])) } : {}),
+          cloudAccountId: savedState.cloud?.cloudAccountId ?? '', cloudRegion: savedState.cloud?.cloudRegion ?? '',
+          cloudServerUrl: savedState.cloud?.cloudServerUrl ?? '', cloudBucket: savedState.cloud?.cloudBucket ?? '',
+        };
         await hostRemote.updateSettings(payload);
         await hostRemote.syncModelCredential();
         const discoveredProfiles = await hydrateModelInputs(profiles);
         const persistedProfiles = runtimeProfiles(discoveredProfiles);
         await hostRemote.updateSettings({ modelProfiles: persistedProfiles });
-        await dshModel.applyProfiles({ profiles: persistedProfiles, keys });
+        await applyProfilesWithRollback({ dshModel, persistedProfiles, keys, hostRemote, rollbackProfiles: rollbackPayload.modelProfiles, rollbackPayload });
         // The Host now holds these values: every draft has served its purpose.
         clearModelSettingsDrafts();
         setForm(current => ({ ...current, ...configuration,
           profiles: configuration.profiles.map(profile => ({ ...profile, apiKey: '' })),
           providers: configuration.providers.map(provider => ({ ...provider, apiKey: '' })), cloudAccessKey: '', cloudSecretKey: '' }));
         window.dispatchEvent(new CustomEvent('agentkit-studio:model-credential-changed'));
-        setMessage(unverified ? `模型配置已保存 · ${unverified} 个模型的接口待确认` : '模型配置已保存');
+        setMessage([
+          unverified ? `模型配置已保存 · ${unverified} 个模型的接口待确认` : '模型配置已保存',
+          clampedOutputs.length ? `最大输出已按上下文窗口折算：${clampedOutputs.join('、')}` : '',
+        ].filter(Boolean).join('；'));
         await load();
         onSaved?.();
         return true;
       } catch (reason) {
-        setError(reason?.message || '保存模型与凭证失败');
+        setError(failure(reason));
         return false;
       } finally {
         saveLock.current = false;
@@ -448,6 +465,7 @@ export function createModelSettingsSection({
     const catalogScope = profile => stableString([connectionIdentity(profile), profile.apiKey?.trim() || '']);
     const effortScope = profile => stableString([profile.id, profile.modelName, profile.protocol, catalogScope(profile)]);
     const effortProbe = useEffortProbe((editing || mode === 'model') ? effortScope(selected) : '');
+    const allProbe = useEffortProbe('all-models');
     const activeResult = (results, profile) => {
       const result = results[profileCatalogKey(profile)];
       return result?.scope === catalogScope(profile) ? result : undefined;
@@ -514,6 +532,7 @@ export function createModelSettingsSection({
     }, signal);
     const probeSelectedEfforts = () => effortProbe.progress ? effortProbe.stop() : effortProbe.run([{ key: selected.id }],
       (_job, signal) => probeEfforts(selected, selected.modelName, signal, Boolean(selected.modelOnly && !selected.protocol && !savedProfile(profileKey(selected)))));
+    const { probeAllEfforts } = createProbeAll({ allProbe, form, lookupModelCapabilities, probeEfforts, setMessage, profileKey, useEffect, useRef, patchProfile, applicableProbeLevels, hostRemote, setModelCapabilityCatalog });
     const fetchCatalog = async profile => {
       if (profile.apiKey?.trim() && typeof hostRemote.probeModelEndpoint === 'function') {
         return hostRemote.probeModelEndpoint(candidateFor(profile));
@@ -611,27 +630,21 @@ export function createModelSettingsSection({
     const cloudDirty = ready && cloudIsDirty();
     const providerCount = mode === 'all' ? providerDraftCount() : 0;
     const formDirty = draftCount > 0 || providerCount > 0 || cloudDirty;
-    const stageModels = picks => {
+    const stageModels = async picks => {
       if (!ready || saving) return false;
       const added = importedProfiles(connections, picks, newProfileId);
       if (!added.length) return false;
-      for (const profile of added) modelDrafts.set(profileKey(profile), { kind: MODEL_DRAFT_NEW, profile });
-      setForm(current => ({ ...current, profiles: [...current.profiles, ...added] }));
+      const next = [...form.profiles, ...added];
+      setForm(current => ({ ...current, profiles: next }));
       setError(''); setMessage('');
+      await saveConfiguration({ ...form, profiles: next });
       return true;
     };
-    const stageProviderChanges = (providers, profiles) => {
-      const next = new Map(profiles.map(profile => [profile.id, profile]));
-      form.profiles.forEach((profile, index) => {
-        const updated = next.get(profile.id);
-        if (!updated) {
-          if (isNewProfile(profile, index)) modelDrafts.delete(profileKey(profile, index));
-          else modelDrafts.set(profileKey(profile, index), { kind: MODEL_DRAFT_REMOVED });
-        } else if (updated !== profile) rememberDraft(profile, index, updated);
-      });
+    const stageProviderChanges = async (providers, profiles) => {
       rememberProviders(providers, savedState.providers);
       setForm(current => ({ ...current, providers, profiles }));
       setError(''); setMessage('');
+      await saveConfiguration({ ...form, providers, profiles });
     };
     const stageProvider = input => {
       if (!ready || saving) return '';
@@ -650,18 +663,19 @@ export function createModelSettingsSection({
       const saved = await saveConfiguration({ ...form, providers, profiles: [...updated.profiles, ...added] });
       return saved ? id : '';
     };
-    const removeProvider = group => {
+    const removeProvider = async group => {
       if (!ready || saving) return false;
       const removed = new Set(group.models.map(({ profile }) => profile.id));
       const remaining = keepDefaultModel(profiles.filter(profile => !removed.has(profile.id)));
-      if (!remaining) { setError('请先保留一个已启用的模型'); return false; }
-      stageProviderChanges(form.providers.filter(item => item.id !== group.id), remaining);
+      if (!remaining.length) { setError('请先保留一个已启用的模型'); return false; }
+      await stageProviderChanges(form.providers.filter(provider => provider.id !== group.id), remaining);
       return true;
     };
     const modelDirectory = useModelSettingsDirectory({
       status, saving, connections, profileCount: profiles.length, drafts, stageModels, stageProvider, saveProvider, removeProvider,
       fetchCatalog: fetchProviderCatalog,
       probeEfforts: typeof hostRemote.probeModelEfforts === 'function' ? probeEfforts : undefined,
+      probeAll: { run: probeAllEfforts, progress: allProbe.progress },
       checkProvider: input => {
         const group = connections.find(item => item.id === input.id);
         if (!input.apiKey.trim() && group?.provider === input.provider && group.address === input.baseUrl) return fetchProviderCatalog(group);
@@ -672,13 +686,8 @@ export function createModelSettingsSection({
     });
     const { renderDirectory, importPanel, importedCount, selectedConnections, addSelected, editorActions } = modelDirectory;
 
-    const cloudField = (label, key, placeholder, type = 'text') => h('label', { className: 'ms-field' },
-      h('span', { className: 'ms-label' }, label),
-      h(type === 'password' ? SecretInput : 'input', {
-        label, type, className: 'ms-input', value: form[key] || '', placeholder,
-        autoComplete: type === 'password' ? 'new-password' : 'off',
-        onChange: event => setField(key, event.target.value),
-      }));
+    const cloudField = (label, key, placeholder, type = 'text') =>
+      renderCloudField(h, { SecretInput, label, key, placeholder, type, value: form[key], onChange: value => setField(key, value) });
     const connection = connectionFor(selected);
     const catalogItems = catalogItemsFor(selected);
     const hasSelectedModel = catalogItems.some(item => item.id === selected.modelName);
@@ -708,11 +717,17 @@ export function createModelSettingsSection({
         ? [h(Chip, { key: 'text' }, '文字'), selected.input?.includes('image') ? h(Chip, { key: 'image' }, '图片') : null]
         : h('span', { className: 'ms-hint' }, capabilityHint));
 
+    const capacitySummary = renderCapabilitySummary(h, selected);
+
+    const probeReport = effortProbe.reportFor(selected.id);
+    const applyProbeLevels = createApplyProbeLevels({ patchProfile, selectedIndex, setMessage });
+    // 探测结果直接生效：可用档位写回草稿（可撤销），不再要用户二次点「应用」。
+    useEffect(() => { const levels = applicableProbeLevels(probeReport); if (levels.length) applyProbeLevels(levels); }, [probeReport]);
     const reasoningField = renderModelEffortSettings(h, {
       efforts: selectedReasoning.efforts, value: reasoningValue, levels: selected.reasoningLevels,
       protocol: selected.protocol, provisional: !Array.isArray(selected.reasoningLevels) && reasoningProfileFor(selected.provider).fallback,
-      probing: Boolean(effortProbe.progress), canProbe: Boolean(selected.modelName?.trim() && hostRemote.probeModelEfforts),
-      report: effortProbe.reportFor(selected.id),
+      probing: Boolean(effortProbe.progress), canProbe: Boolean(selected.modelName?.trim() && hostRemote.probeModelEfforts && !lookupModelCapabilities(selected)),
+      report: probeReport,
       onProbe: probeSelectedEfforts, onChange: level => patchProfile(selectedIndex, {
         reasoningEfforts: level ? true : undefined, defaultReasoningEffort: level || undefined,
       }),
@@ -787,14 +802,18 @@ export function createModelSettingsSection({
           selectedDirty && !selectedDraft ? h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => revertProfile(selectedIndex) }, '撤销修改') : null,
           selectedDraft
             ? h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '取消')
-            : profiles.length <= 1 ? null : h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '移除'))),
+            : renderRemoveButton(h, {
+              lastEnabled: selected.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1,
+              onClick: () => removeProfile(selectedIndex),
+            }))),
       h('div', { className: 'ms-grid ms-grid-2 ms-model-fields' },
         h('div', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel),
-        reasoningField),
-      capability,
-      mode === 'model' ? [
+        simple ? null : reasoningField),
+      simple ? null : capacitySummary,
+      simple ? null : capability,
+      mode !== 'cloud' ? h('details', { className: 'ms-advanced', 'data-model-connection': true },
+        h('summary', null, '连接'),
       h('div', { className: 'ms-editor-section-head' },
-        h('h5', null, '连接'),
         h('span', { className: 'ms-meta' }, '凭证来源 · ', sourceLabel(profileCredential(selected).source))),
       h('div', { className: 'ms-grid ms-grid-2 ms-model-fields' },
           h('label', { className: 'ms-field' },
@@ -868,8 +887,8 @@ export function createModelSettingsSection({
         h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => readModelCatalog(selectedIndex),
           disabled: connection.state === 'loading' }, connection.state === 'loading' ? '读取中…' : '读取模型'),
         h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => testModelConnection(selectedIndex), disabled: connection.state === 'loading' }, '测试连接')),
-      connection.message ? h('p', { role: 'status', className: 'ms-note', 'data-tone': connection.state === 'error' ? 'danger' : connection.state === 'warning' ? 'warn' : 'success' }, connection.message) : null] : null,
-      h('div', { className: 'ms-advanced-group' },
+      connection.message ? h('p', { role: 'status', className: 'ms-note', 'data-tone': connection.state === 'error' ? 'danger' : connection.state === 'warning' ? 'warn' : 'success' }, connection.message) : null) : null,
+      simple ? null : h('div', { className: 'ms-advanced-group' },
         h('details', { className: 'ms-advanced' },
           h('summary', null, '连接与思考模式'),
           h('div', { className: 'ms-grid ms-grid-2' },

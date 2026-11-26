@@ -402,7 +402,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
     resolveModelMetadata: async (provider, model) => {
       const settings = await models.settings();
-      const profile = (settings.modelProfiles || []).find(item => item.enabled !== false && dshModelRoute(item) === provider);
+      // A route serves several models; pick the one the caller named.
+      const routed = (settings.modelProfiles || []).filter(item => item.enabled !== false && dshModelRoute(item) === provider);
+      const profile = routed.find(item => item.modelName === model) || routed[0];
       if (!profile) return null;
       if (profile.modelName === model) return profile;
       try { return (await models.catalog(profile.id)).items.find(item => item.id === model) || null; } catch { return null; }
@@ -759,7 +761,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   } else {
     await bindRuntime();
   }
+  const capabilityCatalog = (await import('./services/model-capability-refresh.mjs')).createModelCapabilityRefresh({ storeDir: studioStoreDir });
+  // `ctx.effect` runs the callback now and treats its return value as the
+  // disposer, so returning `stop()` would clear the interval immediately.
+  ctx.effect(() => { capabilityCatalog.start(); return () => capabilityCatalog.stop(); }, 'agentkit-studio: model capability refresh');
   const routes = createStudioRoutes(ctx, {
+    capabilityCatalog,
     ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,

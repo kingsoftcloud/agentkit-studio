@@ -95,7 +95,7 @@ test('single-model Host bridge retains DSH tool-mode and deliverable guidance in
 test('a local draft follows a catalog model selected on its bound gateway; frozen builds and other gateways remain restricted', async () => {
   const requests = [];
   const record = { metadata: { local: true }, spec: { bindings: { modelProfileId: 'legacy-text-model' } } };
-  const profile = { id: 'default', modelName: 'legacy-text-model', baseUrl: 'https://model.test/v1', apiKey: 'test' };
+  const profile = { id: 'default', connectionId: 'default', modelName: 'legacy-text-model', baseUrl: 'https://model.test/v1', apiKey: 'test' };
   const handler = createLocalConversationHandler({
     agentStore: async () => ({ getRevision: async () => record }), buildStore: { resolve: async () => record },
     modelService: { profile: async () => profile, catalog: async () => ({ items: [{ id: 'vision-model', input: ['text', 'image'] }] }) },
@@ -120,7 +120,7 @@ test('a local draft follows a catalog model selected on its bound gateway; froze
 test('native model selection reaches the actual frozen gateway and rejects an unbound route', async () => {
   const profiles = [
     { id: 'first', provider: 'openai-compatible', modelName: 'model-a', baseUrl: 'http://first.test/v1', apiKey: 'key-a' },
-    { id: 'second', provider: 'openai-compatible', modelName: 'model-b', baseUrl: 'http://second.test/v1', apiKey: 'key-b' },
+    { id: 'second', connectionId: 'second', provider: 'openai-compatible', modelName: 'model-b', baseUrl: 'http://second.test/v1', apiKey: 'key-b' },
   ];
   const record = { metadata: { local: true }, spec: { bindings: { modelProfileId: 'first', modelProfileIds: ['first', 'second'] } } };
   const requests = [];

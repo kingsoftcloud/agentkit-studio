@@ -10,7 +10,7 @@ description: "The AgentEngine HTTP surface for a deployed Agent: 43 Actions, two
 | | Studio RPC | AgentEngine Action (this page) |
 | --- | --- | --- |
 | Who talks to whom | Browser ↔ local Host | Local Host ↔ cloud control plane |
-| Size | `147` operations | `43` Actions + `5` skill-service Actions |
+| Size | `148` operations | `43` Actions + `5` skill-service Actions |
 | Channel | `/agentkit` | `POST /agentengine/api/v1/{Action}` or KOP `/?Action=…&Version=v1` |
 | Envelope | `{ ok, value }` / `{ ok, error }` | `{ Code, RequestId, Error, Data }` |
 | Authentication | Local Host session | `Authorization: Bearer` or AWS SigV4 |
@@ -336,7 +336,7 @@ Resending with the same `InvocationId`  is what lets the cloud treat the two cal
 ## Related pages
 
 <Cards>
-  <Card title="Control protocol" href="/docs/reference/operations">`147` Studio RPC operations (browser ↔ local Host)</Card>
+  <Card title="Control protocol" href="/docs/reference/operations">`148` Studio RPC operations (browser ↔ local Host)</Card>
   <Card title="Managed runtime lifecycle" href="/docs/deployment/managed-runtime-lifecycle">19 deployment states and the capability matrix</Card>
   <Card title="Error codes" href="/docs/reference/errors">The full error-code index</Card>
   <Card title="Deploy to the cloud" href="/docs/guides/deploy-to-cloud">Start a deployment from Studio</Card>

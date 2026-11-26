@@ -4,7 +4,7 @@ import { createAgentModelSelection } from '../src/host/services/model-selection.
 import { dshModelSelection } from '../src/agent-preset-admission.mjs';
 
 test('shipped preset hook reads model configuration values, including gateway models', async () => {
-  const settings = { modelProfiles: [{ id: 'gateway', modelName: 'model-a', default: true }] };
+  const settings = { modelProfiles: [{ id: 'gateway', modelName: 'model-a', connectionId: 'gateway', default: true }] };
   const models = { settings: async () => settings, profile: async id => ({ id: 'gateway', modelName: id }) };
   const archived = [];
   const select = createAgentModelSelection({ models, dshModelSelection, agentStorePromise: Promise.resolve({ captureRevision: async record => archived.push(record) }) });
@@ -14,7 +14,7 @@ test('shipped preset hook reads model configuration values, including gateway mo
 });
 
 test('team runtime identities select a model without archiving a synthetic local Agent revision', async () => {
-  const settings = { modelProfiles: [{ id: 'gateway', modelName: 'model-a', default: true }] };
+  const settings = { modelProfiles: [{ id: 'gateway', modelName: 'model-a', connectionId: 'gateway', default: true }] };
   const models = { settings: async () => settings, profile: async id => ({ id: 'gateway', modelName: id }) };
   const archived = [];
   const select = createAgentModelSelection({ models, dshModelSelection, agentStorePromise: Promise.resolve({ captureRevision: async record => archived.push(record) }) });
@@ -24,8 +24,8 @@ test('team runtime identities select a model without archiving a synthetic local
 
 test('unbound Team roles use the configured default model route', async () => {
   const settings = { modelProfiles: [
-    { id: 'default', modelName: 'deepseek-v4.1-flash-1017', default: true },
-    { id: 'other', modelName: 'other-model' },
+    { id: 'default', modelName: 'deepseek-v4.1-flash-1017', connectionId: 'default', default: true },
+    { id: 'other', modelName: 'other-model', connectionId: 'other' },
   ] };
   const models = { settings: async () => settings };
   const select = createAgentModelSelection({ models, dshModelSelection, agentStorePromise: Promise.resolve({ captureRevision: async () => {} }) });

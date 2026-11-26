@@ -1,4 +1,6 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
+import { resolveModelBudgets } from '../../model-capabilities.mjs';
 import { profileKey } from './model-settings-profiles.mjs';
 import { catalogItems, createModelCatalogPicker, matchingModels } from './model-settings-catalog-picker.mjs';
 
@@ -10,7 +12,7 @@ function connectionAddressLabel({ address }) {
 
 const PROVIDER_TYPES = ['ksyun', 'openai', 'custom'];
 
-export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip, SecretInput, providerLabel, makeId, DisclosureRow, Tag, InfoIcon }) {
+export function createModelSettingsDirectory({ h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId, DisclosureRow, Tag, InfoIcon }) {
   const title = group => group.name ? group.label : [providerLabel(group.provider), group.label].filter(Boolean).join(' · ');
   const searchField = (label, value, onChange) => h('label', { className: 'ms-search' },
     h('input', {
@@ -29,18 +31,17 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
 
   function useModelSettingsDirectory({
     status, saving, connections, profileCount, drafts, openModel, credentialConfigured,
-    fetchCatalog, checkProvider, probeEfforts, stageModels, stageProvider, saveProvider, removeProvider,
+    fetchCatalog, checkProvider, probeEfforts, probeAll, stageModels, stageProvider, saveProvider, removeProvider,
   }) {
     const [query, setQuery] = useState('');
     const [modelQuery, setModelQuery] = useState('');
-    const [providerId, setProviderId] = useState('');
+    const [expandedProviderId, setExpandedProviderId] = useState('');
     const [providerForm, setProviderForm] = useState(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
     const [catalog, setCatalog] = useState(null);
     const batch = useEffortProbe(providerForm?.check || catalog?.token);
     const probing = Boolean(batch.progress);
     const ready = status === 'ready';
-    const active = connections.find(group => group.id === providerId);
     const importGroup = catalog && connections.find(group => group.id === catalog.providerId);
     const importedCount = catalog ? [...catalog.picks.values()].reduce((total, items) => total + items.size, 0) : 0;
     const reportKey = (connection, modelName) => JSON.stringify([connection.id, modelName]);
@@ -56,7 +57,7 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
     };
 
     const openProvider = id => {
-      setProviderId(id);
+      setExpandedProviderId(id);
       setModelQuery('');
       setConfirmRemove(false);
     };
@@ -105,6 +106,26 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
       }
     };
 
+    // 填好地址和 Key 后自动拉取目录，不必先点「测试连接」。用 ref 去重，
+    // 避免 setProviderForm 触发的重渲染把同一份配置重复拉取。
+    // 简化测试 harness 不提供 useRef/useEffect 时自动拉取不启用，其余功能不变。
+    // 防抖 400ms：API Key 是受控输入、逐字符触发，直接请求会把半截密钥发给
+    // 网关（50 字符约 50 次请求），有触发账号风控的实际风险。
+    const autoCheckRef = typeof useRef === 'function' ? useRef('') : { current: '' };
+    if (typeof useEffect === 'function') useEffect(() => {
+      if (!providerForm || providerForm.id) return;
+      const { provider, baseUrl, apiKey, check } = providerForm;
+      if (!baseUrl || !String(apiKey || '').trim()) return;
+      if (check?.state === 'loading' || check?.state === 'success') return;
+      const token = JSON.stringify([provider, baseUrl, apiKey]);
+      if (autoCheckRef.current === token) return;
+      const timer = setTimeout(() => {
+        autoCheckRef.current = token;
+        void testProvider();
+      }, 400);
+      return () => clearTimeout(timer);
+    }, [providerForm]);
+
     const renderNewProviderCatalog = () => {
       const { check, picks, query: catalogQuery } = providerForm;
       if (check?.state !== 'success') return null;
@@ -131,17 +152,42 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
           : note(check.items.length ? '没有匹配的模型' : '该提供商未返回模型'));
     };
 
+    // 手动填写模型 ID 常驻：目录拉不到、或模型不在厂商目录里时也能直接添加。
+    const addManualModel = () => {
+      const id = String(providerForm?.manual || '').trim();
+      if (!id || !providerForm) return;
+      const item = (providerForm.check?.items || []).find(entry => entry.id === id) || { id, inputKnown: false };
+      const nextId = makeId();
+      setProviderForm(current => {
+        if (current.picks.has(id)) return { ...current, manual: '' };
+        const selected = new Map(current.picks);
+        const profileIds = new Map(current.profileIds);
+        selected.set(id, item);
+        profileIds.set(id, nextId);
+        return { ...current, picks: selected, profileIds, manual: '' };
+      });
+    };
+    const renderManualEntry = () => h('div', { className: 'ms-manual-entry', 'data-manual-model-entry': true },
+      h('input', { className: 'ms-input', 'aria-label': '手动填写模型 ID', placeholder: '目录里没有？输入模型 ID 后添加',
+        value: providerForm.manual || '',
+        onChange: event => setProviderForm(current => ({ ...current, manual: event.target.value })),
+        onKeyDown: event => { if (event.key === 'Enter') { event.preventDefault(); addManualModel(); } } }),
+      button('添加', addManualModel, undefined, { 'data-size': 'sm', disabled: !String(providerForm.manual || '').trim() }));
+
     const renderProviderForm = () => {
       const { id, provider, baseUrl, connectionName, apiKey, error, check } = providerForm;
       const stored = connections.find(group => group.id === id)?.connection;
       const hasKey = stored && stored.provider === provider && stored.baseUrl === baseUrl && (stored.apiKey || credentialConfigured(stored));
       const types = PROVIDER_TYPES.includes(provider) ? PROVIDER_TYPES : [...PROVIDER_TYPES, provider];
-      const set = (name, value) => {
-        if (probing && name !== 'connectionName') batch.stop();
-        setProviderForm(current => ({
-          ...current, [name]: value, error: '', ...(name === 'connectionName' ? {} : { check: null, picks: new Map(), query: '' }),
-        }));
-      };
+    const set = (name, value) => {
+      if (probing && name !== 'connectionName') batch.stop();
+      setProviderForm(current => ({
+        ...current, [name]: value, error: '',
+        // 只有换地址才作废已勾选的模型；换 Key、名称都保留勾选，目录按新值重拉。
+        ...(name === 'baseUrl' ? { check: null, picks: new Map(), query: '' }
+          : name === 'apiKey' ? { check: null } : {}),
+      }));
+    };
       return h('section', { 'data-model-provider-editor': true },
         backButton(id ? '返回提供商' : '模型提供商', () => setProviderForm(null)),
         h('div', { className: 'ms-intro' }, h('h3', null, id ? '编辑提供商' : '添加提供商')),
@@ -152,7 +198,7 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
                 const next = event.target.value;
                 if (probing) batch.stop();
                 setProviderForm(current => ({ ...current, provider: next, baseUrl: normalizeModelEndpoint('', next),
-                  apiKey: '', error: '', check: null, query: '', picks: new Map() }));
+                  error: '', check: null, query: '', picks: new Map() }));
               },
             }, types.map(type => h('option', { key: type, value: type }, providerLabel(type))))),
             field('名称（可选）', h('input', { className: 'ms-input', 'aria-label': '提供商名称', value: connectionName,
@@ -170,7 +216,7 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
               { disabled: probing || check?.state === 'loading', 'data-size': 'sm' }),
             check?.message ? h('p', { role: 'status', className: 'ms-note', 'data-tone': check.state === 'error' ? 'danger' : 'success' }, check.message) : null),
           error ? h('p', { role: 'alert', className: 'ms-note', 'data-tone': 'danger' }, error) : null),
-        id ? null : renderNewProviderCatalog());
+        id ? null : [renderNewProviderCatalog(), renderManualEntry()]);
     };
 
     const readCatalog = async (token, group) => {
@@ -203,8 +249,8 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
       if (items.size) picks.set(group.id, items); else picks.delete(group.id);
       return { ...current, picks, ...(manual ? { manual: null, query: '' } : {}) };
     });
-    const addSelected = () => {
-      if (!importedCount || !stageModels(catalog.picks)) return;
+    const addSelected = async () => {
+      if (!importedCount || !(await stageModels(catalog.picks))) return;
       openProvider(importGroup.id);
       setCatalog(null);
     };
@@ -260,41 +306,37 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
       const key = profileKey(profile, index);
       const name = profile.modelName;
       const dirty = drafts.has(key);
+      const catalog = lookupModelCapabilities(profile);
+      const budgets = resolveModelBudgets(profile, null);
+      const cap = budgets.contextWindow >= 1000000 ? `${Math.round(budgets.contextWindow / 1000000)}M` : `${Math.round(budgets.contextWindow / 1000)}K`;
+      const vision = catalog?.image || profile.input?.includes('image');
       return h('li', { key }, h('button', { type: 'button', className: 'ms-model-row', 'data-model-row': key, 'data-draft': dirty,
         onClick: () => openModel(key) },
       h('span', { className: 'ms-model-name', title: name }, name),
+      h('span', { className: 'ms-model-cap', 'data-model-cap': true, title: '上下文窗口' }, cap),
+      vision ? h('span', { className: 'ms-model-vision', title: '支持图片输入' }, '视觉') : null,
       profile.enabled === false ? h('span', { className: 'ms-row-status' }, '已停用') : null,
       profile.default && profile.enabled !== false ? h(Chip, { tone: 'accent', 'data-size': 'xs' }, '默认') : null,
       dirty ? h('span', { className: 'ms-row-status', 'data-tone': 'draft' }, '未保存') : null,
       h('span', { className: 'ms-chevron', 'aria-hidden': 'true' })));
     };
-    const renderProvider = group => {
+    const renderProviderBody = group => {
       const validOthers = connections.some(item => item.id !== group.id && item.models.some(({ profile }) => profile.enabled !== false));
       const canRemove = validOthers || group.models.every(({ profile }) => profile.enabled === false);
       const removingDefault = group.models.some(({ profile }) => profile.enabled !== false && profile.default);
       const matches = group.models.filter(({ profile }) => profile.modelName.toLowerCase().includes(modelQuery.trim().toLowerCase()));
-      return h('section', { 'data-model-provider': group.id },
-        backButton('模型提供商', () => openProvider('')),
-        h('div', { className: 'ms-intro' },
-          h('div', null, h('h3', null, title(group)), h('p', null, connectionAddressLabel(group))),
-          h('div', { className: 'ms-actions' },
-            button('编辑提供商', () => editProvider(group)),
-            button('移除提供商', () => setConfirmRemove(true), 'danger'))),
+      return h('div', { className: 'ms-provider-body', 'data-model-provider': group.id },
         confirmRemove ? h('section', { className: 'ms-remove-confirm', 'aria-label': '移除提供商确认' },
           h('strong', null, '移除「' + title(group) + '」？'),
           h('p', null, canRemove
-            ? '保存后将移除该提供商及其 ' + group.models.length + ' 个模型。' + (removingDefault ? 'Studio 将使用剩余的一个已启用模型作为默认模型。' : '')
+            ? '移除后将删除该提供商及其 ' + group.models.length + ' 个模型。' + (removingDefault ? 'Studio 将使用剩余的一个已启用模型作为默认模型。' : '')
             : '此提供商包含最后一个已启用模型。请先在其他提供商添加或启用模型。'),
           h('div', { className: 'ms-actions' },
             button('取消', () => setConfirmRemove(false)),
-            button('确认移除', () => { if (removeProvider(group)) openProvider(''); }, 'danger', { disabled: !canRemove }))) : null,
-        h('div', { className: 'ms-panel' },
-          h('div', { className: 'ms-provider-model-head' },
-            h('h4', null, '已添加模型'), h('span', { className: 'ms-row-status' }, group.models.length + ' 个'),
-            button('添加模型', () => openImport(group), 'primary')),
-          group.models.length > 6 ? h('div', { className: 'ms-directory-toolbar' }, searchField('搜索这个提供商的模型', modelQuery, setModelQuery)) : null,
-          matches.length ? h('ul', { className: 'ms-model-list ms-group-list', 'aria-label': '已添加模型' }, matches.map(renderModelRow))
-            : note(group.models.length ? '没有匹配的模型' : '暂未添加模型')));
+            button('确认移除', () => { if (removeProvider(group)) setExpandedProviderId(''); }, 'danger', { disabled: !canRemove }))) : null,
+        group.models.length > 6 ? h('div', { className: 'ms-directory-toolbar' }, searchField('搜索这个提供商的模型', modelQuery, setModelQuery)) : null,
+        matches.length ? h('ul', { className: 'ms-model-list ms-group-list', 'aria-label': '已添加模型' }, matches.map(renderModelRow))
+          : note(group.models.length ? '没有匹配的模型' : '暂未添加模型'));
     };
     const renderOverview = () => {
       const term = query.trim().toLowerCase();
@@ -304,23 +346,35 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
         h('div', { className: 'ms-intro' },
           h('div', null, h('h3', null, '模型提供商'),
             ready ? h('p', null, connections.length + ' 个提供商 · ' + profileCount + ' 个模型') : null),
-          button('＋ 添加提供商', () => editProvider(), 'primary', { disabled: !ready })),
+          h('div', { className: 'ms-actions' },
+            probeAll ? button(probeAll.progress ? '停止全部探测' : '全部探测档位', probeAll.run, undefined, { disabled: !ready, 'data-probe-all': true }) : null,
+            button('＋ 添加提供商', () => editProvider(), 'primary', { disabled: !ready }))),
         ready ? h('div', { className: 'ms-panel' },
           h('div', { className: 'ms-directory-toolbar' }, searchField('搜索提供商或模型', query, setQuery)),
           h('div', { className: 'ms-group-list', 'aria-label': '提供商列表' },
             !matches.length ? note('没有匹配的提供商') : null,
-            matches.map(group => h('button', { key: group.id, type: 'button', className: 'ms-provider-row',
-              'data-model-connection': group.id, onClick: () => openProvider(group.id) },
-            h('span', { className: 'ms-connection-text' },
-              h('span', { className: 'ms-connection-name' }, title(group)),
-              h('span', { className: 'ms-connection-address' }, [
-                group.name ? providerLabel(group.provider) : '', connectionAddressLabel(group),
-              ].filter(Boolean).join(' · '))),
-            !(group.connection.apiKey || credentialConfigured(group.connection)) ? h('span', { className: 'ms-connection-warning' }, '缺少 Key') : null,
-            h('span', { className: 'ms-connection-count' }, group.models.length + ' 个模型'),
-            h('span', { className: 'ms-chevron', 'aria-hidden': 'true' }))))) : status === 'loading' ? note('正在读取模型配置…') : null);
+            matches.map(group => {
+              const expanded = expandedProviderId === group.id;
+              return h('div', { key: group.id, className: 'ms-provider-group' },
+                h('div', { className: 'ms-provider-row-wrap' },
+                  h('button', { type: 'button', className: 'ms-provider-row', 'data-model-connection': group.id, 'aria-expanded': expanded,
+                    onClick: () => setExpandedProviderId(expanded ? '' : group.id) },
+                    h('span', { className: 'ms-connection-text' },
+                      h('span', { className: 'ms-connection-name' }, title(group)),
+                      h('span', { className: 'ms-connection-address' }, [
+                        group.name ? providerLabel(group.provider) : '', connectionAddressLabel(group),
+                      ].filter(Boolean).join(' · '))),
+                    !(group.connection.apiKey || credentialConfigured(group.connection)) ? h('span', { className: 'ms-connection-warning' }, '缺少 Key') : null,
+                    h('span', { className: 'ms-connection-count' }, group.models.length + ' 个模型'),
+                    h('span', { className: 'ms-chevron', 'aria-hidden': 'true' }, expanded ? '▾' : '▸')),
+                  h('div', { className: 'ms-actions' },
+                    button('编辑提供商', () => editProvider(group), undefined, { 'data-size': 'sm' }),
+                    button('移除提供商', () => { setExpandedProviderId(group.id); setConfirmRemove(true); }, 'danger', { 'data-size': 'sm' }),
+                    button('添加模型', () => openImport(group), 'primary', { 'data-size': 'sm' }))),
+                expanded ? renderProviderBody(group) : null);
+            }))) : status === 'loading' ? note('正在读取模型配置…') : null);
     };
-    const renderDirectory = () => providerForm ? renderProviderForm() : active ? renderProvider(active) : renderOverview();
+    const renderDirectory = () => providerForm ? renderProviderForm() : renderOverview();
     const selectedCount = providerForm?.picks.size || 0;
     const saveLabel = selectedCount ? '保存提供商和 ' + selectedCount + ' 个模型' : '仅保存提供商';
     const editorActions = providerForm ? [
@@ -331,8 +385,8 @@ export function createModelSettingsDirectory({ h, useState, useEffortProbe, Chip
     return {
       renderDirectory, importPanel: importGroup ? renderImportPanel() : null,
       importedCount, selectedConnections: catalog?.picks.size || 0, addSelected,
-      editorActions, atOverview: !active && !providerForm && !importGroup,
-      showOverview: () => { openProvider(''); setProviderForm(null); setCatalog(null); },
+      editorActions, atOverview: !providerForm && !importGroup,
+      showOverview: () => { setExpandedProviderId(''); setProviderForm(null); setCatalog(null); },
     };
   }
   return { useModelSettingsDirectory, backButton };

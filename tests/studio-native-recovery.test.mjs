@@ -82,7 +82,7 @@ async function fixture(t, { fetchModel, maxTokens = 500, localExecutionMode, sel
     stateOf: (_, id) => projections.has(id) ? events.reduce(projections.get(id).apply, projections.get(id).init()) : undefined,
   }, sessionController: { resolveAgent: async id => { assert.equal(id, session.id); seen.push('resolve'); return { agent }; } },
   systemPrompt: { assemble: async context => { assert.equal(context.agent, agent); seen.push('assemble'); return assembly; } } };
-  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'original', baseUrl: 'https://fixture.invalid/v1' }] };
+  const values = { modelProfiles: [{ id: 'fixture', connectionId: 'fixture', provider: 'openai-compatible', modelName: 'original', baseUrl: 'https://fixture.invalid/v1' }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: key }) },
     ...(selectedModel === 'original' ? {} : { fetchImpl: async () => {
       catalogCalls++; assert.equal(catalogOffline, false, 'recovery must not rediscover an admitted catalog model');
@@ -422,7 +422,7 @@ async function interruptedFixture(t, { repairable = false } = {}) {
     stateOf: (_, id) => projections.has(id) ? events.reduce(projections.get(id).apply, projections.get(id).init()) : undefined,
   }, sessionController: { resolveAgent: async id => { assert.equal(id, session.id); seen.push('resolve'); return { agent }; } },
   systemPrompt: { assemble: async context => { assert.equal(context.agent, agent); seen.push('assemble'); return assembly; } } };
-  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'original', baseUrl: 'https://fixture.invalid/v1' }] };
+  const values = { modelProfiles: [{ id: 'fixture', connectionId: 'fixture', provider: 'openai-compatible', modelName: 'original', baseUrl: 'https://fixture.invalid/v1' }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: key }) } });
   const host = await createStudioNativeHarness({ ctx: { get: id => services[id] }, storeDir: root, workspaceRoot, agents, models, ledger,
     renderPrompt: assembly => `${assembly.prompt} for ${assembly.variables.model}`,
