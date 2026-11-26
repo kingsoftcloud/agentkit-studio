@@ -8,7 +8,7 @@
   "hostContract": 1,
   "nodeRange": ">=24.9.0",
   "patchDirectory": "patches/dsh-v0.2.2-rc.1",
-  "patchedTree": "d08acdb9b0c346747deb4010f4e68edbdd111422",
-  "patchedSourceSha256": "8346f0d444ec739fb4b34c4668c2dc4c3f21d152c25da7cd3b93a63eb456b2f4",
+  "patchedTree": "658aa67cc8a3e6385c55114945bf0697138cf587",
+  "patchedSourceSha256": "787beeaa09d975e6e2ecd7a83342cc6bcbcfc0919d1dc0114a7d64eea650bc0b",
   "maintenanceSource": "patches/dsh-v0.2.2-rc.1/source.json"
 }

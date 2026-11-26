@@ -80,10 +80,52 @@ index 892af342483d75edddce6a0b097340ff56f35baf..9525f322a0efa26db7fdbc8da7905425
    if (bundle.version === undefined) return { status: 'different-version' }
    const installedVersion = bundle.version
    if (installedVersion === version) return { status: 'installed', installedVersion }
+diff --git a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css
+index 4b7b5f55a2d7281fbe65954ecf9413e54064d937..579f623e2cd2092b265a9418a6d8202b19a33621 100644
+--- a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css
++++ b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css
+@@ -398,6 +398,24 @@
+   color: var(--dsw-alias-label-secondary);
+ }
+ 
++.studioArtwork {
++  display: grid;
++  place-items: center;
++  inline-size: 28px;
++  block-size: 28px;
++  border-radius: 8px;
++  color: white;
++  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
++}
++
++.starHarnessArtwork {
++  background: linear-gradient(145deg, #9258dc, #5834ad);
++}
++
++.routeMindArtwork {
++  background: linear-gradient(145deg, #159286, #08685d);
++}
++
+ .packageImage {
+   object-fit: contain;
+ }
 diff --git a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
-index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b621c579e6a 100644
+index d3433166b6ce235d0f8bf141632276b5e8b5cedc..1f598c095bbd290b2e51399d3fdfb006c66f8ca2 100644
 --- a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
 +++ b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+@@ -12,10 +12,10 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+ import { createPortal } from 'react-dom'
+ import type { PluginInstallFailureKind, Registry } from '@deepseek-ai/dsh-api-remotes/client'
+ import {
+-  Button, DetailDocument, useDetailDocumentLabels, IconCheckCircleFillRegular, IconChevronDownOutlineRegular, IconChevronLeftOutlineMedium,
++  Button, DetailDocument, useDetailDocumentLabels, IconBranchOutlineMedium, IconCheckCircleFillRegular, IconChevronDownOutlineRegular, IconChevronLeftOutlineMedium,
+   IconChevronRightOutlineRegular, IconCloseOutlineMedium,
+   IconDownloadOutlineRegular, IconInfoOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
+-  IconWarningOutlineRegular, Input, Menu, MenuItemButton, Modal, pointerModality,
++  IconSparkleMedium, IconWarningOutlineRegular, Input, Menu, MenuItemButton, Modal, pointerModality,
+   PluginArtworkDefault, PluginArtworkLoop, PluginArtworkSearch, PluginArtworkSubagent, PluginArtworkTerminal,
+   SegmentedTabs, StateDot, Switch, Tag, TerminalBlock, Toast, Tooltip, useAnchoredPosition, useDismissOnOutsidePointer,
+   type IconProps, type StateDotState, type TerminalBlockLabels,
 @@ -31,7 +31,7 @@ import {
    type InstallInputError, type InstallState, type InstallSubject, type PackageRow, type PackageView,
    type PluginManagerFace, type PluginManagerState, type RegistryChoice, type VersionCheck,
@@ -93,7 +135,35 @@ index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b62
  import type { PluginPackageRef, PluginRowRef, PluginsSubject } from './slot-contract.ts'
  import type { ConfigPageForm, ManagedItemDetailPresentation } from './slot-contract.ts'
  import { ManagedVersionSection, UpdateDialog, VersionSection } from './versions.tsx'
-@@ -355,12 +355,13 @@ function RowsSection({ rows, t, resolveText, toggle, configure, stateLabel }: {
+@@ -205,6 +205,11 @@ const ITEM_ARTWORK = new Map<string, (props: IconProps) => ReactNode>([
+   ['agent-loop', PluginArtworkLoop],
+   ['subagent', PluginArtworkSubagent],
+   ['web-search', PluginArtworkSearch],
++  ['agentkit-star-harness', () => (
++    <span className={`${css.studioArtwork} ${css.starHarnessArtwork}`} data-studio-plugin-artwork="star-harness">
++      <IconSparkleMedium size={18} />
++    </span>
++  )],
+ ])
+ 
+ /** An official plugin's card and page artwork; plugins without their own get the default. */
+@@ -226,6 +231,15 @@ function PackageArtwork({ src, row = false, size = row ? ROW_ARTWORK_SIZE : CARD
+     : <img className={css.packageImage} src={src} width={size} height={size} alt="" onError={() => { setFailedSource(src) }} />
+ }
+ 
++/** Use the same product artwork on the list and the package detail page. */
++function bundleArtwork(pkg: PackageView): ReactNode {
++  return isBuiltInRouteMind(pkg) ? (
++    <span className={`${css.studioArtwork} ${css.routeMindArtwork}`} data-studio-plugin-artwork="routemind">
++      <IconBranchOutlineMedium size={18} />
++    </span>
++  ) : <PackageArtwork key={pkg.meta?.icon} src={pkg.meta?.icon} />
++}
++
+ /** A row's switch: locked, saying why, when the Host refuses to address the row through the profile patch. */
+ function RowSwitch({ row, title, t, busy, onChange }: {
+   readonly row: PackageRow
+@@ -355,12 +369,13 @@ function RowsSection({ rows, t, resolveText, toggle, configure, stateLabel }: {
  }
  
  /** Declared install source and versions; unavailable files retain their recorded dependency spec. */
@@ -109,7 +179,50 @@ index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b62
    return (
      <section className={css.detailSection} data-plugin-source>
        <h4 className={css.sectionTitle}>{t('sourceTitle')}</h4>
-@@ -809,7 +810,7 @@ function PackageDetail({
+@@ -560,7 +575,7 @@ function PackageCard({ pkg, t, resolveText, busy, highlighted, newer, onOpen, on
+         title={title}
+         t={t}
+         onOpen={onOpen}
+-        icon={<PackageArtwork key={pkg.meta?.icon} src={pkg.meta?.icon} />}
++        icon={bundleArtwork(pkg)}
+         tags={(
+           <>
+             {beta ? <Tag className={css.statusTag} tone="info">{t('statusBeta')}</Tag> : null}
+@@ -653,8 +668,8 @@ function ItemDetail({ item, t, onBack, renderSlot, form }: {
+ }
+ 
+ /** Render a host-managed item using the same chrome and sections as a registry bundle. */
+-function ManagedItemDetail({ title, detail, t, resolveText, onBack }: {
+-  readonly title: string
++function ManagedItemDetail({ item, detail, t, resolveText, onBack }: {
++  readonly item: OfficialItem
+   readonly detail: ManagedItemDetailPresentation
+   readonly t: Translate
+   readonly resolveText: ResolveText
+@@ -674,11 +689,11 @@ function ManagedItemDetail({ title, detail, t, resolveText, onBack }: {
+   return (
+     <div className={css.detail} data-plugin-detail={detail.name} role="region" aria-label={detail.regionLabel}>
+       <DetailTop crumbLabel={t('backToList')} crumbText={t('crumbRoot')} onBack={onBack}
+-        icon={<PackageArtwork src={undefined} />}
++        icon={itemArtwork(item.id)}
+         actions={<div className={css.detailActions}>{detail.headerActions}</div>} />
+       <div className={css.detailMain}>
+         <div className={css.titleRow}>
+-          <h3 className={css.detailTitle}>{title}</h3>
++          <h3 className={css.detailTitle}>{item.label}</h3>
+           {detail.version === undefined ? null : <Tag className={css.versionTag} tone="neutral">{t('versionTag', { version: detail.version })}</Tag>}
+           {detail.updateAvailable ? <Tag className={css.statusTag} tone="info">{t('statusUpdateAvailable')}</Tag> : null}
+         </div>
+@@ -793,7 +808,7 @@ function PackageDetail({
+         crumbLabel={inMore ? t('backToPackage', { name: t('moreTitle') }) : t('backToList')}
+         crumbText={t(inMore ? 'moreTitle' : 'crumbRoot')}
+         onBack={onBack}
+-        icon={<PackageArtwork key={pkg.meta?.icon} src={pkg.meta?.icon} />}
++        icon={bundleArtwork(pkg)}
+         actions={(
+           <div className={css.detailActions}>
+             {renderSlot('plugins.detail.actions', { subject })}
+@@ -809,7 +824,7 @@ function PackageDetail({
                  {t('versionsUpdateLabel', { version: newer })}
                </Button>
              )}
@@ -118,7 +231,7 @@ index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b62
                ? (
                  <Button
                    variant="outline"
-@@ -863,7 +864,7 @@ function PackageDetail({
+@@ -863,7 +878,7 @@ function PackageDetail({
          <VersionSection
            pkg={pkg} check={versions} t={t} busy={busy} onEnsure={onEnsureVersions} onCheck={onCheckVersions} onUpdate={onUpdateVersion}
          />
@@ -127,7 +240,7 @@ index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b62
          {renderSlot('plugins.detail.section', { subject })}
        </div>
      </div>
-@@ -1628,8 +1629,9 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+@@ -1628,8 +1643,9 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
    // unreadable selections remain manageable; Settings' Plugin list inspects the full Host inventory.
    const listed = state.packages.filter(pkg => !HIDDEN_BUNDLES.has(pkg.name)
      && (pkg.listedByDefault !== false || pkg.enabled || pkg.installed || rowsRunning(pkg))
@@ -139,7 +252,7 @@ index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b62
    const official = listed.filter(pkg => pkg.official)
    // Both lists read one order over the eligible bundles: the main list holds the always-held ones plus the held-back
    // ones the profile enabled, and the More list holds the eligible ones, so enabling a bundle from the More list pins it
-@@ -1689,9 +1691,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+@@ -1689,9 +1705,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
        onSetEnabled={(enabled) => { setBundleEnabled(pkg.name, enabled) }}
      />
    )
@@ -155,7 +268,16 @@ index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b62
    const renderGroup = (id: 'basic' | 'extensions' | 'bundles', heading: string, cards: readonly ReactNode[]): ReactNode => {
      const offersMore = id === 'extensions' && more.length > 0
      if (cards.length === 0 && !offersMore) return null
-@@ -1948,7 +1953,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+@@ -1871,7 +1890,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+         {onInstalled && loaded && openItem !== undefined
+           ? ledger.managedDetails?.has(openItem.id) === true
+             ? renderSlot('plugins.item.detail', {
+-              renderDetail: detail => <ManagedItemDetail title={openItem.label} detail={detail} t={t} resolveText={resolveText}
++              renderDetail: detail => <ManagedItemDetail item={openItem} detail={detail} t={t} resolveText={resolveText}
+                 onBack={() => { setView({ kind: 'list' }) }} />,
+             }, { entryKey: openItem.id })
+             : <ItemDetail form={formFor(openItem.id)} item={openItem} t={t} renderSlot={renderSlot} onBack={() => { setView({ kind: 'list' }) }} />
+@@ -1948,7 +1967,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
          : (
            <ConfirmDialog
              name={packageText(
@@ -199,7 +321,7 @@ index e532eadc9e1dd0093882d38ad8f2c65590bfeeb9..355d8c749038b3fb178358888a17f2a9
      title: pkg.meta?.title === undefined ? pkg.name : resolveText(pkg.meta.title),
      description: pkg.meta?.description === undefined ? undefined : resolveText(pkg.meta.description) || undefined,
 diff --git a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
-index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..afdddc1a586c9307b4ba39b05d58abe00421b3ce 100644
+index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..c16f1c7aa6b4b46c9cc72d23aa562ec63bfc5c84 100644
 --- a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
 +++ b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
 @@ -21,7 +21,7 @@ import type { PluginTab } from '../src/client/tab-ledger.ts'
@@ -220,7 +342,7 @@ index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..afdddc1a586c9307b4ba39b05d58abe0
        if (!('view' in owner) || (owner.view !== 'summary' && owner.view !== 'page')) {
          throw new Error('Plugin configuration fixture requires a summary or page view')
        }
-@@ -228,6 +228,42 @@ function renderTab(
+@@ -228,6 +228,50 @@ function renderTab(
  }
  
  describe('PluginManagerPage', () => {
@@ -231,19 +353,22 @@ index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..afdddc1a586c9307b4ba39b05d58abe0
 +    expect(document.querySelectorAll(selector)).toHaveLength(1)
 +    const basic = document.querySelector('[data-plugin-group="basic"]') as HTMLElement
 +    expect(basic.querySelector(selector)).toBeTruthy()
++    expect(basic.querySelector('[data-studio-plugin-artwork="routemind"]')).toBeTruthy()
 +    const toggle = within(basic).getByRole('switch', { name: 'Enable RouteMind' })
 +    expect(toggle.getAttribute('aria-checked')).toBe('true')
 +    fireEvent.click(toggle)
 +    expect(actions.setEnabled).toHaveBeenCalledExactlyOnceWith(name, false)
 +    fireEvent.click(within(basic).getByRole('button', { name: 'View RouteMind' }))
 +    expect(screen.getByRole('heading', { name: 'RouteMind' })).toBeTruthy()
++    expect(document.querySelector('[data-plugin-detail="routemind-studio"] [data-studio-plugin-artwork="routemind"]')).toBeTruthy()
 +    expect(within(document.querySelector('[data-plugin-source]') as HTMLElement).getByText(en.sourceBuiltIn)).toBeTruthy()
 +    expect(screen.queryByRole('button', { name: 'Uninstall RouteMind' })).toBeNull()
 +  })
 +
 +  it('renders the native document, components and actions for a host-managed Star Harness item', () => {
 +    const id = 'agentkit-star-harness'
-+    const { navigation } = renderTab({}, { items: [{ id, label: 'Star Harness' }], managedDetails: new Set([id]) }, {
++    const codex = { id: 'agentkit-codex-plugin-market', label: 'Codex' }
++    const { navigation } = renderTab({}, { items: [codex, { id, label: 'Star Harness' }], managedDetails: new Set([id]) }, {
 +      [`plugins.item.detail:${id}`]: (_view, owner) => (owner as ManagedItemDetailProps).renderDetail({
 +        name: id, regionLabel: 'Star Harness details', version: '0.0.32', description: 'Studio native tasks.',
 +        headerActions: <button type="button">Roll back</button>,
@@ -253,8 +378,13 @@ index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..afdddc1a586c9307b4ba39b05d58abe0
 +        source: { label: 'Signed releases', url: 'https://releases.example.org/harness' },
 +      }),
 +    })
++    expect(document.querySelector('[data-plugin-item="agentkit-codex-plugin-market"] svg')).toBeTruthy()
++    expect(document.querySelector('[data-plugin-item="agentkit-codex-plugin-market"] [data-studio-plugin-artwork]')).toBeNull()
++    expect(document.querySelector('[data-plugin-item="agentkit-star-harness"] [data-studio-plugin-artwork="star-harness"]')).toBeTruthy()
 +    act(() => { navigation.actions.setView({ kind: 'item', id }) })
-+    const panel = within(screen.getByRole('region', { name: 'Star Harness details' }))
++    const detail = screen.getByRole('region', { name: 'Star Harness details' })
++    expect(detail.querySelector('[data-studio-plugin-artwork="star-harness"]')).toBeTruthy()
++    const panel = within(detail)
 +    expect(panel.getByRole('heading', { name: 'Resume a task' })).toBeTruthy()
 +    expect(panel.getByText('Harness engine')).toBeTruthy()
 +    expect(panel.getByRole('button', { name: 'Roll back' })).toBeTruthy()

@@ -2978,7 +2978,7 @@
       "maintainerRole": "Studio desktop and plugin maintainers",
       "removeWhen": "The pinned DSH release supports switchable product bundles in the native built-ins group.",
       "contracts": [
-        "Installation-owned RouteMind appears once in the native built-ins group and exposes the normal bundle switch and source details.",
+        "Installation-owned RouteMind appears once in the native built-ins group, with a switch, source details and dedicated artwork. Star Harness uses its own artwork on the card and detail page.",
         "Desktop defaults select RouteMind for fresh profiles and profiles without a previous installation. Existing selection and subsequent opt-out persist.",
         "Discover identifies installation-owned bundles as provided even if the profile previously installed a copy."
       ],
@@ -2992,6 +2992,7 @@
         "apps/desktop/src/project-manager.ts",
         "apps/desktop/tests/project-manager.spec.ts",
         "packages/boot/plugin-market/src/index.ts",
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.module.css",
         "packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx",
         "packages/client/ui-plugin-manager/src/client/presentation.ts",
         "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
@@ -3021,13 +3022,13 @@
         ]
       },
       "sequence": 61,
-      "sha256": "866ef7157855f3b71e00543e5e40d1af227cb5126de7fafbb522b9df76b8ab70"
+      "sha256": "76d90c8913cd6d913ef37cfea1b64e3f2e990feb0bfd154ed6043688b651714c"
     }
   ],
-  "patchedTree": "d08acdb9b0c346747deb4010f4e68edbdd111422",
-  "patchedSourceSha256": "8346f0d444ec739fb4b34c4668c2dc4c3f21d152c25da7cd3b93a63eb456b2f4",
+  "patchedTree": "658aa67cc8a3e6385c55114945bf0697138cf587",
+  "patchedSourceSha256": "787beeaa09d975e6e2ecd7a83342cc6bcbcfc0919d1dc0114a7d64eea650bc0b",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "74870d18c0067c2329f7bd5784270910c916e8a8a30e5f95038b3d8b2fe6cbcd"
+    "sha256": "55134b1c5258679546f414da87e20af577ad2dde8f9491c48654bb3b18293710"
   }
 }
