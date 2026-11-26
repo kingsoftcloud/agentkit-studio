@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
+import { dshModelRoute } from '../src/model-route.mjs';
 import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
 import { createNativeDshTools } from './fixtures/retired-native/providers/native-dsh-tools.mjs';
 import { studioNativeComponentStatus } from './fixtures/retired-native/providers/native-component-status.mjs';
@@ -50,7 +51,7 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
     return { ...ports, tools: { execute: request => { nativeRequests.push(request); return ports.tools.execute(request); } } };
   };
   const models = createModelService({ configuration: { resolve: async () => ({ values: { modelProfiles: ['first', 'second'].map(id => ({
-    id, provider: 'openai-compatible', modelName: id + '-model', baseUrl: 'https://model.invalid/v1',
+    id, connectionId: 'shared', provider: 'openai-compatible', modelName: id + '-model', baseUrl: 'https://model.invalid/v1',
   })) } }) }, credentials: { resolve: async () => ({ value: 'model-secret' }) } });
   const counts = new Map();
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, models, ledger: store,
@@ -72,7 +73,7 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
     session.append('turn/start', { turn: 1 });
     const assembly = { tools: [...registry.values()] };
     return { agent: { session, externalTurns: nativeOwnershipHost(session, rows),
-      options: { provider: 'agentkit-studio-' + profile, model: profile + '-model' } },
+      options: { provider: dshModelRoute({ id: profile, connectionId: 'shared' }), model: profile + '-model' } },
       input: { kind: 'enter', messages: [{ id: 'human-' + sessionId, role: 'user', source: { kind: 'user' },
         content: [{ type: 'text', text: 'Report my admitted components.' }] }], assembly },
       turn: 1, signal: new AbortController().signal, prepareInput: async () => ({ kind: 'enter', messages: [], assembly }),
