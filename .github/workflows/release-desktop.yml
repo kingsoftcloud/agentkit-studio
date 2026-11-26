@@ -1,4 +1,4 @@
-name: Import signed Studio macOS update ZIP into KS3
+name: Prepare the exact Studio macOS Nightly upload
 
 on:
   workflow_dispatch:
@@ -12,143 +12,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish-mac-arm64:
-    env:
-      STUDIO_PRODUCT_NAME: AgentKit Studio
-      STUDIO_PRODUCT_APP_ID: com.kingsoftcloud.agentkit-studio
-      STUDIO_PRODUCT_UPDATE_ENV: production
+  prepare-mac-nightly-request:
     runs-on: ubuntu-latest
     environment: studio-signing
-    timeout-minutes: 60
-    concurrency:
-      group: studio-feed-mac-arm64-nightly
-      cancel-in-progress: false
+    timeout-minutes: 10
     steps:
-      - name: Reuse the completed source gate for the exact signed commit
+      - uses: actions/checkout@v4
+      - name: Reuse source and signing gates for the exact Studio candidate
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GH_REPO/actions/runs/45737190374" --jq .path)" = .github/workflows/release-desktop.yml
-          test "$(gh api "repos/$GH_REPO/actions/runs/45737190374/jobs" --jq '.jobs[] | select(.name=="source-gate" and .head_sha=="9e496351ca12ac3b5fe97d12d618d15519b8755a") | .conclusion')" = success
-      - name: Checkout workflow repository
-        uses: actions/checkout@v4
-      - name: Checkout AgentKit Studio release tools
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}
-          ref: main
-          path: studio
-          fetch-depth: 0
-      - name: Checkout pinned DSH
-        uses: actions/checkout@v4
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.2.2-rc.1
-          path: dsh-source
-          fetch-depth: 1
-      - name: Download signed candidate
-        uses: actions/download-artifact@v4
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45737190374/jobs" --jq '.jobs[] | select(.name=="source-gate" and .head_sha=="9e496351ca12ac3b5fe97d12d618d15519b8755a") | .conclusion')" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45609895727" --jq .path)" = .github/workflows/release-desktop.yml
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45609895727/jobs" --jq '.jobs[] | select(.name=="macos-arm64") | .conclusion')" = success
+      - uses: actions/download-artifact@v4
         with:
           name: agentkit-studio-9e496351ca12ac3b5fe97d12d618d15519b8755a-nightly-mac-arm64
           path: candidate
           github-token: ${{ github.token }}
           run-id: "45609895727"
-      - name: Set up Node and pnpm
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.2
-      - name: Verify original candidate checksums
+      - name: Verify original signed candidate checksums
         working-directory: candidate
         run: shasum -a 256 -c SHA256SUMS
-      - uses: actions/upload-artifact@v7
-        id: raw_update
+      - uses: actions/setup-node@v4
         with:
-          path: candidate/deepseek-harness-0.2.2-rc.1.20261125.2-mac-arm64.zip
-          archive: false
+          node-version: '24'
+      - name: Seal the one-object upload request
+        env:
+          STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY }}
+          STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
+        run: node scripts/seal-macos-nightly-put.mjs candidate/deepseek-harness-0.2.2-rc.1.20261125.2-mac-arm64.zip "$RUNNER_TEMP/nightly-zip-request.sealed"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sealed-nightly-zip-request
+          path: ${{ runner.temp }}/nightly-zip-request.sealed
           if-no-files-found: error
           retention-days: 1
-      - name: Publish via Studio KS3 uploader and verify public feed
-        working-directory: studio
-        env:
-          STUDIO_REF_VALUE: 9e496351ca12ac3b5fe97d12d618d15519b8755a
-          TOOLS_REF_VALUE: 9e496351ca12ac3b5fe97d12d618d15519b8755a
-          EXPECTED_BUILD_VERSION: 0.2.2-rc.1.20261125.2
-          EXPECTED_DSH_COMMIT: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
-          EXPECTED_UPDATE_ORIGIN: https://agentkit.ks3-cn-beijing.ksyuncs.com
-          SIGNED_RUN_ID: "45609895727"
-          SOURCE_ARTIFACT_ID: ${{ steps.raw_update.outputs.artifact-id }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          STUDIO_DOWNLOAD_PROD_KS3_BUCKET: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_BUCKET }}
-          STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY }}
-          STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
-          EXPECTED_PREVIOUS: 0.2.2-rc.1.20261124.1
-          STORAGE_ORIGIN: https://agentkit.ks3-cn-beijing.ksyuncs.com
-          RELEASE_LAYOUT: studio
-          UPDATE_MODE: incremental
-          COMPATIBILITY_ORIGIN: ""
-        run: |
-          set -euo pipefail
-          [[ "$TOOLS_REF_VALUE" =~ ^[0-9a-f]{40}$ ]]
-          git merge-base --is-ancestor "$STUDIO_REF_VALUE" HEAD
-          git merge-base --is-ancestor "$TOOLS_REF_VALUE" HEAD
-          git checkout --detach "$TOOLS_REF_VALUE"
-          test "$(git rev-parse HEAD)" = "$TOOLS_REF_VALUE"
-          pnpm install --frozen-lockfile
-          node -e 'const r = require(process.env.GITHUB_WORKSPACE + "/candidate/mac-arm64-release.json"); if (r.version !== process.env.EXPECTED_BUILD_VERSION || r.target !== "mac-arm64" || r.commit !== process.env.EXPECTED_DSH_COMMIT || r.publicUrl !== process.env.EXPECTED_UPDATE_ORIGIN + "/studio/feeds/mac-arm64/") throw Error("Signed candidate identity mismatch")'
-          node scripts/verify-codex-signing.mjs --record-only "$GITHUB_WORKSPACE/candidate/mac-arm64-release.json"
-          zip="$(find "$GITHUB_WORKSPACE/candidate" -maxdepth 1 -name '*.zip' -type f -print -quit)"
-          test -n "$zip"
-          unzip -p "$zip" "${STUDIO_PRODUCT_NAME}.app/Contents/Resources/app.asar" > "$RUNNER_TEMP/studio-candidate.asar"
-          node scripts/verify-desktop-module-graph.mjs "$RUNNER_TEMP/studio-candidate.asar" --studio
-          if [[ -n "$SIGNED_RUN_ID" ]]; then
-            test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .status)" = completed
-            test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID" --jq .path)" = .github/workflows/release-desktop.yml
-            test "$(gh api "repos/$GH_REPO/actions/runs/$SIGNED_RUN_ID/jobs" --jq '.jobs[] | select(.name == "macos-arm64") | .conclusion')" = success
-          fi
-          (cd "$GITHUB_WORKSPACE/candidate" && shasum -a 256 -c SHA256SUMS)
-          current="$(curl --fail --silent --show-error --max-time 30 "$EXPECTED_UPDATE_ORIGIN/studio/feeds/mac-arm64/nightly-mac.yml" | awk '$1=="version:" { print $2 }')"
-          if [[ "$current" == "$EXPECTED_BUILD_VERSION" ]]; then
-            evidence="$GITHUB_WORKSPACE/candidate/.desktop-release"
-            node scripts/desktop-release.mjs verify-feed --origin "$EXPECTED_UPDATE_ORIGIN" \
-              --channel nightly --version "$EXPECTED_BUILD_VERSION" --layout studio --output "$evidence"
-            digest="$(openssl dgst -sha512 -binary "$zip" | openssl base64 -A)"
-            test "$(jq -r .zipSha512 "$evidence/feed-nightly-$EXPECTED_BUILD_VERSION.json")" = "$digest"
-            exit 0
-          fi
-          test "$current" = "$EXPECTED_PREVIOUS"
-          node "$GITHUB_WORKSPACE/scripts/import-macos-nightly-zip.mjs" "$zip"
-          args=(publish --candidate "$GITHUB_WORKSPACE/candidate" --origin "$EXPECTED_UPDATE_ORIGIN"
-            --storage-origin "$STORAGE_ORIGIN" --layout "$RELEASE_LAYOUT" --update-mode "$UPDATE_MODE"
-            --channel 'nightly')
-          if [[ -n "$EXPECTED_PREVIOUS" ]]; then args+=(--expected-previous-version "$EXPECTED_PREVIOUS"); fi
-          if [[ -n "$COMPATIBILITY_ORIGIN" ]]; then args+=(--compatibility-origin "$COMPATIBILITY_ORIGIN"); fi
-          node scripts/desktop-release.mjs "${args[@]}"
-      - name: Refresh the stable studio/latest download alias
-        shell: bash
-        working-directory: studio
-        env:
-          STUDIO_DOWNLOAD_PROD_KS3_BUCKET: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_BUCKET }}
-          STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY }}
-          STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
-          ALIAS_ORIGIN: https://agentkit.ks3-cn-beijing.ksyuncs.com
-          ALIAS_CHANNEL: nightly
-        run: |
-          set -euo pipefail
-          test -n "$ALIAS_ORIGIN"
-          test -n "$ALIAS_CHANNEL"
-          node scripts/publish-download-alias.mjs --origin "$ALIAS_ORIGIN" --channel "$ALIAS_CHANNEL"
-      - name: Upload publication evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: agentkit-studio-9e496351ca12ac3b5fe97d12d618d15519b8755a-nightly-publication
-          path: candidate/.desktop-release/**
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 30
