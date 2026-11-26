@@ -288,6 +288,7 @@ desktop-package-preflight: pack
 	@test -f "$(PLUGIN_TARBALL)" || (echo "插件包不存在：$(PLUGIN_TARBALL)" >&2; exit 2)
 	@mkdir -p "$(STUDIO_DESKTOP_INPUT)"
 	@cp "$(PLUGIN_TARBALL)" "$(STUDIO_DESKTOP_INPUT)/kingsoftcloud-agentkit-studio-$(PLUGIN_VERSION).tgz"
+	node scripts/stage-routemind-desktop-plugin.mjs "$(STUDIO_DESKTOP_INPUT)"
 
 desktop-package-mac-arm64: desktop-package-preflight
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS packaging must run on macOS" >&2; exit 2)

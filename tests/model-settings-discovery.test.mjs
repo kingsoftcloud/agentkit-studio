@@ -45,6 +45,20 @@ test('model settings auto-discover image capability, persist it and show it afte
   assert.match(view.text(), /图片/);
 });
 
+test('model settings can read the plain catalog after the card endpoint rejects', async () => {
+  const calls = [];
+  const view = ui({ id: 'vision' }, ['text'], {}, {
+    modelCatalogWithCards: async id => { calls.push(['cards', id]); throw new Error('Bridge unavailable'); },
+    modelCatalog: async id => { calls.push(['plain', id]); return { items: [{ id: 'fixture-model', name: 'Fallback model' }] }; },
+  });
+  await view.settle();
+  calls.length = 0;
+  view.nodes().find(node => node.type === 'button' && node.children.includes('读取模型')).props.onClick();
+  await view.settle();
+  assert.deepEqual(calls, [['cards', 'configured'], ['plain', 'configured']]);
+  assert.match(view.text(), /fixture-model/);
+});
+
 test('a catalog without capabilities displays unknown and retains the last known profile input', async () => {
   const view = ui({ id: 'vision' }, ['text', 'image']);
   await view.settle();

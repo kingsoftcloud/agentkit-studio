@@ -3,7 +3,7 @@ import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
 import { lookupModelCapabilities, setModelCapabilityCatalog } from '../../model-capability-catalog.mjs';
-import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback, createProbeAllJobs, applyAllProbeResults, createProbeAll } from './model-settings-capability.mjs';
+import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback, createProbeAllJobs, applyAllProbeResults, createProbeAll, renderCloudField } from './model-settings-capability.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
 import { createModelSettingsDirectory } from './model-settings-directory.mjs';
@@ -13,6 +13,7 @@ import { bindProviders, checkImportedWires, clearProviderDrafts, importedProfile
 import { modelReasoningConfig, reasoningProfileFor, studioReasoning } from '../../model-reasoning.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import modelSettingsStyles from '../styles/model-settings.css.mjs';
+import modelCardStyles from '../styles/model-card.css.mjs';
 
 /** The settings sheet is a document-level asset shared by every mount. */
 function ensureModelSettingsStyles(document) {
@@ -21,7 +22,7 @@ function ensureModelSettingsStyles(document) {
     if (document.querySelector('style[data-agentkit-studio-model-settings]')) return () => {};
     const style = document.createElement('style');
     style.setAttribute('data-agentkit-studio-model-settings', 'true');
-    style.textContent = modelSettingsStyles;
+    style.textContent = modelSettingsStyles + modelCardStyles;
     document.head.append(style);
     return () => style.remove();
   });
@@ -85,14 +86,16 @@ const SOURCE_LABELS = {
 const PROVIDER_LABELS = { ksyun: '金山云模型服务', openai: 'OpenAI', custom: '自定义提供商', 'openai-compatible': 'OpenAI 兼容' };
 
 export function createModelSettingsSection({
-  ui: { React: { createElement: h, useEffect, useState, useRef }, SecretInput, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h, useEffect, useState, useRef }, SecretInput, DisclosureRow, Tag, InfoIcon, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent
 }) {
   const Chip = ({ children, tone = 'neutral', ...rest }) => h('span', { className: 'ms-chip', 'data-tone': tone, ...rest }, children);
   const providerLabel = provider => PROVIDER_LABELS[provider] || provider || '自定义提供商';
   const sourceLabel = source => SOURCE_LABELS[source] || source || '未配置';
   const useEffortProbe = createUseEffortProbe({ useState, useRef, useEffect });
-  const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({ h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId });
+  const { useModelSettingsDirectory, backButton } = createModelSettingsDirectory({
+    h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId: newProfileId, DisclosureRow, Tag, InfoIcon,
+  });
 
   function ModelSettingsSection({ dshModel, mode = 'all', onSaved, simple = false }) {
     const [form, setForm] = useState({
@@ -536,6 +539,10 @@ export function createModelSettingsSection({
       }
       const stored = storedConnectionFor(profile);
       if (stored && profileCredential(stored).configured && typeof hostRemote.modelCatalog === 'function') {
+        try {
+          const catalog = await hostRemote.modelCatalogWithCards?.(stored.id);
+          if (catalog) return catalog;
+        } catch { /* The plain catalog is still available when card loading fails. */ }
         return hostRemote.modelCatalog(stored.id);
       }
       throw new Error('请先填写 API Key');
@@ -679,13 +686,8 @@ export function createModelSettingsSection({
     });
     const { renderDirectory, importPanel, importedCount, selectedConnections, addSelected, editorActions } = modelDirectory;
 
-    const cloudField = (label, key, placeholder, type = 'text') => h('label', { className: 'ms-field' },
-      h('span', { className: 'ms-label' }, label),
-      h(type === 'password' ? SecretInput : 'input', {
-        label, type, className: 'ms-input', value: form[key] || '', placeholder,
-        autoComplete: type === 'password' ? 'new-password' : 'off',
-        onChange: event => setField(key, event.target.value),
-      }));
+    const cloudField = (label, key, placeholder, type = 'text') =>
+      renderCloudField(h, { SecretInput, label, key, placeholder, type, value: form[key], onChange: value => setField(key, value) });
     const connection = connectionFor(selected);
     const catalogItems = catalogItemsFor(selected);
     const hasSelectedModel = catalogItems.some(item => item.id === selected.modelName);

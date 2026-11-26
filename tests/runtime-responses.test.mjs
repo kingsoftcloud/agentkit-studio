@@ -48,6 +48,14 @@ test('AgentEngine single-turn payload keeps input and frozen model, with standar
   assert.deepEqual(value.usage, { input_tokens: 12, output_tokens: 3, total_tokens: 15 });
 });
 
+test('missing token usage remains unknown while measured zero is retained', async t => {
+  const { post } = await setup(t, async ({ input }) => ({ output: 'ok',
+    tokenUsage: input === 'missing' ? {} : { inputTokens: 0, outputTokens: 0 } }));
+  assert.equal((await (await post({ input: 'missing' })).json()).usage, undefined);
+  assert.deepEqual((await (await post({ input: 'zero' })).json()).usage,
+    { input_tokens: 0, output_tokens: 0, total_tokens: 0 });
+});
+
 test('unsupported request behavior is rejected before admission, without silently discarding input', async t => {
   let calls = 0;
   const { post } = await setup(t, async () => { calls++; return {}; });

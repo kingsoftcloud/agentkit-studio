@@ -1,3 +1,22 @@
+import { readFile } from 'node:fs/promises';
+import { STAR_HARNESS_INTRODUCTION_PATH } from '../../star-harness-detail.mjs';
+
+const introductionFile = new URL('../../../assets/star-harness-introduction.jpg', import.meta.url);
+
+export function registerStarHarnessIntroductionRoute(ctx) {
+  let image;
+  ctx.connection.fetch.register({
+    path: STAR_HARNESS_INTRODUCTION_PATH, methods: ['GET', 'HEAD'], requestBody: 'buffered',
+    async fetch(request) {
+      image ??= await readFile(introductionFile);
+      return new Response(request.method === 'HEAD' ? null : image, { headers: {
+        'content-type': 'image/jpeg', 'content-length': String(image.length),
+        'cache-control': 'private, max-age=300', 'x-content-type-options': 'nosniff',
+      } });
+    },
+  });
+}
+
 export const STAR_HARNESS_CLIENT_PATH = '/api/agentkit.star-harness.client.mjs';
 
 export function starHarnessClientResponse(request, asset) {

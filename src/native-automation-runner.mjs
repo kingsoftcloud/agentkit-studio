@@ -162,8 +162,12 @@ function nativeRunResult(events, sessionId, startedAt) {
   }
   const messages = events.filter(event => event.type === 'assistant/message');
   const output = (messages.at(-1)?.data?.message?.content || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
-  const usages = messages.map(event => event.data?.usage).filter(Boolean);
-  const tokenUsage = usages.length ? { inputTokens: usages.reduce((sum, usage) => sum + Number(usage.inputTokens || 0) + Number(usage.cacheReadTokens || 0) + Number(usage.cacheWriteTokens || 0), 0), outputTokens: usages.reduce((sum, usage) => sum + Number(usage.outputTokens || 0), 0) } : {};
+  const usages = messages.map(event => event.data?.usage).filter(usage =>
+    [usage?.inputTokens, usage?.outputTokens].every(value => Number.isSafeInteger(value) && value >= 0));
+  const tokenUsage = usages.length ? {
+    inputTokens: usages.reduce((sum, usage) => sum + usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0), 0),
+    outputTokens: usages.reduce((sum, usage) => sum + usage.outputTokens, 0),
+  } : undefined;
   const toolCalls = [...new Map(events.filter(event => event.type === 'tool/call' || event.type === CODEX_TOOL_EVENT).map(event => [event.data.callId, { name: event.data.name, callId: event.data.callId }])).values()];
   const resourceChecks = events.filter(event => event.type === RESOURCE_CHECK_EVENT).map(event => sanitizeResourceCheck(event.data)).filter(Boolean);
   return { sessionId, runId: `dsh:${sessionId}:${end.seq}`, output, tokenUsage, latencyMs: Date.now() - startedAt, toolCalls, resourceChecks };

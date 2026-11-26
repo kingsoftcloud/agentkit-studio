@@ -130,17 +130,27 @@ async function pluginPage() {
   return panel;
 }
 
+async function expandVersionList(panel) {
+  const summary = panel.locator('[data-plugin-versions] button[aria-expanded]');
+  if (await summary.getAttribute('aria-expanded', { timeout: pluginControlTimeout }) === 'false') await summary.click();
+}
+
 async function install(version, action) {
   let panel = await pluginPage();
-  const label = action === '安装' ? '安装 ' + version : action === '升级' ? '升级到 ' + version : action;
-  const control = panel.getByRole('button', { name: label, exact: true });
-  if (action === '安装' || action === '升级') {
-    await expect(panel.getByRole('button', { name: '检查更新' })).toBeEnabled({ timeout: pluginControlTimeout });
-    await expect(control).toBeVisible({ timeout: pluginControlTimeout });
+  const label = action + '到 ' + version;
+  const nativeList = panel.locator('[data-plugin-versions]');
+  const native = await panel.getAttribute('data-plugin-detail') !== null;
+  const control = (native ? nativeList : panel).getByRole('button', { name: label, exact: true });
+  if (action === '升级') {
+    await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
+  }
+  if (native) await expandVersionList(panel);
+  await expect(control).toBeVisible({ timeout: pluginControlTimeout });
+  await control.click({ timeout: pluginControlTimeout });
+  if (action === '升级') {
     proof.selectedFromCatalog ??= {};
     proof.selectedFromCatalog[version] = true;
   }
-  await control.click({ timeout: pluginControlTimeout });
   await expect.poll(async () => {
     try { return (await rpc('star-harness/status')).version; }
     catch (error) {
@@ -148,6 +158,7 @@ async function install(version, action) {
     }
   }, { timeout: 215000, intervals: [500, 1000, 1500] }).toBe(version);
   if (!await panel.isVisible()) panel = await pluginPage();
+  if (native) await expandVersionList(panel);
   await expect(panel.locator('[aria-current="true"]')).toHaveText('v' + version, { timeout: 45000 });
   await page.screenshot({ path: join(output, 'plugin-' + version + (action.startsWith('回退') ? '-restored' : '') + '.png'), timeout: 60000 });
 }
@@ -277,18 +288,33 @@ try {
   assert.notEqual(identity.pid, proof.processes.at(-1).pid);
   const opened = performance.now();
   const panel = await pluginPage();
-  await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible();
-  await expect(panel.getByText('执行多步任务', { exact: true })).toBeVisible();
+  if (await panel.getAttribute('data-plugin-detail') !== null) {
+    await expect(panel.getByRole('heading', { name: 'Star Harness', exact: true })).toBeVisible();
+    const image = panel.getByRole('img', { name: /金山云自研 Agent 运行框架/ });
+    await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+  } else {
+    await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible();
+    await expect(panel.getByText(/执行多步任务|AgentKit 里的多步任务/).first()).toBeVisible();
+  }
   await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible();
   await page.screenshot({ path: join(output, 'plugin-overview.png'), timeout: 60000 });
-  await expect(panel.getByRole('button', { name: '检查更新' })).toBeEnabled({ timeout: pluginControlTimeout });
+  await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
   proof.firstPluginControlsMs = Math.round(performance.now() - opened);
   assert.equal(await page.evaluate(async route => {
     const response = await fetch(route + '?descriptor=1');
     return response.status === 404 ? null : response.json();
   }, rendererRoute), null);
   await record('Studio opened settings and plugin management before Harness UI installation');
-  await install(baseline, '安装');
+  // The older fixture predates the recommended version shown on a fresh profile.
+  const seeded = await rpc('star-harness/install', { version: baseline });
+  assert.equal(seeded.version, baseline);
+  await page.reload();
+  const baselinePanel = await pluginPage();
+  if (await baselinePanel.getAttribute('data-plugin-detail') !== null) await expandVersionList(baselinePanel);
+  await expect(baselinePanel.locator('[aria-current="true"]')).toHaveText('v' + baseline, { timeout });
+  await page.screenshot({ path: join(output, 'plugin-' + baseline + '.png'), timeout: 60000 });
+  await record('The disposable profile started from the pinned signed baseline');
   await createConversation();
   await send(turns[0], firstModel);
   const original = page.getByRole('treeitem').filter({ hasText: new RegExp(turns[0].input + '|' + turns[0].answer, 'i') }).last();
@@ -306,14 +332,16 @@ try {
   await quit();
   await boot();
   assert.notEqual(identity.pid, proof.processes.at(-1).pid);
-  await expect((await pluginPage()).locator('[aria-current="true"]')).toHaveText('v' + upgrade, { timeout });
+  const restartedPanel = await pluginPage();
+  if (await restartedPanel.getAttribute('data-plugin-detail') !== null) await expandVersionList(restartedPanel);
+  await expect(restartedPanel.locator('[aria-current="true"]')).toHaveText('v' + upgrade, { timeout });
   await reopenFirstConversation();
   await send(turns[2], secondModel);
   await checkRenderer(upgrade);
   await page.screenshot({ path: join(output, 'conversation-resumed.png'), timeout: 60000 });
   await record('The new process resumed the original conversation with the upgraded signed engine and renderer');
 
-  await install(baseline, '回退到 ' + baseline);
+  await install(baseline, '回退');
   await reopenFirstConversation();
   await submit(turns[3]);
   await expect.poll(() => proof.modelRequests.some(entry => entry.input === turns[3].input && entry.throughHarness),

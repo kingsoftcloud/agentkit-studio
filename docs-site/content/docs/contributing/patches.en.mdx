@@ -20,13 +20,13 @@ approach: **keep changes on a maintenance branch and treat the patches as that b
 | Pinned baseline version | `0.2.2-rc.1` | `version` in `dsh-pin.json` |
 | Baseline commit | `66491b05…` (full SHA) | `commit` / `baseCommit` in `dsh-pin.json` |
 | Upstream ref | `dsh-v0.2.2-rc.1` | `ref` in `dsh-pin.json` |
-| Current patch series | 53 patches | `patches/dsh-v0.2.2-rc.1/manifest.json` |
+| Current patch series | 61 patches | `patches/dsh-v0.2.2-rc.1/manifest.json` |
 | Retired patches | 7 | `retired` in the same file |
 | Patch directory | `patches/dsh-v0.2.2-rc.1/` | `patchDirectory` in `dsh-pin.json` |
 
 <Callout type="warn" title="Do not write version numbers from memory">
   The repository carries three historical directories — `patches/dsh-v0.2.0-rc.2/`,
-  `patches/dsh-v0.2.1-rc.2/`, and `patches/dsh-v0.2.2-rc.1/` — with 34, 64, and 53 patches
+  `patches/dsh-v0.2.1-rc.2/`, and `patches/dsh-v0.2.2-rc.1/` — with 34, 64, and 61 patches
   respectively. Only the one `dsh-pin.json` points at is current; use it as the source of truth in docs.
 </Callout>
 
@@ -37,7 +37,7 @@ dsh-pin.json                       Pinned baseline: version / commit / ref / pat
 patches/dsh-v0.2.2-rc.1/
 ├─ 004-sidebar-panel-lifecycle.patch   Sequence number + name + .patch
 ├─ 080-native-owned-turn-recovery-and-dispatch.patch
-├─ …                                   53 files, applied in ascending order
+├─ …                                   61 files, applied in ascending order
 ├─ manifest.json                       Review metadata: category, risk, dependencies, verification, exit condition
 └─ source.json                         Export descriptor: commit sequence, tree, bundle digest
 host-source/dsh-v0.2.2-rc.1/

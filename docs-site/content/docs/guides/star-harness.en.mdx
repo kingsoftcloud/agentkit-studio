@@ -38,7 +38,7 @@ That is why it needs a one-time install and binding instead of working out of th
 <Step>
 ### Open the plugin page
 
-Go to **Plugins → Star Harness**. Studio registers this row into the DSH plugin page (`src/client/dsh/mount.mjs:54-56`), after "Plugin market" and "Codex plugins".
+Go to **Plugins → Star Harness**. Studio registers this row into the DSH plugin page (`src/client/dsh/mount.mjs`), under Built-in plugin configuration.
 
 The page's top line has four possible shapes:
 
@@ -56,42 +56,22 @@ The page's top line has four possible shapes:
 </Step>
 
 <Step>
-### Check the available version
+### Check available versions
 
-Choose **Check for updates**. It reads the latest version of `@kingsoftcloud/agentkit-harness-node` from npm, compares it with the version bundled with Studio, and recommends whichever is **newer** (`src/host/services/star-harness.mjs:159-160`).
+Click **Check again** to find the recommended release among the signed releases compatible with Studio. Expand **Versions** to see up to three entries: the recommended release, the installed release, and the previous release available for rollback. If there is no newer release, Studio shows the installed release and any available rollback version.
 
-Two failures surface right on the page:
-
-| Message | Meaning | Fix |
-| --- | --- | --- |
-| `The latest npm version is temporarily unavailable.` | The registry is unreachable (6-second timeout) | Retry once the network recovers; an installed version keeps working |
-| The version box is empty and **Install** is disabled | Neither an installed version nor a recommended one | Check for updates first, or type a version into the box |
-
-A version must be three numeric segments (`1.2.3`); anything else fails with `STAR_HARNESS_RELEASE_INVALID`.
+If the list cannot refresh, retry when the network is back. You can keep using the installed version.
 </Step>
 
 <Step>
-### Install or upgrade
+### Install, upgrade, or roll back
 
-The version box is prefilled with the recommended version; leaving it empty uses that version. The button label tracks the state:
+- Click **Install** to get the recommended release on a fresh profile.
+- Click **Upgrade** when Studio offers a newer release.
+- Expand **Versions** and click **Roll back** next to the previous release to switch back.
+- Click **Repair current version** when Studio detects a problem with the installed release.
 
-| Current state | Button | Behavior |
-| --- | --- | --- |
-| Not installed | **Install** | Download and install the recommended version |
-| Installed, a different version typed | **Upgrade** | Download and switch versions |
-| Installed, the current version typed | **Reinstall** | Rerun installation and verification |
-
-The status text while it runs is "Installing Star Harness…" or "Upgrading Star Harness…". Installation does three things:
-
-1. Runs `npm install --ignore-scripts --save-exact` in a temporary directory against the pinned dependency tree (timeout **180 seconds**).
-2. Verifies the whole package tree, including every dependency, against the **per-file digests** in `scripts/native-package-pins.json`.
-3. Starts a probe process and handshakes it (`probe`) to prove the version can serve, then switches the running workspaces.
-
-<Callout type="info" title="Why you cannot type an arbitrary version">
-  Only versions Studio has "reviewed" — the current one in `native-package-pins.json` or its `previousRuntime` — can be installed.
-  Anything else fails with `STAR_HARNESS_RELEASE_UNREVIEWED`: "This version has not been verified by the current Studio. Update Studio first, then install the matching Star Harness version."
-  This keeps an unvetted package from running inside your corporate network.
-</Callout>
+Before switching, Studio verifies the release signature and the integrity of the packages and dependencies. It also starts a probe to confirm the runtime can complete its handshake.
 </Step>
 
 <Step>

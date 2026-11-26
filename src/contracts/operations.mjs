@@ -65,6 +65,7 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "models/create",
   "models/catalog",
   "models/capability-catalog",
+  "models/cards",
   // Both probe endpoints were reachable from `control-client.mjs` but never
   // registered here, so the dispatcher answered `agentkit/not-found` and the
   // settings form never got a verdict. `models/probe` predates this change;

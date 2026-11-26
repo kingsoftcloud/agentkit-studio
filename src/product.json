@@ -24,8 +24,12 @@
   },
   "desktop": {
     "appId": "com.kingsoftcloud.agentkit-studio",
-    "pluginRoots": ["@kingsoftcloud/agentkit-studio"],
+    "pluginRoots": ["@kingsoftcloud/agentkit-studio", "routemind-studio"],
     "defaultBundles": ["@kingsoftcloud/agentkit-studio"],
+    "routeMindArchive": {
+      "version": "0.1.2",
+      "sha256": "81c0aa02376bb03d4559991e048b2abe03dcf9763a3f8fcad9d2594336225959"
+    },
     "defaultPluginIndexUrl": "https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/plugin-market/index.json",
     "updates": {
       "environment": "production",

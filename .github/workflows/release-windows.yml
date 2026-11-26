@@ -210,6 +210,10 @@ jobs:
           $inputRoot = Join-Path $env:RUNNER_TEMP 'studio-plugin-input'
           New-Item -ItemType Directory -Force $inputRoot | Out-Null
           Copy-Item ".artifacts/kingsoftcloud-agentkit-studio-$version.tgz" $inputRoot
+          if (Test-Path scripts/stage-routemind-desktop-plugin.mjs) {
+            node scripts/stage-routemind-desktop-plugin.mjs $inputRoot
+            if ($LASTEXITCODE) { throw 'RouteMind plugin staging failed' }
+          }
           "DSH_DESKTOP_PLUGIN_INPUTS=$inputRoot" | Out-File $env:GITHUB_ENV -Append
           "STUDIO_PACKAGE_VERSION=$version" | Out-File $env:GITHUB_ENV -Append
       - name: Prepare fresh Certum authentication URI

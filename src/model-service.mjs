@@ -3,6 +3,8 @@ import { hostFetch } from './http-fetch.mjs';
 import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { STUDIO_REASONING_LEVELS, studioReasoning } from './model-reasoning.mjs';
 import { catalogReasoningMetadata } from './model-catalog-reasoning.mjs';
+import { modelCard } from './model-cards.mjs';
+import { dshModelRoute, HARNESS_SERVICE_MODEL_PROVIDER } from './model-route.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from './model-capabilities.mjs';
 import { hasConfiguredAuthentication, providerWireApi, requestHeaders } from './model-profile-contract.mjs';
@@ -12,9 +14,10 @@ import { probeModelWire, probeModelWires } from './model-wire-probe.mjs';
 import { inputModalities, modelInput } from './model-input.mjs';
 export { modelInput };
 
-export function createModelService({ configuration, credentials, fetchImpl = hostFetch }) {
+export function createModelService({ configuration, credentials, fetchImpl = hostFetch, routeMindActive = () => false }) {
   const catalogs = new Map();
   const pendingCatalogs = new Map();
+  const displayCatalogs = new WeakMap();
   const sync = () => syncGlobalModelCredential({ configuration, credentials });
   const settings = () => configuration.describe();
   const save = async patch => {
@@ -79,7 +82,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       ...(reasoning ? { reasoningEfforts: reasoning.efforts, defaultReasoningEffort: reasoning.defaultEffort } : {}),
       baseUrl: url.href.replace(/\/$/, ''), apiKey: key || '' };
   }
-  async function gatewayModels(selected, refresh = false) {
+  async function gatewayCatalog(selected, refresh = false) {
     // A gateway can gate `/models` behind its own header, so the profile's
     // configured request headers reach the catalog read. Configuration wins
     // over the credential-derived Authorization: an explicitly configured
@@ -91,34 +94,111 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       ? '\0' + JSON.stringify(Object.entries(configured).sort(([left], [right]) => left.localeCompare(right))) : '';
     const key = createHash('sha256').update(selected.baseUrl + '\0' + (selected.apiKey || '') + fingerprint).digest('hex');
     const cached = catalogs.get(key);
-    if (!refresh && cached && cached.expires > Date.now()) return cached.items;
+    if (!refresh && cached && cached.expires > Date.now()) return cached;
     if (pendingCatalogs.has(key)) return pendingCatalogs.get(key);
     const operation = (async () => {
-    const headers = { ...configured, ...(selected.apiKey && !Object.keys(configured).some(name => name.toLowerCase() === 'authorization') ? { Authorization: `Bearer ${selected.apiKey}` } : {}) };
-    const response = await fetchImpl(`${selected.baseUrl}/models`, { headers, signal: AbortSignal.timeout(15000), redirect: 'error' });
-    if (!response.ok) throw Object.assign(new Error(`读取模型目录失败（${response.status}）`), { code: 'MODEL_CATALOG_FAILED' });
-    const data = await response.json();
-    const items = (data.data || data.models || []).filter(item => typeof item.id === 'string').map(item => {
-      // `inputKnown` distinguishes "the gateway reported modalities" from "it
-      // reported none": only the former may be trusted as text-only, so the
-      // catalog cannot add vision to a model the vendor declared text-only.
-      const known = Array.isArray(inputModalities(item)) && inputModalities(item).length > 0;
-      return { id: item.id, name: item.name || item.id, input: modelInput(item),
+      const headers = { ...configured, ...(selected.apiKey && !Object.keys(configured).some(name => name.toLowerCase() === 'authorization') ? { Authorization: `Bearer ${selected.apiKey}` } : {}) };
+      const response = await fetchImpl(`${selected.baseUrl}/models`, { headers, signal: AbortSignal.timeout(15000), redirect: 'error' });
+      if (!response.ok) throw Object.assign(new Error(`读取模型目录失败（${response.status}）`), { code: 'MODEL_CATALOG_FAILED' });
+      const data = await response.json();
+      const entries = data?.data ?? data?.models;
+      const raw = Array.isArray(entries) ? entries.filter(item => typeof item?.id === 'string' && item.id.trim()) : [];
+      const items = raw.map(item => ({
+        id: item.id, name: typeof item.name === 'string' && item.name.trim() ? item.name : item.id, input: modelInput(item),
         ...modelCatalogLimits(item),
         ...catalogReasoningMetadata(item),
-        ...(known ? { inputKnown: true } : { inputKnown: false }) };
-    });
-    if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);
-    catalogs.set(key, { items, expires: Date.now() + 60000 });
-    return items;
+        // Distinguish "the gateway reported modalities" from "it reported none":
+        // only the former may be trusted as text-only, so the catalog cannot add
+        // vision to a model the vendor declared text-only.
+        ...(Array.isArray(inputModalities(item)) && inputModalities(item).length ? { inputKnown: true } : { inputKnown: false }),
+      }));
+      const snapshot = { raw, items, headers, expires: Date.now() + 60000 };
+      if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);
+      catalogs.set(key, snapshot);
+      return snapshot;
     })();
     pendingCatalogs.set(key, operation);
     try { return await operation; }
     finally { if (pendingCatalogs.get(key) === operation) pendingCatalogs.delete(key); }
   }
-  async function catalog(id) {
+  async function gatewayModels(selected, refresh = false) {
+    return (await gatewayCatalog(selected, refresh)).items;
+  }
+  /**
+   * Compatible RouteMind gateways advertise `owned_by: routemind` and can
+   * supply measured cards. This optional read belongs to display surfaces.
+   */
+  async function routeMindCards(baseUrl, headers, raw) {
+    if (!raw.some(item => item.owned_by === 'routemind')) return new Map();
+    try {
+      const root = baseUrl.replace(/\/v1$/, '');
+      const response = await fetchImpl(`${root}/routemind/models`, { headers, signal: AbortSignal.timeout(5000), redirect: 'error' });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return new Map();
+      }
+      const body = await response.json();
+      return new Map((Array.isArray(body?.models) ? body.models : []).filter(card => typeof card?.name === 'string').map(card => [card.name, card]));
+    } catch { return new Map(); }
+  }
+  function displayModels(selected, snapshot) {
+    if (!displayCatalogs.has(snapshot)) {
+      displayCatalogs.set(snapshot, routeMindCards(selected.baseUrl, snapshot.headers, snapshot.raw).then(live =>
+        snapshot.items.map((item, index) => ({
+          ...item,
+          card: modelCard(snapshot.raw[index], { live: live.get(item.id), reasoningLevels: item.reasoningLevels }),
+        }))));
+    }
+    return displayCatalogs.get(snapshot);
+  }
+  async function catalogForDisplay(selected) {
+    const snapshot = await gatewayCatalog(selected, true);
+    if (!await routeMindActive()) return snapshot.items;
+    const items = await displayModels(selected, snapshot);
+    return await routeMindActive() ? items : snapshot.items;
+  }
+  /**
+   * Display cards for every model the enabled profiles' catalogs list, keyed by
+   * model id, for the chat model selector. Best-effort: a profile whose catalog
+   * cannot be read contributes nothing. Uses the catalog cache.
+   */
+  async function cards() {
+    const inactive = { enabled: false, cards: {}, cardsByProvider: {} };
+    if (!await routeMindActive()) return inactive;
+    const { values } = await configuration.resolve();
+    const enabledProfiles = (values.modelProfiles || []).filter(item => item.enabled !== false);
+    const candidates = enabledProfiles.length ? enabledProfiles : [{ id: 'default' }];
+    const seen = new Set([HARNESS_SERVICE_MODEL_PROVIDER]), ambiguous = new Set();
+    const routes = candidates.map(candidate => {
+      const provider = dshModelRoute(candidate);
+      if (seen.has(provider)) ambiguous.add(provider);
+      seen.add(provider);
+      return { id: candidate.id, provider };
+    });
+    // Existing DSH routes can outlive a conflicting edit. Avoid attaching any
+    // gateway's price to that route, even if only one catalog can be read.
+    const lists = await Promise.all(routes.filter(route => !ambiguous.has(route.provider)).map(async ({ id, provider }) => {
+      try {
+        const selected = await profile(id);
+        return { provider, items: await displayModels(selected, await gatewayCatalog(selected)) };
+      } catch { return null; }
+    }));
+    if (!await routeMindActive()) return inactive;
+    const byModel = new Map(), byProvider = new Map();
+    for (const list of lists.filter(Boolean)) {
+      byProvider.set(list.provider, Object.fromEntries(list.items.map(item => [item.id, item.card])));
+      for (const item of list.items) {
+        if (!byModel.has(item.id)) byModel.set(item.id, item.card);
+        else if (byModel.get(item.id) !== item.card) byModel.set(item.id, null);
+      }
+    }
+    return { enabled: true, cards: ambiguous.size ? {} : Object.fromEntries([...byModel].filter(([, card]) => card)),
+      cardsByProvider: Object.fromEntries(byProvider) };
+  }
+  async function catalog(id, { includeCards = false } = {}) {
     const selected = await profile(id);
-    return { defaultModel: selected.modelName, items: await gatewayModels(selected, true) };
+    const items = await (includeCards ? catalogForDisplay(selected) : gatewayModels(selected, true));
+    return { defaultModel: selected.modelName, items };
   }
   /** Resolve a saved credential with the endpoint it belongs to, or use the draft's own key. */
   async function probeConnection(candidate) {
@@ -153,7 +233,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
   }
   async function probe(candidate = {}) {
     const target = await probeConnection(candidate);
-    const items = await gatewayModels(target, true);
+    const items = await catalogForDisplay(target);
     const { provider, baseUrl } = target;
     const modelName = String(target.modelName || '').trim();
     return {
@@ -232,5 +312,5 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     if ((!apiKey && !hasConfiguredAuthentication(candidate?.headers)) || !baseUrl) return admitModelCapabilities(candidate);
     return capabilities({ ...candidate, baseUrl, apiKey }, signal);
   }
-  return { settings, save, create, sync, profile, catalog, probe, probeEfforts, probeWire, capabilities, capabilitiesOf };
+  return { settings, save, create, sync, profile, catalog, cards, probe, probeEfforts, probeWire, capabilities, capabilitiesOf };
 }

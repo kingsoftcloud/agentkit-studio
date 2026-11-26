@@ -13,8 +13,15 @@ export function createModelRoutes({ models, syncModelCredential, describeGlobalM
             return { ok: true, value: await models.settings() };
         if (endpoint === 'settings/update')
             return { ok: true, value: await models.save(payload) };
-        if (endpoint === 'models/catalog')
-            return { ok: true, value: await models.catalog(String(payload?.profileId || '')) };
+        if (endpoint === 'models/catalog') {
+            const profileId = String(payload?.profileId || '');
+            const value = payload?.includeCards === true
+                ? await models.catalog(profileId, { includeCards: true })
+                : await models.catalog(profileId);
+            return { ok: true, value };
+        }
+        if (endpoint === 'models/cards')
+            return { ok: true, value: await models.cards() };
         if (endpoint === 'models/probe')
             return { ok: true, value: await models.probe(payload || {}) };
         if (endpoint === 'models/wire')

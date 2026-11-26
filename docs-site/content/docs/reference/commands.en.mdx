@@ -13,7 +13,7 @@ Two execution surfaces: 56 `Makefile` targets (default `check`) and 105 check sc
 | --- | --- | --- |
 | `make <target>` | 56 | Daily development, packaging and gates; targets carry prerequisites and platform checks |
 | `node scripts/verify-*.mjs` | 105 | Single checks; the gate targets call these internally |
-| `node scripts/*.mjs` | 216 | Build, release and codegen scripts, not checks |
+| `node scripts/*.mjs` | 217 | Build, release and codegen scripts, not checks |
 
 <Callout type="info" title="Read the prerequisites">
 Most targets have prerequisites (for example `web-dev` depends on `profile-install`). Running the dependency chain beats typing commands in order by hand.
@@ -79,18 +79,18 @@ All 56 supported targets in definition order. An empty prerequisite list shows a
 | `make desktop-dev` | — | Build and start the desktop dev runtime | `Makefile:276` |
 | `make desktop-start` | `client-build` | Start the built desktop runtime | `Makefile:280` |
 | `make desktop-package-preflight` | `pack` | Desktop packaging preflight | `Makefile:285` |
-| `make desktop-package-mac-arm64` | `desktop-package-preflight` | Package the signed macOS arm64 installer | `Makefile:292` |
-| `make desktop-package-mac-arm64-unsigned` | `desktop-package-preflight` | Package the unsigned macOS arm64 build | `Makefile:297` |
-| `make desktop-package-mac-arm64-dir` | `desktop-package-preflight` | Package macOS arm64 as a directory | `Makefile:301` |
-| `make desktop-package-win-x64` | `desktop-package-preflight` | Package the Windows x64 installer | `Makefile:314` |
-| `make desktop-package-win-x64-unsigned` | `desktop-package-preflight` | Package the unsigned Windows x64 build | `Makefile:317` |
-| `make desktop-check-package` | — | Check the desktop installer | `Makefile:320` |
-| `make docs-site-build` | — | Static-export the docs site | `Makefile:327` |
-| `make docs-site-dev` | — | Start the docs site dev server | `Makefile:331` |
-| `make docs-site-check` | — | Docs site gate: i18n, links and the generator | `Makefile:334` |
-| `make docs-site-preview` | `docs-site-build` | Preview the exported docs site | `Makefile:337` |
-| `make ci` | `public-gate` | The CI entry point | `Makefile:342` |
-| `make clean` | — | Clean build artifacts and temp directories | `Makefile:344` |
+| `make desktop-package-mac-arm64` | `desktop-package-preflight` | Package the signed macOS arm64 installer | `Makefile:293` |
+| `make desktop-package-mac-arm64-unsigned` | `desktop-package-preflight` | Package the unsigned macOS arm64 build | `Makefile:298` |
+| `make desktop-package-mac-arm64-dir` | `desktop-package-preflight` | Package macOS arm64 as a directory | `Makefile:302` |
+| `make desktop-package-win-x64` | `desktop-package-preflight` | Package the Windows x64 installer | `Makefile:315` |
+| `make desktop-package-win-x64-unsigned` | `desktop-package-preflight` | Package the unsigned Windows x64 build | `Makefile:318` |
+| `make desktop-check-package` | — | Check the desktop installer | `Makefile:321` |
+| `make docs-site-build` | — | Static-export the docs site | `Makefile:328` |
+| `make docs-site-dev` | — | Start the docs site dev server | `Makefile:332` |
+| `make docs-site-check` | — | Docs site gate: i18n, links and the generator | `Makefile:335` |
+| `make docs-site-preview` | `docs-site-build` | Preview the exported docs site | `Makefile:338` |
+| `make ci` | `public-gate` | The CI entry point | `Makefile:343` |
+| `make clean` | — | Clean build artifacts and temp directories | `Makefile:345` |
 
 ## Check scripts
 

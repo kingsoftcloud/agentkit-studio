@@ -12,7 +12,7 @@ function connectionAddressLabel({ address }) {
 
 const PROVIDER_TYPES = ['ksyun', 'openai', 'custom'];
 
-export function createModelSettingsDirectory({ h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId }) {
+export function createModelSettingsDirectory({ h, useState, useEffect, useRef, useEffortProbe, Chip, SecretInput, providerLabel, makeId, DisclosureRow, Tag, InfoIcon }) {
   const title = group => group.name ? group.label : [providerLabel(group.provider), group.label].filter(Boolean).join(' · ');
   const searchField = (label, value, onChange) => h('label', { className: 'ms-search' },
     h('input', {
@@ -27,7 +27,7 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
   }, label);
   const field = (label, input) => h('label', { className: 'ms-field' }, h('span', { className: 'ms-label' }, label), input);
   const note = (text, type = 'status') => h('p', { role: type, className: 'ms-empty' }, text);
-  const modelRows = createModelCatalogPicker(h);
+  const modelRows = createModelCatalogPicker({ h, useState, DisclosureRow, Tag, InfoIcon });
 
   function useModelSettingsDirectory({
     status, saving, connections, profileCount, drafts, openModel, credentialConfigured,
@@ -147,7 +147,7 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
         check.items.length ? h('div', { className: 'ms-import-toolbar' },
           searchField('搜索目录中的模型', catalogQuery, query => setProviderForm(current => ({ ...current, query }))),
           probeControl(jobsFor(picks, connection))) : null,
-        items.length ? modelRows({ items, picks, connection, onPick: pick, probing,
+        items.length ? modelRows({ items, referenceItems: check.items, picks, connection, onPick: pick, probing,
           reportFor: id => batch.reportFor(reportKey(connection, id)) })
           : note(check.items.length ? '没有匹配的模型' : '该提供商未返回模型'));
     };
@@ -297,7 +297,7 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
             button('重新读取', () => readCatalog(catalog.token, group), undefined, { 'data-size': 'sm', disabled: probing }))
             : result?.status !== 'ready' ? note('正在读取目录…')
               : !matching.length ? note(items.length ? '没有匹配的模型' : '该提供商未返回模型') : null,
-          matching.length ? modelRows({ items: matching, picks: selection, existing, connection: group.connection,
+          matching.length ? modelRows({ items: matching, referenceItems: items, picks: selection, existing, connection: group.connection,
             onPick: (item, checked) => pickModel(group, item, checked), manualIds: new Set(extra.map(item => item.id)), probing,
             reportFor: id => batch.reportFor(reportKey(group.connection, id)) }) : null));
     };

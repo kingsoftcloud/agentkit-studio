@@ -3,6 +3,17 @@
 import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
 
+/** A cloud-credential field; passwords never echo a stored value. */
+export function renderCloudField(h, { SecretInput, label, key, placeholder, type = 'text', value, onChange }) {
+  return h('label', { className: 'ms-field' },
+    h('span', { className: 'ms-label' }, label),
+    h(type === 'password' ? SecretInput : 'input', {
+      label, type, className: 'ms-input', value: value || '', placeholder,
+      autoComplete: type === 'password' ? 'new-password' : 'off',
+      onChange: event => onChange(event.target.value),
+    }));
+}
+
 /** The capacity block: context window and output budget with their source. */
 export function renderCapabilitySummary(h, selected) {
   const catalog = lookupModelCapabilities(selected);

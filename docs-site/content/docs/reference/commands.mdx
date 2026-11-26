@@ -13,7 +13,7 @@ description: "56 个 make 目标与 105 个校验脚本的完整清单，含依�
 | --- | --- | --- |
 | `make <target>` | 56 | 日常开发、打包、门禁；目标带依赖与平台检查 |
 | `node scripts/verify-*.mjs` | 105 | 单点校验；门禁目标内部也是调它们 |
-| `node scripts/*.mjs` | 216 | 构建、发布、代码生成等非校验脚本 |
+| `node scripts/*.mjs` | 217 | 构建、发布、代码生成等非校验脚本 |
 
 <Callout type="info" title="先看依赖">
 `make` 目标大多有前置依赖（例如 `web-dev` 依赖 `profile-install`）。直接跑依赖链比手动按顺序敲命令安全。
@@ -79,18 +79,18 @@ description: "56 个 make 目标与 105 个校验脚本的完整清单，含依�
 | `make desktop-dev` | — | 构建并启动桌面开发运行时 | `Makefile:276` |
 | `make desktop-start` | `client-build` | 启动已构建的桌面运行时 | `Makefile:280` |
 | `make desktop-package-preflight` | `pack` | 桌面打包预检 | `Makefile:285` |
-| `make desktop-package-mac-arm64` | `desktop-package-preflight` | 打 macOS arm64 签名安装包 | `Makefile:292` |
-| `make desktop-package-mac-arm64-unsigned` | `desktop-package-preflight` | 打 macOS arm64 未签名包 | `Makefile:297` |
-| `make desktop-package-mac-arm64-dir` | `desktop-package-preflight` | 打 macOS arm64 目录形态（不装包） | `Makefile:301` |
-| `make desktop-package-win-x64` | `desktop-package-preflight` | 打 Windows x64 安装包 | `Makefile:314` |
-| `make desktop-package-win-x64-unsigned` | `desktop-package-preflight` | 打 Windows x64 未签名包 | `Makefile:317` |
-| `make desktop-check-package` | — | 检查桌面安装包 | `Makefile:320` |
-| `make docs-site-build` | — | 静态导出文档站 | `Makefile:327` |
-| `make docs-site-dev` | — | 本地起文档站开发服务器 | `Makefile:331` |
-| `make docs-site-check` | — | 文档站门禁：双语、链接与生成器 | `Makefile:334` |
-| `make docs-site-preview` | `docs-site-build` | 预览已导出的文档站 | `Makefile:337` |
-| `make ci` | `public-gate` | CI 总入口 | `Makefile:342` |
-| `make clean` | — | 清理构建产物与临时目录 | `Makefile:344` |
+| `make desktop-package-mac-arm64` | `desktop-package-preflight` | 打 macOS arm64 签名安装包 | `Makefile:293` |
+| `make desktop-package-mac-arm64-unsigned` | `desktop-package-preflight` | 打 macOS arm64 未签名包 | `Makefile:298` |
+| `make desktop-package-mac-arm64-dir` | `desktop-package-preflight` | 打 macOS arm64 目录形态（不装包） | `Makefile:302` |
+| `make desktop-package-win-x64` | `desktop-package-preflight` | 打 Windows x64 安装包 | `Makefile:315` |
+| `make desktop-package-win-x64-unsigned` | `desktop-package-preflight` | 打 Windows x64 未签名包 | `Makefile:318` |
+| `make desktop-check-package` | — | 检查桌面安装包 | `Makefile:321` |
+| `make docs-site-build` | — | 静态导出文档站 | `Makefile:328` |
+| `make docs-site-dev` | — | 本地起文档站开发服务器 | `Makefile:332` |
+| `make docs-site-check` | — | 文档站门禁：双语、链接与生成器 | `Makefile:335` |
+| `make docs-site-preview` | `docs-site-build` | 预览已导出的文档站 | `Makefile:338` |
+| `make ci` | `public-gate` | CI 总入口 | `Makefile:343` |
+| `make clean` | — | 清理构建产物与临时目录 | `Makefile:345` |
 
 ## 校验脚本
 
