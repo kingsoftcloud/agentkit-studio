@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$AppPath, [Parameter(Mandatory=$true)][string]$Evidence, [string]$RetainedText)
+﻿param([Parameter(Mandatory=$true)][string]$AppPath, [Parameter(Mandatory=$true)][string]$Evidence, [string]$RetainedText, [switch]$SkipResourceLibrary)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName UIAutomationClient
@@ -66,6 +66,8 @@ if($RetainedText) {
 $signature=Get-AuthenticodeSignature $AppPath
 if($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {throw 'Updated executable signature is invalid'}
 [UpdatedStudioWindow]::Capture($app.MainWindowHandle,(Join-Path $Evidence 'windows-updated-app.png'))
+$report=[ordered]@{actualAutoRestartedApp=$true;pid=$app.Id;path=$app.Path;studioNavigationVerified=$true;retainedTextVerified=([bool]$RetainedText);originalUserMessageRetained=([bool]$userRetained);originalAssistantReplyRetained=([bool]$replyRetained);signatureValid=$true;timestamped=$true}
+if(-not $SkipResourceLibrary) {
 # Exercise the updated client after the native restart, using the retained profile.
 $resourceCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'资源库')
 $resource=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$resourceCondition)
@@ -94,6 +96,9 @@ $centerCondition=[System.Windows.Automation.AndCondition]::new(
  [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button))
 if($element.FindAll([System.Windows.Automation.TreeScope]::Descendants,$centerCondition).Count -ne 0) {throw 'Duplicate Skill Center tab remains in the updated client'}
 [UpdatedStudioWindow]::Capture($app.MainWindowHandle,(Join-Path $Evidence 'windows-updated-resources.png'))
-[ordered]@{actualAutoRestartedApp=$true;pid=$app.Id;path=$app.Path;studioNavigationVerified=$true;retainedTextVerified=([bool]$RetainedText);originalUserMessageRetained=([bool]$userRetained);originalAssistantReplyRetained=([bool]$replyRetained);signatureValid=$true;timestamped=$true;updatedSkillSourceFilterVerified=$true;duplicateSkillCenterTabAbsent=$true} | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-updated-app.json')
+ $report['updatedSkillSourceFilterVerified']=$true
+ $report['duplicateSkillCenterTabAbsent']=$true
+}
+$report | ConvertTo-Json | Set-Content (Join-Path $Evidence 'windows-updated-app.json')
 & taskkill.exe /PID $app.Id /T /F | Out-Null
 if ($LASTEXITCODE) {throw 'Updated App process-tree cleanup failed'}
