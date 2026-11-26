@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { resolveConfiguredCodexModel, selectCodexAgentModel, listCodexAgentModels } from '../src/providers/codex-configured-models.mjs';
 
 function services() {
-  const profiles = ['a', 'b'].map(id => ({ id, provider: 'compatible', modelName: 'same-model', enabled: true, baseUrl: `https://${id}.example/v1`, apiKey: `key-${id}`, credentialName: `KEY_${id}` }));
+  const profiles = ['a', 'b'].map(id => ({ id, connectionId: id, provider: 'compatible', modelName: 'same-model', enabled: true, baseUrl: `https://${id}.example/v1`, apiKey: `key-${id}`, credentialName: `KEY_${id}` }));
   const models = {
     settings: async () => ({ modelProfiles: profiles.map(({ apiKey, ...profile }) => profile) }),
     profile: async id => {
