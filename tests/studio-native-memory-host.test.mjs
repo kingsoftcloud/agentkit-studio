@@ -43,7 +43,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
   const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: fullSpec });
   const events = [], definitions = new Map(), requests = [];
   let modelCalls = 0;
-  const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned',
+  const values = { modelProfiles: [{ id: 'fixture', connectionId: 'fixture', provider: 'openai-compatible', modelName: 'pinned',
     baseUrl: 'https://model.invalid/v1', contextWindow: 16000, maxOutputTokens: 1024 }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) },
     credentials: { resolve: async () => ({ value: 'secret' }) } });

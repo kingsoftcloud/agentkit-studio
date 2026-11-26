@@ -226,6 +226,7 @@ export function createProductClient(connection, { window = globalThis.window } =
         bootstrap: () => directServer() ? Promise.resolve({ workspaceReady: true, source: 'agentengine-server' }) : request('/api/v1/system/bootstrap'),
         settings: () => studioCall('settings/get'),
         modelCatalog: profileId => studioCall('models/catalog', { profileId }),
+        capabilityCatalog: () => studioCall('models/capability-catalog', {}),
         modelCatalogWithCards: profileId => studioBridgeOperation('models/catalog', { profileId, includeCards: true }),
         modelCards: () => studioBridgeOperation('models/cards', {}),
         probeModelEndpoint: payload => studioCall('models/probe', payload || {}),

@@ -507,7 +507,7 @@ test('explicit and configured Responses providers accept Codex null reasoning co
     return child;
   } });
   try {
-    const profile = { id: 'bound', modelName: 'bound-model', provider: 'compatible',
+    const profile = { id: 'bound', connectionId: 'bound', modelName: 'bound-model', provider: 'compatible',
       codexApi: 'responses', baseUrl: `http://127.0.0.1:${upstream.address().port}/v1`, apiKey: 'upstream-secret' };
     for (const configured of [false, true]) {
       const selected = configured ? await resolveConfiguredCodexModel({ provider: 'agentkit-studio-bound', model: 'bound-model' }, {

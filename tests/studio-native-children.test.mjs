@@ -82,9 +82,9 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     ...(instructionOwnership ? { instructionRoots: [] } : {}),
     ...(a2a ? { commandEnvironment: a2a.env } : {}), stateDir: join(root, 'tools'), executeMcpTool: mcp?.execute });
   a2a?.setRecordDirectory(join(root, 'tools/a2a-calls'));
-  const values = { modelProfiles: [{ id: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-model', baseUrl: 'https://parent.invalid/v1' },
-    { id: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput },
-    ...additionalRoles.map(role => ({ id: role.modelProfileId, provider: 'openai-compatible', modelName: `${role.modelProfileId}-model`,
+  const values = { modelProfiles: [{ id: 'parent-profile', connectionId: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-model', baseUrl: 'https://parent.invalid/v1' },
+    { id: 'child-profile', connectionId: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput },
+    ...additionalRoles.map(role => ({ id: role.modelProfileId, connectionId: role.modelProfileId, provider: 'openai-compatible', modelName: `${role.modelProfileId}-model`,
       baseUrl: `https://${role.modelProfileId}.invalid/v1`, input: childInput }))] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: 'fixture-secret' }) } });
   let parentModels = 0, childModels = 0;

@@ -62,14 +62,20 @@ const modelRows = view => view.nodes().filter(node => node.type === 'button' && 
 const providerRows = view => view.nodes().filter(node => node.type === 'button' && node.props['data-model-connection']);
 const field = (view, label) => view.nodes().find(node => node.props?.['aria-label'] === label);
 const selectProvider = async (view, index) => {
+  // 编辑模型时目录不渲染：先返回提供商列表。
   if (button(view, '返回提供商')) { button(view, '返回提供商').props.onClick(); await view.settle(); }
-  if (button(view, '模型提供商')) { button(view, '模型提供商').props.onClick(); await view.settle(); }
+  // 两层列表一次只展开一个：先收起所有已展开的提供商。
+  for (const row of providerRows(view)) {
+    if (row.props['aria-expanded'] === true) { row.props.onClick(); await view.settle(); }
+  }
   providerRows(view)[index].props.onClick();
   await view.settle();
 };
 const selectModel = async (view, index) => {
   await selectProvider(view, index);
-  modelRows(view)[0].props.onClick();
+  const rows = modelRows(view);
+  assert.ok(rows.length, `provider ${index} should expose its models`);
+  rows[0].props.onClick();
   await view.settle();
 };
 const saveButton = view => view.nodes().find(node => node.type === 'button' && node.props.type === 'submit' && node.props['data-variant'] === 'primary');
@@ -95,7 +101,7 @@ test('switching A → B → A keeps A’s unsaved edits and never prompts', asyn
 
   await selectModel(view, 1);
   assert.equal(modelName(view).props.value, 'beta-model', 'B shows its own saved values');
-  assert.equal(apiKey(view), undefined, 'credentials are edited on the provider');
+  assert.ok(apiKey(view), 'the connection block with its API Key is available in the model editor too');
   assert.equal(unsavedChip(view), undefined, 'B itself is clean');
   assert.equal(saveButton(view).props['data-dirty'], 'true', 'the form still has an unsaved draft');
   await selectProvider(view, 0);
@@ -275,7 +281,7 @@ test('reprobing a saved model leaves its range and default intact even after a t
   } });
   await view.settle();
   await selectModel(view, 0);
-  await button(view, '探测档位').props.onClick();
+  await view.nodes().find(n => n.type === 'button' && n.props['aria-label'] === '探测档位').props.onClick();
   await view.settle();
   assert.equal(field(view, '思考等级').props.value, 'high');
   assert.deepEqual(field(view, '思考等级').children.map(option => option.props.value), ['', 'low', 'high']);
@@ -288,7 +294,7 @@ test('reprobing a saved model leaves its range and default intact even after a t
   assert.deepEqual(view.values.modelProfiles[0].reasoningLevels, ['low', 'high']);
 
   outcome = 'timeout';
-  await button(view, '探测档位').props.onClick();
+  await view.nodes().find(n => n.type === 'button' && n.props['aria-label'] === '探测档位').props.onClick();
   await view.settle();
   assert.match(view.text(), /超时 高/);
   assert.equal(field(view, '思考等级').props.value, 'high');
@@ -322,7 +328,7 @@ test('closing and reopening the sheet restores the same draft from the memory ta
   assert.equal(unsavedChip(third), undefined);
 });
 
-test('「重新读取」discards drafts, restores a pending removal and says so', async () => {
+test('移除立即生效：模型被直接删除，alpha 的字段编辑也一并保存', async () => {
   const view = modelSettingsHarness();
   await view.settle();
   await selectModel(view, 0);
@@ -332,19 +338,18 @@ test('「重新读取」discards drafts, restores a pending removal and says so'
   await selectModel(view, 1);
   button(view, '移除').props.onClick();
   await view.settle();
-  assert.equal(modelRows(view).length, 0, 'removing B leaves its provider intact');
-  assert.deepEqual(modelSettingsDraftKeys(), ['alpha', 'beta'], 'the pending removal is a draft too');
+  // 移除立即生效：B 被直接删除并保存，alpha 的字段编辑也一并保存，草稿清空。
+  assert.equal(modelRows(view).length, 0);
+  assert.deepEqual(modelSettingsDraftKeys(), [], '保存后清空所有草稿');
+  assert.ok(view.writes.length > 0, '移除立即写入 Host');
 
   await button(view, '重新读取').props.onClick();
   await view.settle();
-  assert.equal(providerRows(view).length, 2);
   await selectProvider(view, 1);
-  assert.equal(modelRows(view).length, 1, 'reload brings the unsaved removal back');
+  assert.equal(modelRows(view).length, 0, 'B 已被真的删除，重新读取不会恢复');
   await selectProvider(view, 0);
-  assert.match(view.text(), /alpha-model/, 'reload discards the unsaved edit');
+  assert.match(view.text(), /alpha-edited/, 'alpha 的字段编辑已被保存（不是被丢弃）');
   assert.equal(unsavedChip(view), undefined);
-  assert.deepEqual(modelSettingsDraftKeys(), []);
-  assert.match(view.text(), /已丢弃未保存的草稿/, 'discarding drafts is announced, not silent');
 });
 
 test('「撤销修改」drops only the selected model draft', async () => {
@@ -462,10 +467,8 @@ test('catalog import probes and saves the same model independently on two connec
   button(view, '添加所选模型').props.onClick();
   await view.settle();
   assert.equal(modelRows(view).length, 2, 'the provider page only displays models from this provider');
-  assert.deepEqual(view.writes, []);
+  assert.ok(view.writes.length > 0, '添加所选模型立即写入 Host（结构性操作即时生效）');
 
-  await view.save();
-  await view.settle();
   const saved = view.values.modelProfiles;
   assert.deepEqual(saved.filter(profile => profile.modelName === 'shared-model').map(profile => profile.credentialName), ['ALPHA_KEY', 'BETA_KEY']);
   assert.deepEqual(saved.filter(profile => profile.modelName === 'shared-model').map(profile => [profile.reasoningLevels, profile.protocol]),
@@ -487,7 +490,7 @@ test('removing a provider stages its models and keeps one enabled default', asyn
   button(view, '确认移除').props.onClick();
   await view.settle();
   assert.equal(providerRows(view).length, 1);
-  assert.deepEqual(view.writes, []);
+  assert.ok(view.writes.length > 0, '移除提供商立即写入 Host（结构性操作即时生效）');
   await selectProvider(view, 0);
   button(view, '移除提供商').props.onClick();
   await view.settle();
@@ -495,8 +498,6 @@ test('removing a provider stages its models and keeps one enabled default', asyn
   button(view, '取消').props.onClick();
   await view.settle();
 
-  await view.save();
-  await view.settle();
   assert.deepEqual(view.values.modelConnections.map(item => item.id), ['beta']);
   assert.deepEqual(view.values.modelProfiles.map(item => [item.id, item.default]), [['beta', true]]);
 });

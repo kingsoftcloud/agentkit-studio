@@ -43,8 +43,8 @@ test('model service resolves independent provider credentials and catalog capabi
   });
   const catalog = await service.catalog('ksyun-vision');
   assert.deepEqual(catalog.items.map(({ card, ...item }) => item), [
-    { id: 'vision', name: 'vision', input: ['text', 'image'] },
-    { id: 'text', name: 'text', input: ['text'] },
+    { id: 'vision', name: 'vision', input: ['text', 'image'], inputKnown: true },
+    { id: 'text', name: 'text', input: ['text'], inputKnown: true },
   ]);
   assert.equal(calls[0].url, 'http://kspmas.ksyun.com/v1/models');
   assert.equal(calls[0].init.headers.Authorization, 'Bearer secret-1');
@@ -71,7 +71,7 @@ test('model endpoint probe reads an unsaved catalog with the candidate key and d
   const result = await service.probe({ provider: 'openai', baseUrl: 'https://candidate.test/v1', apiKey: 'unsaved-key', modelName: 'candidate-model' });
   assert.equal(result.selectedAvailable, true);
   const { card, ...item } = result.items[0];
-  assert.deepEqual(item, { id: 'candidate-model', name: 'candidate-model', input: ['text', 'image'] });
+  assert.deepEqual(item, { id: 'candidate-model', name: 'candidate-model', input: ['text', 'image'], inputKnown: true });
   assert.equal(card.displayName, 'Candidate Model');
   assert.equal(calls[0].init.headers.Authorization, 'Bearer unsaved-key');
   assert.deepEqual(values.modelProfiles, [{ id: 'existing', provider: 'ksyun', modelName: 'old', baseUrl: 'https://old.test/v1', credentialName: 'OLD_KEY', default: true }]);
@@ -274,7 +274,7 @@ test('model cards merge every enabled profile catalog and skip unreadable ones',
   const service = createModelService({
     routeMindActive: () => true,
     configuration: configuration({ modelProfiles: [
-      { id: 'xingliu', provider: 'ksyun', modelName: 'deepseek-v4.1-flash', baseUrl: 'https://xl.test/v1', credentialName: 'K1', enabled: true },
+      { id: 'xingliu', connectionId: 'xingliu', provider: 'ksyun', modelName: 'deepseek-v4.1-flash', baseUrl: 'https://xl.test/v1', credentialName: 'K1', enabled: true },
       { id: 'broken', provider: 'openai', modelName: 'x', baseUrl: 'https://down.test/v1', credentialName: 'K2', enabled: true },
       { id: 'off', provider: 'openai', modelName: 'y', baseUrl: 'https://off.test/v1', credentialName: 'K3', enabled: false },
     ] }),
@@ -296,8 +296,8 @@ test('RouteMind scores are a display-only request and price remains scoped to th
   const service = createModelService({
     routeMindActive: () => true,
     configuration: configuration({ modelProfiles: [
-      { id: 'route', provider: 'custom', modelName: 'shared', baseUrl: 'https://fixture.test/prefix/v1', credentialName: 'ROUTE_KEY' },
-      { id: 'direct', provider: 'custom', modelName: 'shared', baseUrl: 'https://direct.test/v1', credentialName: 'DIRECT_KEY' },
+      { id: 'route', connectionId: 'route', provider: 'custom', modelName: 'shared', baseUrl: 'https://fixture.test/prefix/v1', credentialName: 'ROUTE_KEY' },
+      { id: 'direct', connectionId: 'direct', provider: 'custom', modelName: 'shared', baseUrl: 'https://direct.test/v1', credentialName: 'DIRECT_KEY' },
     ] }),
     credentials: { resolve: async name => ({ value: name }) },
     fetchImpl: async (url, init) => {
@@ -336,10 +336,13 @@ test('model cards and pricing follow the live RouteMind plugin inventory', async
   let entries = [];
   const pluginInventory = { list: async () => ({ entries }) };
   const calls = [];
-  const candidate = { id: 'route', provider: 'custom', modelName: 'glm-5.3', baseUrl: 'https://fixture.test/v1', credentialName: 'FIXTURE' };
+  const candidate = { id: 'route', connectionId: 'route', provider: 'custom', modelName: 'glm-5.3', baseUrl: 'https://fixture.test/v1', credentialName: 'FIXTURE' };
   const service = createModelService({
     routeMindActive: () => isRouteMindPluginActive(pluginInventory),
-    configuration: configuration({ modelProfiles: [candidate] }),
+    configuration: configuration({
+      modelProfiles: [candidate],
+      modelConnections: [{ id: 'route', provider: 'custom', baseUrl: 'https://fixture.test/v1', credentialName: 'FIXTURE' }],
+    }),
     credentials: { resolve: async () => ({ value: 'fixture' }) },
     fetchImpl: async url => {
       calls.push(url);
@@ -372,7 +375,9 @@ test('model cards and pricing follow the live RouteMind plugin inventory', async
 });
 
 test('ambiguous legacy routes cannot attach another gateway price or use the Star Harness route', async () => {
-  const profiles = ['a.b', 'a_b', 'harness-service', 'valid'].map(id => ({ id, provider: 'custom',
+  // `a.b`/`a_b` normalize onto one route and `harness-service` is reserved, so
+  // only `valid` yields a usable route.
+  const profiles = ['a.b', 'a_b', 'harness-service', 'valid'].map(id => ({ id, connectionId: id, provider: 'custom',
     modelName: 'same-model', baseUrl: 'https://gateway.test/v1', credentialName: id }));
   const reads = [];
   const service = createModelService({

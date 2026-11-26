@@ -1,7 +1,7 @@
 import { isCredentialRefName } from '../../credential-ref.mjs';
 import { harnessModelEndpoint, normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '../../model-capabilities.mjs';
-import { studioReasoning } from '../../model-reasoning.mjs';
+import { studioReasoning, providerDisplayName } from '../../model-reasoning.mjs';
 import { providerWireApi } from '../../model-profile-contract.mjs';
 import { dshModelRoute } from '../../model-route.mjs';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
@@ -57,10 +57,17 @@ export function createModelBridge({ hostRemote }) {
       const catalogs = await Promise.all(valid.map(profile => hostRemote.modelCatalog(modelProfileId(profile)).catch(() => null)));
       checkActive();
       const routes = valid.map((profile, index) => dshModelRoute(profile, index));
-      const duplicateRoute = routes.find((route, index) => routes.indexOf(route) !== index);
-      if (duplicateRoute) throw Object.assign(new Error(`模型路由冲突：${duplicateRoute}。请缩短或修改模型配置 ID`), { code: 'MODEL_ROUTE_COLLISION' });
-      const operations = valid.map((profile, index) => {
+      // DSH groups the selector by route, so one connection is one route and
+      // every model of that connection shares it. Group the profiles by route
+      // and emit a single operation per route.
+      const byRoute = new Map();
+      valid.forEach((profile, index) => {
         const route = routes[index];
+        if (!byRoute.has(route)) byRoute.set(route, []);
+        byRoute.get(route).push({ profile, index });
+      });
+      const operations = [...byRoute].map(([route, members]) => {
+        const { profile, index } = members[0];
         const modelName = String(profile.modelName).trim();
         const provider = String(profile.provider || 'ksyun').trim() || 'ksyun';
         const wire = providerWireApi(profile);
@@ -72,29 +79,26 @@ export function createModelBridge({ hostRemote }) {
         // endpoint 404s while the engine's own turns keep working.
         const routedBaseUrl = harnessModelEndpoint(baseUrl, wire);
         const credentialName = modelCredentialName(profile, index);
-        const reasoning = studioReasoning(profile);
-        const reasoningEfforts = reasoning?.efforts ?? (profile.reasoningLevels?.length === 0 ? false : undefined);
-        // Kspmas model metadata is multimodal, but custom DSH routes fall
-        // back to text-only unless the capability is declared explicitly.
-        // Keep the input contract on each profile so read_image and native
-        // image messages are admitted consistently with the upstream model.
-        const items = catalogs[index]?.items || [];
-        const fallback = { id: modelName, name: modelName, input: profile.input || ['text'] };
-        const configuredModel = items.find(item => item.id === modelName);
-        // Keep catalog siblings on legacy routes for existing selections.
-        const routedModels = profile.modelOnly ? [configuredModel || fallback] : configuredModel ? items : [...items, fallback];
-        const dedicated = routedModels.length === 1;
-        const models = routedModels
-          .map(model => {
-            const configured = model.id === modelName;
-            const capability = admitModelCapabilities({ ...profile, input: configured ? profile.input : undefined }, model);
-            return { id: model.id, name: model.name || model.id, contextWindow: capability.contextWindow,
-              maxTokens: capability.maxOutputTokens, input: capability.input,
-              ...(configured && reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
-              ...(configured && reasoning && supportsModelDefaults && !dedicated ? { defaultReasoningEffort: reasoning.defaultEffort } : {}) };
-          });
+        // A route serves exactly the models configured on its connection —
+        // never the whole vendor catalog, which dragged embeddings, video and
+        // speech models into the chat selector.
+        const models = members.map(({ profile: member, index: memberIndex }) => {
+          const memberName = String(member.modelName).trim();
+          const reasoning = studioReasoning(member);
+          const reasoningEfforts = reasoning?.efforts ?? (member.reasoningLevels?.length === 0 ? false : undefined);
+          const items = catalogs[memberIndex]?.items || [];
+          const fallback = { id: memberName, name: memberName, input: member.input || ['text'] };
+          const configuredModel = items.find(item => item.id === memberName);
+          const capability = admitModelCapabilities({ ...member, input: member.input }, configuredModel || fallback);
+          return { id: memberName, name: memberName, contextWindow: capability.contextWindow,
+            maxTokens: capability.maxOutputTokens, input: capability.input,
+            ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}) };
+        });
+        // Route-level default thinking comes from the default model of the route.
+        const defaultMember = members.find(({ profile: member }) => member.default === true) || members[0];
+        const reasoning = studioReasoning(defaultMember.profile);
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
-          displayName: `${provider} · ${modelName}`, api: wire, apiKeyEnv: credentialName,
+          displayName: providerDisplayName(profile), api: wire, apiKeyEnv: credentialName,
           baseURL: routedBaseUrl,
           // Kspmas validates message roles and answers
           // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends
@@ -115,8 +119,7 @@ export function createModelBridge({ hostRemote }) {
           ...(wire !== 'anthropic-messages' ? {
             compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
           } : {}),
-          // A route default would also be sent to every catalog sibling.
-          ...(reasoning && dedicated ? { reasoning: reasoning.defaultEffort } : {}),
+          ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}),
           models,
         } } };
       });

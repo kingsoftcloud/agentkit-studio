@@ -3,6 +3,9 @@ import { resolvePaletteStyles } from '../styles/palette.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
+/** Set once the user finishes or dismisses the guide, so it is not auto-shown again. */
+const ONBOARDING_DONE_KEY = 'agentkit-studio:onboarding-done';
+
 export function createCredentialOnboarding({
   ui: { React: { createElement: h, useEffect, useRef, useState }, Modal, ModelSettingsSection, StudioMark, buttonStyle, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document
@@ -22,26 +25,31 @@ export function createCredentialOnboarding({
   function CredentialOnboarding({ explicit = false, complete = () => {}, openSection = () => {}, dshModel } = {}) {
     const [state, setState] = useState({ status: 'loading', configured: false });
     const [open, setOpen] = useState(false);
-    const [step, setStep] = useState(0);
     const [stage, setStage] = useState('welcome');
     const lifetime = useRef({ active: true, generation: 0, dismissed: false, completed: false });
     lifetime.current.stage = stage;
     const check = async ({ manual = false } = {}) => {
       const generation = ++lifetime.current.generation;
       setState(current => ({ ...current, status: 'loading', error: '' }));
+      const acknowledged = (() => { try { return window.localStorage?.getItem(ONBOARDING_DONE_KEY) === '1'; } catch { return false; } })();
       try {
         const result = await hostRemote.modelCredentialStatus();
         if (!lifetime.current.active || generation !== lifetime.current.generation) return;
         const next = { status: 'ready', configured: result?.configured === true };
         setState(next);
-        if (next.configured && !explicit && !manual && lifetime.current.stage === 'welcome') {
+        // 已配置就不自动弹（首次就有、或刚在引导里配好都一样），只有手动打开才显示。
+        // 未配置且用户没跳过才首次弹一次；跳过（有标记）后不再自动弹。
+        if (next.configured && !explicit && !manual) {
           setOpen(false);
           if (!lifetime.current.completed) { lifetime.current.completed = true; complete(); }
-        } else if (!lifetime.current.dismissed) setOpen(true);
+        } else {
+          setOpen(explicit || manual || (!next.configured && !acknowledged && !lifetime.current.dismissed));
+        }
       } catch {
         if (!lifetime.current.active || generation !== lifetime.current.generation) return;
-        setState({ status: 'error', configured: false, error: '暂时无法读取凭证状态，请连接 Studio Host 后重试。' });
-        if (explicit || manual) setOpen(true);
+        // Host 未连接且用户没跳过才显示「正在连接」；连接就绪后由 credential-recheck 重试。
+        setState({ status: 'error', configured: false, error: '正在连接 Studio Host，连接成功后继续…' });
+        if (!lifetime.current.dismissed && (explicit || manual || !acknowledged)) setOpen(true);
       }
     };
     useEffect(() => {
@@ -78,36 +86,40 @@ export function createCredentialOnboarding({
       return () => strip.remove();
     }, [open]);
     if (!open) return null;
-    const close = () => { lifetime.current.dismissed = true; setOpen(false); complete(); };
-    const configure = () => setStage('model');
+    const close = () => {
+      lifetime.current.dismissed = true;
+      setOpen(false);
+      try { window.localStorage?.setItem(ONBOARDING_DONE_KEY, '1'); } catch { /* storage unavailable: only this run is affected */ }
+      complete();
+    };
     const loading = state.status === 'loading';
-    const actions = stage === 'welcome' ? h('div', { className: 'agentkit-onboarding-actions', 'data-studio-controls': true },
-      h('button', { type: 'button', disabled: loading, 'data-modal-autofocus': true, className: 'agentkit-onboarding-primary', onClick: configure, style: { ...buttonStyle(), height: '44px', color: BRAND.primaryText, background: BRAND.primaryFill } }, loading ? '检查中…' : state.configured ? '更换模型' : '开始设置'),
-      h('button', { type: 'button', onClick: close, className: 'agentkit-onboarding-secondary' }, state.configured ? '开始对话' : '稍后设置'),
-      h('button', { type: 'button', disabled: loading, onClick: () => check({ manual: true }), className: 'agentkit-onboarding-secondary' }, state.status === 'error' ? '重试' : '重新检查')) : h('div', { className: 'agentkit-onboarding-actions', 'data-studio-controls': true },
-      stage === 'cloud' ? h('button', { type: 'button', 'data-modal-autofocus': true, onClick: close, className: 'agentkit-onboarding-primary', style: { ...buttonStyle(), height: '44px', color: BRAND.primaryText, background: BRAND.primaryFill } }, '跳过，开始对话') : null,
-      h('button', { type: 'button', onClick: () => setStage(stage === 'cloud' ? 'model' : 'welcome'), className: 'agentkit-onboarding-secondary' }, '上一步'),
-      h('button', { type: 'button', onClick: close, className: 'agentkit-onboarding-secondary' }, '稍后设置'),
-      h('button', { type: 'button', onClick: () => { close(); openSection('agentkit-models'); }, className: 'agentkit-onboarding-secondary' }, '打开完整设置'));
-    const labels = ['选择提供商', '填写凭证', '开始对话'];
-    const descriptions = ['选择已有提供商，或填写自己的兼容服务地址。', '填写 API Key 并选择模型。保存时会读取模型目录。', '保存配置后关闭设置，回到新会话即可开始。'];
+    // 未配置默认就是可填的简洁表单；已配置显示「可以开始对话了」，点更换模型才进表单。
+    const showForm = stage === 'model' || !state.configured;
+    const primary = { ...buttonStyle(), height: '44px', color: BRAND.primaryText, background: BRAND.primaryFill };
+    const actions = h('div', { className: 'agentkit-onboarding-actions', 'data-studio-controls': true },
+      state.status === 'error' ? h('button', { key: 'retry', type: 'button', onClick: () => check({ manual: true }), className: 'agentkit-onboarding-secondary' }, '重试') : null,
+      showForm
+        ? [
+          state.configured ? h('button', { key: 'chat', type: 'button', onClick: close, className: 'agentkit-onboarding-primary', style: primary }, '开始对话') : null,
+          h('button', { key: 'later', type: 'button', onClick: close, className: 'agentkit-onboarding-secondary' }, '稍后设置'),
+          h('button', { key: 'full', type: 'button', onClick: () => { close(); openSection('agentkit-models'); }, className: 'agentkit-onboarding-secondary' }, '打开完整设置'),
+        ]
+        : [
+          h('button', { key: 'chat', type: 'button', 'data-modal-autofocus': true, onClick: close, className: 'agentkit-onboarding-primary', style: primary }, '开始对话'),
+          h('button', { key: 'change', type: 'button', onClick: () => setStage('model'), className: 'agentkit-onboarding-secondary' }, '更换模型'),
+        ]);
     return h(Modal, {
-      open, onClose: close, headless: true, className: 'agentkit-onboarding-dialog', title: state.configured ? '模型凭证已就绪' : '欢迎使用 AgentKit Studio', footer: actions,
+      open, onClose: close, headless: true, className: 'agentkit-onboarding-dialog', title: showForm ? '连接你的模型' : '模型凭证已就绪', footer: actions,
     }, h('div', { className: 'agentkit-credential-onboarding-content', 'data-studio-onboarding-stage': stage },
       h('section', { className: 'agentkit-onboarding-copy' },
         h('div', { className: 'agentkit-onboarding-brand' }, h(StudioMark, { size: 32, title: '' }), h('span', null, 'AgentKit Studio')),
-        h('h1', null, stage === 'model' ? '连接你的模型' : stage === 'cloud' ? '云端配置，可以跳过' : state.configured ? '可以开始对话了' : '让第一个 Agent 跑起来'),
-        h('p', { className: 'agentkit-onboarding-intro' }, stage === 'cloud' ? '本机对话已经可以使用。需要云端构建、部署和资源访问时，再填写云端凭证即可。' : '连接一个模型，即可在本机开始对话。API Key 保存在本机，云端部署可稍后配置。'),
-        h('p', { className: 'agentkit-onboarding-status', role: state.status === 'error' ? 'alert' : 'status', style: state.status === 'error' ? { color: BRAND.danger } : undefined }, state.status === 'error' ? state.error : loading ? '正在检查本机模型配置…' : state.configured ? '已检测到可用模型凭证。' : '尚未配置模型凭证。'), actions),
-      stage !== 'welcome' ? h('section', { className: 'agentkit-onboarding-form', 'aria-label': stage === 'model' ? '连接模型' : '云端配置（可选）' }, h(ModelSettingsSection, { key: stage, dshModel, mode: stage, onSaved: stage === 'model' ? () => setStage('cloud') : close })) : h('section', { className: 'agentkit-credential-guide', 'aria-label': '模型配置操作演示' },
-        h('ol', null, ...labels.map((label, index) => h('li', { key: label }, h('button', { type: 'button', className: 'agentkit-guide-step', 'aria-current': step === index ? 'step' : undefined, onClick: () => setStep(index) }, h('span', { className: 'agentkit-guide-number', 'aria-hidden': true }, index + 1), label)))),
-        h('div', { className: 'agentkit-guide-preview studio-panel', 'aria-label': '模型配置预览' },
-          h('div', { className: 'agentkit-guide-preview-header' }, h(StudioMark, { size: 24, title: '' }), '模型与凭证'),
-          h('div', { className: 'studio-srow' }, h('label', null, '提供商'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 0 }, '金山云模型服务', h('span', { 'aria-hidden': true }, '⌄'))),
-          h('div', { className: 'studio-srow' }, h('label', null, 'API Key'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 1 }, step === 0 ? '填写你的 API Key' : '••••••••••••••••')),
-          h('div', { className: 'studio-srow' }, h('label', null, '模型'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 2 }, step === 2 ? '从模型目录选择' : '保存时自动读取'))),
-        h('p', { className: 'agentkit-guide-caption', role: 'status' }, descriptions[step]),
-        h('button', { type: 'button', className: 'agentkit-guide-next', onClick: () => setStep((step + 1) % labels.length) }, step === 2 ? '重新查看步骤' : '查看下一步 →'))));
+        h('h1', null, showForm ? '连接你的模型' : '可以开始对话了'),
+        h('p', { className: 'agentkit-onboarding-intro' }, showForm ? '选一个提供商，粘贴 API Key，保存后即可开始对话。' : '已检测到可用模型凭证。'),
+        state.status === 'error'
+          ? h('p', { className: 'agentkit-onboarding-status', role: 'alert', style: { color: BRAND.danger } }, state.error)
+          : loading ? h('p', { className: 'agentkit-onboarding-status', role: 'status' }, '正在检查本机模型配置…') : null,
+        actions),
+      showForm ? h('section', { className: 'agentkit-onboarding-form', 'aria-label': '连接模型' }, h(ModelSettingsSection, { key: 'quickstart', dshModel, mode: 'model', simple: true, onSaved: close })) : null));
   }
   return { ensureCredentialOnboardingStyles, CredentialOnboarding };
 }

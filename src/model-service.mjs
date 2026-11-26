@@ -107,7 +107,10 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
         id: item.id, name: typeof item.name === 'string' && item.name.trim() ? item.name : item.id, input: modelInput(item),
         ...modelCatalogLimits(item),
         ...catalogReasoningMetadata(item),
-        ...(Array.isArray(inputModalities(item)) && inputModalities(item).length ? {} : { inputKnown: false }),
+        // Distinguish "the gateway reported modalities" from "it reported none":
+        // only the former may be trusted as text-only, so the catalog cannot add
+        // vision to a model the vendor declared text-only.
+        ...(Array.isArray(inputModalities(item)) && inputModalities(item).length ? { inputKnown: true } : { inputKnown: false }),
       }));
       const snapshot = { raw, items, headers, expires: Date.now() + 60000 };
       if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);

@@ -47,7 +47,7 @@ test('actual Studio task uses execution-owned facts, a complete small Skill dire
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, toolBindings: ['read_workspace_file', 'browser_inspect_workspace'],
     toolContracts: [{ name: 'read_workspace_file', executor: 'builtin' }, { name: 'browser_inspect_workspace', executor: 'builtin' }], skillDefinitions: skills }, workspaceRoot,
   stateDir: join(root, 'state'), commandEnvironment: { KSADK_BROWSER_EXECUTABLE_PATH: join(root, 'not-installed-browser') } });
-  const models = createModelService({ configuration: { resolve: async () => ({ values: { modelProfiles: [{ id: 'model',
+  const models = createModelService({ configuration: { resolve: async () => ({ values: { modelProfiles: [{ id: 'model', connectionId: 'model',
     provider: 'openai-compatible', modelName: 'vision-test', baseUrl: 'https://model.invalid/v1', input: ['text', 'image'] }] } }) },
   credentials: { resolve: async () => ({ value: 'fixture-credential' }) } });
   const bodies = [];

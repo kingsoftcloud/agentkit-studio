@@ -99,7 +99,7 @@ test('only compaction of the committed Harness model uses the bound model-only a
   const forwarded = [];
   const dependency = {
     resolveSession: id => id === 'session-1' ? { header: { cwd: '/workspace' }, requestHeader: () => ({ config: previous }) } : undefined,
-    resolveProfile: (cwd, model) => cwd === '/workspace' && model === 'wide' ? { id: 'old-profile', modelName: 'wide' } : undefined,
+    resolveProfile: (cwd, model) => cwd === '/workspace' && model === 'wide' ? { id: 'old-profile', connectionId: 'old-profile', modelName: 'wide' } : undefined,
     stream: request => { forwarded.push(request); return 'model-only stream'; },
   };
   const next = () => 'original stream';
@@ -118,7 +118,7 @@ test('a long history summarizes once and then switches to the new model', async 
   const summaries = [];
   const dependency = {
     resolveSession: () => ({ header: { cwd: '/workspace' }, requestHeader: () => ({ config: committed }) }),
-    resolveProfile: (cwd, model) => ({ id: `${model}-profile`, modelName: model }),
+    resolveProfile: (cwd, model) => ({ id: `${model}-profile`, connectionId: `${model}-profile`, modelName: model }),
     stream: request => { summaries.push(request); return 'model-only stream'; },
   };
   const next = () => 'original stream';
@@ -144,7 +144,7 @@ test('compaction consumes one generated summary for the committed model route', 
   let generated = 0;
   const dependency = {
     resolveSession: () => ({ header: { cwd: '/workspace' }, requestHeader: () => ({ config: previous }) }),
-    resolveProfile: () => ({ id: 'wide-profile', modelName: 'wide' }),
+    resolveProfile: () => ({ id: 'wide-profile', connectionId: 'wide-profile', modelName: 'wide' }),
     stream: async function* request() {
       dispatched += 1;
       generated += 1;
@@ -162,7 +162,7 @@ test('compaction rejects a legacy conflicting summary route without dispatching 
   const options = { ...config, purpose: 'compaction' };
   const dependencies = {
     resolveSession: () => ({ header: { cwd: '/workspace' }, requestHeader: () => ({ config }) }),
-    resolveProfile: () => ({ id: 'Harness_Service', modelName: 'wide' }),
+    resolveProfile: () => ({ id: 'Harness_Service', connectionId: 'Harness_Service', modelName: 'wide' }),
     stream: () => assert.fail('summary must not dispatch to the Harness service route'),
   };
   await assert.rejects(collect(routeHarnessCompaction(options, () => assert.fail('conflict must be diagnosed'), dependencies)), {

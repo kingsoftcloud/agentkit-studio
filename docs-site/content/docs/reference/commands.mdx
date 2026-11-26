@@ -1,19 +1,19 @@
 ---
 title: "命令参考"
-description: "56 个 make 目标与 104 个校验脚本的完整清单，含依赖关系、平台支持与源码位置。"
+description: "56 个 make 目标与 105 个校验脚本的完整清单，含依赖关系、平台支持与源码位置。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 命令入口
 
-仓库有两个执行面：`Makefile` 的 56 个目标（默认目标 `check`），以及 `scripts/` 下的 104 个校验脚本。
+仓库有两个执行面：`Makefile` 的 56 个目标（默认目标 `check`），以及 `scripts/` 下的 105 个校验脚本。
 
 | 入口 | 条数 | 什么时候用 |
 | --- | --- | --- |
 | `make <target>` | 56 | 日常开发、打包、门禁；目标带依赖与平台检查 |
-| `node scripts/verify-*.mjs` | 104 | 单点校验；门禁目标内部也是调它们 |
-| `node scripts/*.mjs` | 215 | 构建、发布、代码生成等非校验脚本 |
+| `node scripts/verify-*.mjs` | 105 | 单点校验；门禁目标内部也是调它们 |
+| `node scripts/*.mjs` | 217 | 构建、发布、代码生成等非校验脚本 |
 
 <Callout type="info" title="先看依赖">
 `make` 目标大多有前置依赖（例如 `web-dev` 依赖 `profile-install`）。直接跑依赖链比手动按顺序敲命令安全。
@@ -94,11 +94,11 @@ description: "56 个 make 目标与 104 个校验脚本的完整清单，含依�
 
 ## 校验脚本
 
-`scripts/verify-*.mjs` 共 104 个（顶层 103 个，另有 1 个在子目录），按文件名第二段分成 25 个家族。每个脚本的具体用途写在文件头注释里。
+`scripts/verify-*.mjs` 共 105 个（顶层 104 个，另有 1 个在子目录），按文件名第二段分成 25 个家族。每个脚本的具体用途写在文件头注释里。
 
 | 家族 | 条数 | 脚本 | 验收什么 |
 | --- | --- | --- | --- |
-| `studio` | 40 | `verify-studio-catalog-ui.mjs` `verify-studio-client-pages-ui.mjs` `verify-studio-client-state-ui.mjs` `verify-studio-desktop-dev.mjs` `verify-studio-dsh-a2a-controls.mjs` `verify-studio-frozen-host.mjs` `verify-studio-host-startup.mjs` `verify-studio-http-scope.mjs` `verify-studio-model-settings-web.mjs` `verify-studio-native-a2a-busy-cancel.mjs` `verify-studio-native-a2a-inbound.mjs` `verify-studio-native-a2a-recovery.mjs` `verify-studio-native-a2a.mjs` `verify-studio-native-background.mjs` `verify-studio-native-child-a2a-recovery.mjs` `verify-studio-native-child-write-recovery.mjs` `verify-studio-native-children-web.mjs` `verify-studio-native-children.mjs` `verify-studio-native-e2b.mjs` `verify-studio-native-harness.mjs` `verify-studio-native-managed-a2a.mjs` `verify-studio-native-managed-children.mjs` `verify-studio-native-managed-crash.mjs` `verify-studio-native-management-web.mjs` `verify-studio-native-memory-web.mjs` `verify-studio-native-portable-runtime.mjs` `verify-studio-native-portable.mjs` `verify-studio-native-response-crash.mjs` `verify-studio-native-sidebar-ui.mjs` `verify-studio-native-sidebar-web.mjs` `verify-studio-native-skill-workflow.mjs` `verify-studio-native-vision.mjs` `verify-studio-node-builtins.mjs` `verify-studio-onboarding-ui.mjs` `verify-studio-persistence.mjs` `verify-studio-plugin-lifecycle.mjs` `verify-studio-product-profiles.mjs` `verify-studio-route-failures-ui.mjs` `verify-studio-startup-states.mjs` `verify-studio-team-host.mjs` | Studio 插件与桌面产品的端到端验收 |
+| `studio` | 41 | `verify-studio-catalog-ui.mjs` `verify-studio-client-pages-ui.mjs` `verify-studio-client-state-ui.mjs` `verify-studio-desktop-dev.mjs` `verify-studio-dsh-a2a-controls.mjs` `verify-studio-dsh-config.mjs` `verify-studio-frozen-host.mjs` `verify-studio-host-startup.mjs` `verify-studio-http-scope.mjs` `verify-studio-model-settings-web.mjs` `verify-studio-native-a2a-busy-cancel.mjs` `verify-studio-native-a2a-inbound.mjs` `verify-studio-native-a2a-recovery.mjs` `verify-studio-native-a2a.mjs` `verify-studio-native-background.mjs` `verify-studio-native-child-a2a-recovery.mjs` `verify-studio-native-child-write-recovery.mjs` `verify-studio-native-children-web.mjs` `verify-studio-native-children.mjs` `verify-studio-native-e2b.mjs` `verify-studio-native-harness.mjs` `verify-studio-native-managed-a2a.mjs` `verify-studio-native-managed-children.mjs` `verify-studio-native-managed-crash.mjs` `verify-studio-native-management-web.mjs` `verify-studio-native-memory-web.mjs` `verify-studio-native-portable-runtime.mjs` `verify-studio-native-portable.mjs` `verify-studio-native-response-crash.mjs` `verify-studio-native-sidebar-ui.mjs` `verify-studio-native-sidebar-web.mjs` `verify-studio-native-skill-workflow.mjs` `verify-studio-native-vision.mjs` `verify-studio-node-builtins.mjs` `verify-studio-onboarding-ui.mjs` `verify-studio-persistence.mjs` `verify-studio-plugin-lifecycle.mjs` `verify-studio-product-profiles.mjs` `verify-studio-route-failures-ui.mjs` `verify-studio-startup-states.mjs` `verify-studio-team-host.mjs` | Studio 插件与桌面产品的端到端验收 |
 | `native` | 16 | `verify-native-codex-cli.mjs` `verify-native-dependencies.mjs` `verify-native-dsh-numeric.mjs` `verify-native-dsh-output.mjs` `verify-native-dsh-turn.mjs` `verify-native-durable-approval.mjs` `verify-native-full-page.mjs` `verify-native-mcp-package.mjs` `verify-native-memory-browser.mjs` `verify-native-model-surface.mjs` `verify-native-owned-recovery.mjs` `verify-native-python-syntax-package.mjs` `verify-native-real-model.mjs` `verify-native-studio-install.mjs` `verify-native-thinking-browser.mjs` `verify-native-thinking-view.mjs` | 原生引擎、原生工具与原生会话 |
 | `dsh` | 9 | `verify-dsh-codex-tool-cards.mjs` `verify-dsh-lifecycle.mjs` `verify-dsh-live-runtime.mjs` `verify-dsh-node-store.mjs` `verify-dsh-plugin-market.mjs` `verify-dsh-product-presentation.mjs` `verify-dsh-runtime-adapter.mjs` `verify-dsh-runtime-retry.mjs` `verify-dsh-sdk-node-store.mjs` | DSH 基座、补丁与生命周期 |
 | `desktop` | 8 | `verify-desktop-artifact.mjs` `verify-desktop-client-source.mjs` `verify-desktop-differential.mjs` `verify-desktop-harness-release.mjs` `verify-desktop-harness-upgrade.mjs` `verify-desktop-installed-update.mjs` `verify-desktop-module-graph.mjs` `verify-desktop-update-inputs.mjs` | 桌面运行时与安装包 |
@@ -130,7 +130,7 @@ description: "56 个 make 目标与 104 个校验脚本的完整清单，含依�
 | --- | --- | --- |
 | make 目标 | `56` | 新增即更新本页，否则 `--check` 失败 |
 | 默认目标 | `check` | `make` 不带参数时执行 |
-| 校验脚本 | `104` | 门禁目标复用它们 |
+| 校验脚本 | `105` | 门禁目标复用它们 |
 | 排除目标 | `2` | 面向 Intel Mac 的遗留目标，不对外发布 |
 
 ## 开发者入口
