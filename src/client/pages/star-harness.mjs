@@ -1,9 +1,12 @@
 import { refreshStarHarnessUI } from '../dsh/star-harness-ui.mjs';
+import { STAR_HARNESS_INTRODUCTION_PATH } from '../../star-harness-detail.mjs';
 
 export const STAR_HARNESS_CHANGED = 'agentkit-studio:star-harness-changed';
 
 const releasesUrl = 'https://github.com/kingsoftcloud/ksadk-harness/releases';
-const overview = `Star Harness 是 Studio 的本地任务引擎。启用后，它使用会话在 Studio 中选择的工作区。
+const description = '金山云自研 Agent 运行框架，适配 AgentKit、星流模型和金山云服务，支持按需定制工具与执行策略。';
+const bannerAlt = 'Star Harness 金山云自研 Agent 运行框架，适配 AgentKit、星流模型和金山云服务。按需定制、加速执行、节省 Token。';
+const overview = `${description} 启用后，它使用会话在 Studio 中选择的工作区。
 
 - **执行多步任务**。在工作区调用工具、修改文件并交付结果。
 - **恢复未完成的任务**。重新打开 Studio 后，可以在原会话继续可恢复的运行。
@@ -15,7 +18,7 @@ const components = [
   ['Studio 界面', '显示运行进度、工具操作和恢复入口', '@kingsoftcloud/agentkit-harness-ui'],
 ];
 
-export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
+export function createStarHarnessPage({ ui, hostRemote, window, Switch, Button, RefreshIcon }) {
   const { React: { createElement: h, useEffect, useRef, useState }, BRAND, MarkdownText, buttonStyle, inputStyle } = ui;
   const button = (label, onClick, disabled, variant) => h('button', {
     type: 'button', style: { ...buttonStyle(variant), opacity: disabled ? 0.5 : 1 }, onClick, disabled,
@@ -29,13 +32,15 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
   const itemRow = { ...aside, padding: '12px 0', borderBottom: '1px solid ' + BRAND.border };
   const pill = { color: BRAND.ink, background: BRAND.canvas, borderRadius: '999px', padding: '2px 9px', fontSize: '12px' };
 
-  return function StarHarnessItem({ view } = {}) {
+  return function StarHarnessItem({ view, renderDetail } = {}) {
+    const useNativeDetail = typeof renderDetail === 'function';
     const [status, setStatus] = useState(null);
     const [busy, setBusy] = useState('');
     const [checking, setChecking] = useState(false);
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
     const [version, setVersion] = useState('');
+    const [bannerUrl, setBannerUrl] = useState('');
     const pending = useRef(false);
 
     useEffect(() => {
@@ -70,6 +75,26 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
         window.removeEventListener(STAR_HARNESS_CHANGED, refresh);
       };
     }, [view]);
+
+    useEffect(() => {
+      if (!useNativeDetail) return;
+      const lifetime = new AbortController();
+      let url;
+      const route = new URL(STAR_HARNESS_INTRODUCTION_PATH.slice(1), window.document.baseURI);
+      void window.fetch(route, { signal: lifetime.signal }).then(response => {
+        if (!response.ok) return null;
+        return response.blob();
+      }).then(image => {
+        if (image?.type === 'image/jpeg' && !lifetime.signal.aborted) {
+          url = window.URL.createObjectURL(image);
+          setBannerUrl(url);
+        }
+      }).catch(() => {});
+      return () => {
+        lifetime.abort();
+        if (url) window.URL.revokeObjectURL(url);
+      };
+    }, [useNativeDetail]);
 
     useEffect(() => {
       if (!status?.busy || busy) return;
@@ -122,7 +147,7 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
         }) : null);
     }
 
-    const installed = status?.version;
+    const installed = status?.version ?? undefined;
     const latest = installed ? status.availableUpgrade : status?.recommendedVersion;
     const rollback = status?.rollbackVersion;
     const repair = Boolean(status?.repairNeeded || ui.harnessUIError);
@@ -141,18 +166,15 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
       href: releasesUrl + '/tag/v' + release, target: '_blank', rel: 'noopener noreferrer', style: { color: BRAND.ink },
     }, 'v' + release);
     const catalog = status?.releaseVersions ?? [];
-    const older = catalog.filter(release => release.action === 'history');
-    const selectable = catalog.filter(release => release.action !== 'history');
-    if (installed && !selectable.some(release => release.version === installed))
-      selectable.push({ version: installed, action: 'current' });
-    const prior = status?.previousVersion;
-    if (prior && prior !== installed && !selectable.some(release => release.version === prior)) {
-      if (prior === rollback) selectable.push({ version: prior, action: 'rollback' });
-      else selectable.unshift({ version: prior, action: 'upgrade' });
-    }
+    const versions = [
+      { version: latest, action: installed ? 'upgrade' : 'install', tag: '推荐' },
+      { version: installed, action: 'current', tag: '当前版本' },
+      { version: rollback, action: 'rollback', tag: '上一版本' },
+    ].filter(item => item.version).map(item => ({
+      ...item, publishedAt: catalog.find(release => release.version === item.version)?.publishedAt,
+    }));
 
-    function releaseRow({ version, publishedAt, action }) {
-      const tag = action === 'current' ? '当前版本' : version === latest ? '推荐' : null;
+    function releaseRow({ version, publishedAt, action, tag }) {
       const control = action === 'rollback'
         ? button('回退到 ' + version, () => select(version, '正在切回上一版本…'), disabled)
         : action === 'upgrade' || action === 'install'
@@ -173,6 +195,76 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
     ];
     const list = { listStyle: 'none', padding: 0, margin: 0 };
     const supported = status && status.supported !== false;
+
+    if (useNativeDetail) {
+      const action = (label, onClick, inactive = disabled, variant = 'outline', icon) => h(Button, {
+        variant, size: 'sm', onClick, disabled: inactive, icon,
+      }, label);
+      const toggle = installed ? h(Switch, {
+        checked: status.enabled === true, disabled, label: '启用 Star Harness',
+        onChange: next => perform(next ? '正在启用…' : '正在停用…', () => hostRemote.enableStarHarness(next), ''),
+      }) : null;
+      const versionAction = (label, target, onClick) => h(Button, {
+        variant: 'outline', size: 'sm', onClick, disabled, 'aria-label': (label === '安装' ? '安装 ' : label + '到 ') + target,
+      }, label);
+      const rowModels = versions.map(item => ({
+        version: item.version,
+        url: releasesUrl + '/tag/v' + item.version,
+        date: item.publishedAt?.slice(0, 10),
+        current: item.action === 'current',
+        tag: item.tag,
+        action: item.action === 'rollback'
+          ? versionAction('回退', item.version, () => select(item.version, '正在切回上一版本…'))
+          : ['install', 'upgrade'].includes(item.action)
+            ? versionAction(item.action === 'upgrade' ? '升级' : '安装', item.version, () => install(item.version))
+            : undefined,
+      }));
+      const states = !installed ? ['off', 'off', 'off'] : [
+        'idle', runtimeRunning ? 'active' : status.enabled ? 'idle' : 'off',
+        repair ? 'failed' : status.enabled && status.clientUI ? 'active' : 'off',
+      ];
+      const feature = bannerUrl ? `![${bannerAlt}](star-harness-introduction.jpg)` : '';
+      const introduction = '在 AgentKit 中调用工具、管理上下文并恢复任务。可按业务需要定制运行策略，减少重复执行和无效的上下文开销。';
+      const updating = Boolean(checking || busy);
+      return renderDetail({
+        name: '@kingsoftcloud/ksadk-harness', regionLabel: 'Star Harness 管理', version: installed, description,
+        source: { label: 'kingsoftcloud/ksadk-harness', url: releasesUrl },
+        updateAvailable: Boolean(installed && latest),
+        headerActions: h(ui.React.Fragment, null,
+          latest ? action((installed ? '升级到 ' : '安装 ') + latest, () => install(latest), disabled,
+            'primary', RefreshIcon ? h(RefreshIcon, { size: 13 }) : undefined) : null, toggle),
+        notice: h('div', { style: { display: 'contents' } },
+          !status && !busy && !error ? h('p', { role: 'status', style: muted }, '正在读取 Star Harness 状态…') : null,
+          busy || message ? h('p', { role: 'status', style: muted }, busy || message) : null,
+          !busy && status?.busy ? h('p', { role: 'status', style: muted }, '任务运行中，结束后可以更改版本。') : null,
+          error ? h('p', { role: 'alert', style: muted }, error) : null,
+          repair ? h('p', { role: 'alert', style: muted }, 'Star Harness 前端需要修复，请重新安装或回退。') : null,
+          status?.supported === false ? h('p', { style: muted }, '此 Studio 部署由管理员管理。') : null),
+        document: { markdown: [feature, introduction].filter(Boolean).join('\n\n'),
+          images: bannerUrl ? { 'star-harness-introduction.jpg': bannerUrl } : {} },
+        components: supported ? components.map(([title, detail, moduleName], index) => ({
+          id: ['core', 'node', 'ui'][index], title, description: detail, moduleName,
+          state: states[index], stateLabel: componentState[index],
+        })) : [],
+        versions: supported ? {
+          title: checking ? '正在检查已签名的发布…' : latest ? (installed ? '可升级到 ' : '可安装 ') + latest
+            : installed ? '已安装 ' + installed : '未找到可验证的发布',
+          subtitle: status.registryUnavailable ? '暂时无法刷新版本列表。已安装的版本仍可使用。' : '签名发布',
+          tone: status.registryUnavailable ? 'warn' : latest ? 'info' : installed ? 'success' : 'neutral',
+          checking: updating,
+          onCheck: () => perform('正在检查更新…',
+            () => hostRemote.starHarnessStatus({ checkUpdates: true, includeVersions: true, refreshVersions: true }), '', false),
+          rows: rowModels,
+          expandLabel: rowModels.length + ' 个版本',
+          advanced: h('details', null, h('summary', null, '按版本号安装或修复'),
+            h('div', { style: { ...row, marginTop: '10px' } },
+              h('input', { 'aria-label': '版本', style: { ...inputStyle(), width: '112px', marginTop: 0 },
+                value: version, placeholder: requested, onChange: event => setVersion(event.target.value), disabled }),
+              action(reinstall ? '重新安装' : installed ? '升级' : '安装', () => requested === rollback
+                ? select(requested, '正在切回上一版本…') : install(requested), disabled || !requested || reinstall && !version.trim() && !repair))),
+        } : undefined,
+      });
+    }
 
     return h('section', { 'aria-label': 'Star Harness 管理', style: { ...stack, gap: '22px', color: BRAND.ink } },
       !status && !busy && !error ? h('p', { role: 'status', style: muted }, '正在读取 Star Harness 状态…') : null,
@@ -204,12 +296,9 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch }) {
         checking ? h('p', { role: 'status', style: muted }, '正在检查已签名的发布…') : null,
         status.registryUnavailable ? h('p', { role: 'status', style: muted },
           '暂时无法刷新版本列表。已安装的版本仍可使用。') : null,
-        !checking && !status.registryUnavailable && !catalog.length ? h('p', { style: muted },
+        !checking && !status.registryUnavailable && !versions.length ? h('p', { style: muted },
           '未找到可验证的发布。') : null,
-        selectable.length ? h('ul', { style: list }, selectable.map(releaseRow)) : null,
-        older.length ? h('details', null,
-          h('summary', { style: { ...muted, cursor: 'pointer' } }, '更早的已验证版本（仅浏览，' + older.length + ' 个）'),
-          h('ul', { style: list }, older.map(releaseRow))) : null,
+        versions.length ? h('ul', { style: list }, versions.map(releaseRow)) : null,
         h('details', null,
           h('summary', { style: { ...muted, cursor: 'pointer' } }, '按版本号安装或修复'),
           h('div', { style: { ...row, marginTop: '10px' } },

@@ -299,6 +299,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       modelProfiles: (await models.settings()).modelProfiles,
       workspaceRegistry: () => ctx.get('workspaceRegistry'),
     })) : undefined;
+  const { registerStarHarnessClientRoute, registerStarHarnessIntroductionRoute } = await import('./routes/star-harness-client.mjs');
+  registerStarHarnessIntroductionRoute(ctx);
   if (starHarness) {
     ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
     const configuration = await configurationPromise;
@@ -307,7 +309,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     await starHarness.restoreClientAsset().catch(error => {
       console.warn('[agentkit-studio] Star Harness UI restore failed:', error?.code || 'STAR_HARNESS_UI_RESTORE_FAILED');
     });
-    const { registerStarHarnessClientRoute } = await import('./routes/star-harness-client.mjs');
     registerStarHarnessClientRoute(ctx, starHarness);
   }
   const nativeEngineRuntime = createNativeEngineRuntime({ env: runtimeEnv, viewService: nativeManagedKernel?.remote,

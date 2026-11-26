@@ -1,0 +1,352 @@
+diff --git a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+index 19bd838984e11f74aa77586b0e16f2d1496d508c..d3433166b6ce235d0f8bf141632276b5e8b5cedc 100644
+--- a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
++++ b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+@@ -12,7 +12,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+ import { createPortal } from 'react-dom'
+ import type { PluginInstallFailureKind, Registry } from '@deepseek-ai/dsh-api-remotes/client'
+ import {
+-  Button, IconCheckCircleFillRegular, IconChevronDownOutlineRegular, IconChevronLeftOutlineMedium,
++  Button, DetailDocument, useDetailDocumentLabels, IconCheckCircleFillRegular, IconChevronDownOutlineRegular, IconChevronLeftOutlineMedium,
+   IconChevronRightOutlineRegular, IconCloseOutlineMedium,
+   IconDownloadOutlineRegular, IconInfoOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
+   IconWarningOutlineRegular, Input, Menu, MenuItemButton, Modal, pointerModality,
+@@ -33,8 +33,8 @@ import {
+ } from './manager-store.ts'
+ import { managementText, noticeText, packageText, registryText, restartText, rowText, type Translate } from './presentation.ts'
+ import type { PluginPackageRef, PluginRowRef, PluginsSubject } from './slot-contract.ts'
+-import type { ConfigPageForm } from './slot-contract.ts'
+-import { UpdateDialog, VersionSection } from './versions.tsx'
++import type { ConfigPageForm, ManagedItemDetailPresentation } from './slot-contract.ts'
++import { ManagedVersionSection, UpdateDialog, VersionSection } from './versions.tsx'
+ import { BundleDetailSection } from './BundleDetailSection.tsx'
+ import css from './PluginManagerPage.module.css'
+ 
+@@ -43,7 +43,7 @@ export type PluginManagerPageProps =
+   PropsRuntime<'main'>
+   & PropsLocale<'pluginManager'>
+   & PropsRenderSlots<
+-    | 'plugins.item' | 'plugins.bundle.config' | 'plugins.row.config' | 'plugins.bundle.activation'
++    | 'plugins.item' | 'plugins.item.detail' | 'plugins.bundle.config' | 'plugins.row.config' | 'plugins.bundle.activation'
+     | 'plugins.add.actions' | 'plugins.tab'
+     | 'plugins.detail.actions' | 'plugins.detail.badge' | 'plugins.detail.section'
+   >
+@@ -274,12 +274,13 @@ function RuntimeError({ error, t }: { readonly error: string | undefined; readon
+  * registered a page, and, when the pack is on, a switch. A pack like base
+  * carries close to a hundred rows, so a long list gets a filter.
+  */
+-function RowsSection({ rows, t, resolveText, toggle, configure }: {
++function RowsSection({ rows, t, resolveText, toggle, configure, stateLabel }: {
+   readonly rows: readonly PackageRow[]
+   readonly t: Translate
+   readonly resolveText: ResolveText
+   readonly toggle?: RowToggles | undefined
+   readonly configure?: RowConfigure | undefined
++  readonly stateLabel?: (row: PackageRow) => string
+ }): ReactNode {
+   const [filter, setFilter] = useState('')
+   const query = filter.trim().toLowerCase()
+@@ -334,7 +335,7 @@ function RowsSection({ rows, t, resolveText, toggle, configure }: {
+                   </div>
+                   <span className={css.rowState}>
+                     <StateDot state={rowDotState(row)} />
+-                    {rowStateText(row, t)}
++                    {stateLabel?.(row) ?? rowStateText(row, t)}
+                   </span>
+                   {toggle === undefined
+                     ? null
+@@ -354,7 +355,11 @@ function RowsSection({ rows, t, resolveText, toggle, configure }: {
+ }
+ 
+ /** Declared install source and versions; unavailable files retain their recorded dependency spec. */
+-function SourceSection({ pkg, t }: { readonly pkg: PackageView; readonly t: Translate }): ReactNode {
++function SourceSection({ pkg, t, sourceUrl }: {
++  readonly pkg: Pick<PackageView, 'source' | 'installed' | 'availability' | 'optional' | 'version' | 'installTarget'>
++  readonly t: Translate
++  readonly sourceUrl?: string
++}): ReactNode {
+   if (pkg.source === undefined && !pkg.installed && pkg.availability === 'installation' && !pkg.optional) return null
+   return (
+     <section className={css.detailSection} data-plugin-source>
+@@ -362,7 +367,8 @@ function SourceSection({ pkg, t }: { readonly pkg: PackageView; readonly t: Tran
+       <dl className={css.facts}>
+         <div>
+           <dt>{t('sourceSpec')}</dt>
+-          <dd>{pkg.source !== undefined ? <code>{pkg.source}</code> : pkg.availability === 'missing'
++          <dd>{pkg.source !== undefined ? sourceUrl === undefined ? <code>{pkg.source}</code>
++            : <a href={sourceUrl} target="_blank" rel="noopener noreferrer"><code>{pkg.source}</code></a> : pkg.availability === 'missing'
+             ? t(pkg.installed ? 'statusMissingFiles' : 'sourceNotInstalled') : t('sourceBuiltIn')}</dd>
+         </div>
+         {pkg.version === undefined
+@@ -646,6 +652,54 @@ function ItemDetail({ item, t, onBack, renderSlot, form }: {
+   )
+ }
+ 
++/** Render a host-managed item using the same chrome and sections as a registry bundle. */
++function ManagedItemDetail({ title, detail, t, resolveText, onBack }: {
++  readonly title: string
++  readonly detail: ManagedItemDetailPresentation
++  readonly t: Translate
++  readonly resolveText: ResolveText
++  readonly onBack: () => void
++}): ReactNode {
++  const labels = useDetailDocumentLabels({
++    title: t('detailTitle'), loading: t('detailLoading'), retry: t('retry'), copy: t('copy'), copied: t('copied'),
++    codeBlock: t('codeBlock.title'), wrap: t('codeBlock.wrap'), unwrap: t('codeBlock.unwrap'), footnotes: t('detailFootnotes'),
++  })
++  const rows: PackageRow[] = detail.components.map(component => ({
++    rowId: component.id, moduleName: component.moduleName,
++    meta: { title: component.title, description: component.description },
++    enabled: component.state !== 'off',
++    phase: component.state === 'active' || component.state === 'failed' ? component.state : null,
++  }))
++  const states = new Map(detail.components.map(component => [component.id, component.stateLabel]))
++  return (
++    <div className={css.detail} data-plugin-detail={detail.name} role="region" aria-label={detail.regionLabel}>
++      <DetailTop crumbLabel={t('backToList')} crumbText={t('crumbRoot')} onBack={onBack}
++        icon={<PackageArtwork src={undefined} />}
++        actions={<div className={css.detailActions}>{detail.headerActions}</div>} />
++      <div className={css.detailMain}>
++        <div className={css.titleRow}>
++          <h3 className={css.detailTitle}>{title}</h3>
++          {detail.version === undefined ? null : <Tag className={css.versionTag} tone="neutral">{t('versionTag', { version: detail.version })}</Tag>}
++          {detail.updateAvailable ? <Tag className={css.statusTag} tone="info">{t('statusUpdateAvailable')}</Tag> : null}
++        </div>
++        <p className={css.detailName}><code data-plugin-name>{detail.name}</code></p>
++        <p className={css.detailDesc}>{detail.description}</p>
++      </div>
++      <div className={css.detailSections}>
++        {detail.notice}
++        <DetailDocument state={{ status: 'found', markdown: detail.document.markdown }} labels={labels}
++          images={{ resolve: value => Object.hasOwn(detail.document.images, value) ? detail.document.images[value] : undefined }}
++          onRetry={() => {}} />
++        {rows.length === 0 ? null : <RowsSection rows={rows} t={t} resolveText={resolveText}
++          stateLabel={row => states.get(row.rowId) ?? rowStateText(row, t)} />}
++        {detail.versions === undefined ? null : <ManagedVersionSection versions={detail.versions} t={t} />}
++        <SourceSection pkg={{ source: detail.source.label, installed: detail.version !== undefined, availability: 'installation',
++          optional: false, ...detail.version === undefined ? {} : { version: detail.version } }} sourceUrl={detail.source.url} t={t} />
++      </div>
++    </div>
++  )
++}
++
+ /**
+  * A row's configuration page keeps its technical identity beside local package
+  * text and the form supplied by its configuration entry.
+@@ -1815,7 +1869,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+           )
+           : null}
+         {onInstalled && loaded && openItem !== undefined
+-          ? <ItemDetail form={formFor(openItem.id)} item={openItem} t={t} renderSlot={renderSlot} onBack={() => { setView({ kind: 'list' }) }} />
++          ? ledger.managedDetails?.has(openItem.id) === true
++            ? renderSlot('plugins.item.detail', {
++              renderDetail: detail => <ManagedItemDetail title={openItem.label} detail={detail} t={t} resolveText={resolveText}
++                onBack={() => { setView({ kind: 'list' }) }} />,
++            }, { entryKey: openItem.id })
++            : <ItemDetail form={formFor(openItem.id)} item={openItem} t={t} renderSlot={renderSlot} onBack={() => { setView({ kind: 'list' }) }} />
+           : null}
+         {loaded && installedCards
+           ? basicCards.length === 0 && official.length === 0 && mine.length === 0 && state.status !== 'error'
+diff --git a/packages/client/ui-plugin-manager/src/client/config-ledger.ts b/packages/client/ui-plugin-manager/src/client/config-ledger.ts
+index 21f6d3d746ff94cf5317322c1b96e595c0fe806d..647c21f67606855890200f6007f3f25a7f251493 100644
+--- a/packages/client/ui-plugin-manager/src/client/config-ledger.ts
++++ b/packages/client/ui-plugin-manager/src/client/config-ledger.ts
+@@ -23,6 +23,7 @@ export interface OfficialItem {
+  */
+ export interface ConfigLedger {
+   readonly items: readonly OfficialItem[]
++  readonly managedDetails?: ReadonlySet<string>
+   readonly bundles: ReadonlySet<string>
+   readonly rows: ReadonlySet<string>
+ }
+@@ -37,7 +38,7 @@ export function rowConfigKey(bundle: string, rowId: string): string {
+   return `${bundle}#${rowId}`
+ }
+ 
+-const SLOTS = ['plugins.item', 'plugins.bundle.config', 'plugins.row.config'] as const
++const SLOTS = ['plugins.item', 'plugins.item.detail', 'plugins.bundle.config', 'plugins.row.config'] as const
+ 
+ /**
+  * Project the configuration ledgers as one observable the page binds.
+@@ -48,7 +49,7 @@ export function configLedgerSource(ctx: ClientContext): HostObservable<ConfigLed
+   let versions: readonly number[] = []
+   let revision = -1
+   let ledger: ConfigLedger = { items: [], bundles: new Set(), rows: new Set() }
+-  const keysOf = (name: 'plugins.bundle.config' | 'plugins.row.config'): ReadonlySet<string> =>
++  const keysOf = (name: Exclude<typeof SLOTS[number], 'plugins.item'>): ReadonlySet<string> =>
+     new Set(ctx.slots.entries(name).flatMap(entry => entry.options.key === undefined ? [] : [entry.options.key]))
+   return {
+     getSnapshot: () => {
+@@ -63,6 +64,7 @@ export function configLedgerSource(ctx: ClientContext): HostObservable<ConfigLed
+             id: entry.options.id ?? '',
+             label: resolveSlotLabel(entry.options.label) ?? '',
+           })),
++          managedDetails: keysOf('plugins.item.detail'),
+           bundles: keysOf('plugins.bundle.config'),
+           rows: keysOf('plugins.row.config'),
+         }
+diff --git a/packages/client/ui-plugin-manager/src/client/index.ts b/packages/client/ui-plugin-manager/src/client/index.ts
+index f5908227a43d4a8e3d03df87f3f905198cccbc9a..703d93fd1708ab8f6fee7b4e8427c4756bdaf4aa 100644
+--- a/packages/client/ui-plugin-manager/src/client/index.ts
++++ b/packages/client/ui-plugin-manager/src/client/index.ts
+@@ -66,6 +66,7 @@ export type { PluginManagerFace } from './manager-store.ts'
+ export type { PluginManagerLocaleKey } from './locales.ts'
+ export type {
+   ConfigPageForm, PluginActivationOwnerProps, PluginAddActionsProps, PluginTabInstall, PluginTabProps,
++  ManagedItemDetailPresentation, ManagedItemDetailProps, ManagedItemVersions,
+   PluginConfigViewProps, PluginDetailProps, PluginPackageRef, PluginRowRef, PluginsSubject,
+ } from './slot-contract.ts'
+ 
+@@ -139,6 +140,7 @@ export function apply(ctx: ClientContext): void {
+           'plugins.add.actions': { kind: 'list', scope: 'root' },
+           'plugins.tab': { kind: 'list', scope: 'root' },
+           'plugins.item': { kind: 'list', scope: 'root' },
++          'plugins.item.detail': { kind: 'keyed', scope: 'root' },
+           'plugins.bundle.activation': { kind: 'keyed', scope: 'root' },
+           'plugins.bundle.config': { kind: 'keyed', scope: 'root' },
+           'plugins.row.config': { kind: 'keyed', scope: 'root' },
+diff --git a/packages/client/ui-plugin-manager/src/client/slot-contract.ts b/packages/client/ui-plugin-manager/src/client/slot-contract.ts
+index 1450f2bb96cc71e4674d7944a4c13420fe6aa09c..d5be1527f388979a68264faafa65b43d62d0032f 100644
+--- a/packages/client/ui-plugin-manager/src/client/slot-contract.ts
++++ b/packages/client/ui-plugin-manager/src/client/slot-contract.ts
+@@ -19,6 +19,7 @@
+  */
+ 
+ import type {} from '@deepseek-ai/dsh-client-ui-slots'
++import type { ReactNode } from 'react'
+ import type { BundleInfo } from '@deepseek-ai/dsh-api-remotes/client'
+ import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+ 
+@@ -58,6 +59,50 @@ export interface PluginPackageRef {
+   readonly rows: readonly PluginRowRef[]
+ }
+ 
++/** Presentation for a plugin whose installation and verification are owned by its host. */
++export interface ManagedItemDetailPresentation {
++  readonly regionLabel?: string | undefined
++  readonly name: string
++  readonly version?: string | undefined
++  readonly description: string
++  readonly source: { readonly label: string; readonly url: string }
++  readonly document: { readonly markdown: string; readonly images: Readonly<Record<string, string>> }
++  readonly components: readonly {
++    readonly id: string
++    readonly moduleName: string
++    readonly title: string
++    readonly description: string
++    readonly state: 'off' | 'idle' | 'active' | 'failed'
++    readonly stateLabel: string
++  }[]
++  readonly headerActions?: ReactNode
++  readonly notice?: ReactNode
++  readonly updateAvailable?: boolean | undefined
++  readonly versions?: ManagedItemVersions | undefined
++}
++
++export interface ManagedItemVersions {
++  readonly title: string
++  readonly subtitle?: string | undefined
++  readonly tone: 'info' | 'success' | 'warn' | 'error' | 'neutral'
++  readonly checking: boolean
++  readonly onCheck: () => void
++  readonly expandLabel?: string | undefined
++  readonly rows: readonly {
++    readonly version: string
++    readonly url: string
++    readonly date?: string | undefined
++    readonly tag?: string | undefined
++    readonly current: boolean
++    readonly action?: ReactNode
++  }[]
++  readonly advanced?: ReactNode
++}
++
++export interface ManagedItemDetailProps {
++  readonly renderDetail: (presentation: ManagedItemDetailPresentation) => ReactNode
++}
++
+ /** What a detail page is about: a bundle, one row of a bundle, or an official plugin listed by its `plugins.item` id. */
+ export type PluginsSubject =
+   | { readonly kind: 'bundle'; readonly pkg: PluginPackageRef }
+@@ -134,6 +179,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * `plugins.bundle.config` or `plugins.row.config` instead.
+      */
+     'plugins.item': { kind: 'list'; scope: 'root'; owner: PluginConfigViewProps }
++    /** Opt-in bundle presentation for an item whose lifecycle is managed by another host. */
++    'plugins.item.detail': { kind: 'keyed'; scope: 'root'; owner: ManagedItemDetailProps }
+     /**
+      * A bundle's own configuration, keyed by the bundle's package name and
+      * rendered on the bundle's page between its description and its rows
+diff --git a/packages/client/ui-plugin-manager/src/client/versions.tsx b/packages/client/ui-plugin-manager/src/client/versions.tsx
+index dfb352a89035f9266c050999e51c3836aecf4ed5..b7e003a90df8e4d3a14074103d1620e91b7c72ae 100644
+--- a/packages/client/ui-plugin-manager/src/client/versions.tsx
++++ b/packages/client/ui-plugin-manager/src/client/versions.tsx
+@@ -14,6 +14,7 @@ import {
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import { installable, updateCandidate, type PackageView, type UpdateState, type VersionCheck } from './manager-store.ts'
+ import { managementText, registryText, restartText, type Translate } from './presentation.ts'
++import type { ManagedItemVersions } from './slot-contract.ts'
+ import css from './PluginManagerPage.module.css'
+ 
+ /** The tone of a summary or outcome glyph. */
+@@ -299,6 +300,60 @@ export function VersionSection({ pkg, check, t, busy, onEnsure, onCheck, onUpdat
+   )
+ }
+ 
++/** The same version card for a host-managed, separately verified release catalog. */
++export function ManagedVersionSection({ versions, t }: { readonly versions: ManagedItemVersions; readonly t: Translate }): ReactNode {
++  const [open, setOpen] = useState(false)
++  const glyph = versions.checking ? <StateDot state="ongoing" size={14} />
++    : versions.tone === 'info' ? <IconDownloadOutlineRegular size={14} />
++      : versions.tone === 'success' ? <IconCheckOutlineRegular size={14} />
++        : <IconWarningOutlineRegular size={14} />
++  const summary = <>
++    <Glyph tone={versions.tone}>{glyph}</Glyph>
++    <span className={css.versionSummaryText}>
++      <span className={css.versionSummaryTitle}>{versions.title}</span>
++      {versions.subtitle === undefined ? null : <span className={css.versionSummarySub}>{versions.subtitle}</span>}
++    </span>
++  </>
++  return (
++    <section className={css.detailSection} data-plugin-versions>
++      <div className={css.sectionHead}>
++        <h4 className={css.sectionTitle}>{t('versionsTitle')}</h4>
++        <span className={css.versionSpacer} />
++        <Button variant="ghost" size="sm" icon={<IconRefreshOutlineRegular size={13} />} disabled={versions.checking} onClick={versions.onCheck}>
++          {t('versionsRecheck')}
++        </Button>
++      </div>
++      <div className={css.versionPanel}>
++        {versions.rows.length > 0
++          ? <button type="button" className={css.versionSummary} aria-expanded={open} onClick={() => { setOpen(!open) }}>
++            {summary}
++            <span className={css.versionSummaryEnd}>
++              {open ? t('versionsCollapse') : (versions.expandLabel ?? t('versionsDetails'))}
++              <IconChevronDownOutlineRegular className={css.detailsChevron} aria-hidden="true" />
++            </span>
++          </button>
++          : <div className={css.versionSummary} role="status">{summary}</div>}
++        {open && versions.rows.length > 0 ? <div className={css.versionBody}>
++          <ul className={css.versionRows}>
++            {versions.rows.map(row => <li key={row.version} className={css.versionRow} data-plugin-version={row.version}>
++              <div className={css.versionMain}>
++                <div className={css.versionTitle}>
++                  <a className={css.versionNumber} href={row.url} target="_blank" rel="noopener noreferrer"
++                    aria-current={row.current || undefined}>v{row.version}</a>
++                  {row.tag === undefined ? null : <Tag className={css.statusTag} tone="neutral">{row.tag}</Tag>}
++                </div>
++              </div>
++              {row.date === undefined ? null : <time className={css.versionDate}>{row.date}</time>}
++              {row.action === undefined ? null : <span className={css.versionAction}>{row.action}</span>}
++            </li>)}
++          </ul>
++        </div> : null}
++      </div>
++      {versions.advanced}
++    </section>
++  )
++}
++
+ /** The step labels of an update; the Host announces each step as it starts. */
+ function stepLabel(step: PluginUpdateStep, update: UpdateState, t: Translate): string {
+   switch (step) {

@@ -49,6 +49,9 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agentkit-star-harness', order: 91, label: 'Star Harness',
   }, props => h(StarHarnessItem, props)));
+  ctx.slots.inject('plugins.item.detail', () => ctx.slots.register({
+    name: 'plugins.item.detail', key: 'agentkit-star-harness',
+  }, props => h(StarHarnessItem, { ...props, view: 'page' })));
   ctx.effect(() => {
     const open = () => ctx.layout?.selectPanel?.('plugins');
     window.addEventListener('agentkit-studio:open-plugin-center', open);

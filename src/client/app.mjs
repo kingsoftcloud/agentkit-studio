@@ -93,7 +93,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createResourcePages({ ui, hostRemote, actions, window }));
   Object.assign(ui, createCodexPluginPages({ ui, hostRemote }));
   ui.KsxcSettings = createKsxcSettings({ React, hostRemote, window });
-  ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window, Switch: primitives.Switch });
+  ui.StarHarnessItem = createStarHarnessPage({ ui, hostRemote, window, Switch: primitives.Switch, Button: primitives.Button, RefreshIcon: primitives.IconRefreshOutlineRegular });
   Object.assign(ui, createDeliveryPages({ ui, hostRemote, actions, window, document }));
   Object.assign(ui, createScheduleDelivery({ ui, hostRemote }));
   Object.assign(ui, createAutomationPage({ ui, hostRemote, actions, window, document }));

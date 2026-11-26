@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "45ddecb1c064f2139fce411847d4e5229ff34665",
+  "headCommit": "59149a4aa81d57f6e1f1b11fb89704f0355198ff",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "23f1ae4f6090fc1090496214580f61b91bd2913a",
-  "sourceSha256": "0ef3ca4084fe1430c32696fb71b5fa28666afafc0efea6b5d7c2d167fa86522c",
+  "tree": "973e84f15785b9365c995fd62e0918f71d3c82c1",
+  "sourceSha256": "5353f4875baa5041171e24ac30881d5fd050b7969bc3b7531a6eedb0b34fa1ad",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "1b514a058e2efe7f241138ccd2339569307bc347e10b4ab524ed549ac16cc469"
+    "sha256": "8448eb91b5f77a6c96937ce3b28f13116941245708e14634c080fcbf5f5bfd2d"
   },
   "commits": [
     {
@@ -364,6 +364,12 @@
       "file": "090-harness-context-occupancy.patch",
       "commit": "45ddecb1c064f2139fce411847d4e5229ff34665",
       "sha256": "b4b31b3ec37ee0082a8083f91375139d8541e17aca443678c95d54c6749a7290"
+    },
+    {
+      "id": "091",
+      "file": "091-host-managed-plugin-details.patch",
+      "commit": "59149a4aa81d57f6e1f1b11fb89704f0355198ff",
+      "sha256": "29ec6349a5a460de3f8a5304ddc660e1d1b6dfa84efc3982c4f4512d451d22df"
     }
   ]
 }

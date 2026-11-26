@@ -130,12 +130,28 @@ async function pluginPage() {
   return panel;
 }
 
+async function expandVersionList(panel) {
+  const summary = panel.locator('[data-plugin-versions] button[aria-expanded]');
+  if (await summary.getAttribute('aria-expanded', { timeout: pluginControlTimeout }) === 'false') await summary.click();
+}
+
 async function install(version, action) {
   let panel = await pluginPage();
   const label = action === '安装' ? '安装 ' + version : action === '升级' ? '升级到 ' + version : action;
-  const control = panel.getByRole('button', { name: label, exact: true });
+  const nativeList = panel.locator('[data-plugin-versions]');
+  const native = await panel.getAttribute('data-plugin-detail') !== null;
+  let control = (native ? nativeList : panel).getByRole('button', { name: label, exact: true });
   if (action === '安装' || action === '升级') {
-    await expect(panel.getByRole('button', { name: '检查更新' })).toBeEnabled({ timeout: pluginControlTimeout });
+    await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
+  }
+  if (native) await expandVersionList(panel);
+  if (native && (action === '安装' || action === '升级') && !await control.isVisible()) {
+    // The curated list shows the recommended release. A pinned qualification
+    // version uses the same signed installer through the exact-version form.
+    await nativeList.getByText('按版本号安装或修复', { exact: true }).click();
+    await nativeList.getByRole('textbox', { name: '版本', exact: true }).fill(version);
+    control = nativeList.getByRole('button', { name: action, exact: true });
+  } else if (action === '安装' || action === '升级') {
     await expect(control).toBeVisible({ timeout: pluginControlTimeout });
     proof.selectedFromCatalog ??= {};
     proof.selectedFromCatalog[version] = true;
@@ -148,6 +164,7 @@ async function install(version, action) {
     }
   }, { timeout: 215000, intervals: [500, 1000, 1500] }).toBe(version);
   if (!await panel.isVisible()) panel = await pluginPage();
+  if (native) await expandVersionList(panel);
   await expect(panel.locator('[aria-current="true"]')).toHaveText('v' + version, { timeout: 45000 });
   await page.screenshot({ path: join(output, 'plugin-' + version + (action.startsWith('回退') ? '-restored' : '') + '.png'), timeout: 60000 });
 }
@@ -277,11 +294,18 @@ try {
   assert.notEqual(identity.pid, proof.processes.at(-1).pid);
   const opened = performance.now();
   const panel = await pluginPage();
-  await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible();
-  await expect(panel.getByText('执行多步任务', { exact: true })).toBeVisible();
+  if (await panel.getAttribute('data-plugin-detail') !== null) {
+    await expect(panel.getByRole('heading', { name: 'Star Harness', exact: true })).toBeVisible();
+    const image = panel.getByRole('img', { name: /金山云自研 Agent 运行框架/ });
+    await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+  } else {
+    await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible();
+    await expect(panel.getByText('执行多步任务', { exact: true })).toBeVisible();
+  }
   await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible();
   await page.screenshot({ path: join(output, 'plugin-overview.png'), timeout: 60000 });
-  await expect(panel.getByRole('button', { name: '检查更新' })).toBeEnabled({ timeout: pluginControlTimeout });
+  await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
   proof.firstPluginControlsMs = Math.round(performance.now() - opened);
   assert.equal(await page.evaluate(async route => {
     const response = await fetch(route + '?descriptor=1');
@@ -306,7 +330,9 @@ try {
   await quit();
   await boot();
   assert.notEqual(identity.pid, proof.processes.at(-1).pid);
-  await expect((await pluginPage()).locator('[aria-current="true"]')).toHaveText('v' + upgrade, { timeout });
+  const restartedPanel = await pluginPage();
+  if (await restartedPanel.getAttribute('data-plugin-detail') !== null) await expandVersionList(restartedPanel);
+  await expect(restartedPanel.locator('[aria-current="true"]')).toHaveText('v' + upgrade, { timeout });
   await reopenFirstConversation();
   await send(turns[2], secondModel);
   await checkRenderer(upgrade);
