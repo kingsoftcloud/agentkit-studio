@@ -1,0 +1,265 @@
+diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
+index 7a4bcea62e5249468227ba2d4b2cceff5365a3ad..edf1afd53d13f132f079be96ddd4cc489a8e886b 100644
+--- a/apps/desktop/src/bundled-plugin-alignment.ts
++++ b/apps/desktop/src/bundled-plugin-alignment.ts
+@@ -505,7 +505,8 @@ export function alignBundledProductPlugins(options: PluginAlignmentOptions): rea
+     for (const packageName of bundles) {
+       // Installation-owned bundles (`@deepseek-ai/*`) resolve from the sealed
+       // runtime by contract and are never managed as profile product plugins.
+-      if (packageName.startsWith(INSTALLATION_SCOPE)) continue
++      // RouteMind also resolves from the installation, but remains user-switchable.
++      if (packageName.startsWith(INSTALLATION_SCOPE) || packageName === 'routemind-studio') continue
+       const installedDir = join(options.profile, 'node_modules', packageName)
+       const installedPresent = existsSync(installedDir)
+       const installedVersion = readManifest(installedDir)?.version
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 6b14a5c3e82a349722e3f44a5274057f510879b1..28bcf0bbfe77e00c1caf2055c00a02cbd5405fec 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -244,7 +244,9 @@ export function createPluginProfile(projectDir: string, bundles: readonly string
+   if (!Array.isArray(current) || current.some(name => typeof name !== 'string' || name.trim() === '')) {
+     throw new Error('desktop project: invalid profile bundle list')
+   }
+-  const missing = added.filter(name => !current.includes(name))
++  // A marketplace install without a selection was already turned off.
++  const missing = added.filter(name => !current.includes(name)
++    && (name !== 'routemind-studio' || !Object.hasOwn(manifest.dependencies ?? {}, name)))
+   if (missing.length > 0) writeProfileManifest(projectDir, {
+     ...manifest,
+     dsh: { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles: [...current, ...missing] } },
+diff --git a/apps/desktop/tests/project-manager.spec.ts b/apps/desktop/tests/project-manager.spec.ts
+index c312697a2c083328fddc3077e99d3e956521807e..1161b7523add0ec4a5c6db7186c2d175a18572c7 100644
+--- a/apps/desktop/tests/project-manager.spec.ts
++++ b/apps/desktop/tests/project-manager.spec.ts
+@@ -75,6 +75,33 @@ describe('desktop external plugin profile', () => {
+     expect(bundles).toContain('@kingsoftcloud/agentkit-studio')
+   })
+ 
++  it.each(['fresh', 'new-default', 'market-enabled', 'market-disabled'])('honors the RouteMind selection for %s profiles', async (kind) => {
++    const { manager } = setup()
++    const routeMind = 'routemind-studio'
++    const manifestPath = join(manager.paths.profile, 'package.json')
++    const releaseManifest = join(manager.runtime.dsh, 'package.json')
++    if (kind !== 'fresh') {
++      await manager.applyRelease()
++      if (kind.startsWith('market-')) {
++        const manifest = readProfileManifest('dsh', manager.paths.profile)
++        manifest.dependencies = { ...manifest.dependencies, [routeMind]: '0.1.2' }
++        if (kind === 'market-enabled') manifest.dsh?.profile?.bundles?.push(routeMind)
++        writeFileSync(manifestPath, JSON.stringify(manifest))
++      }
++    }
++    writeFileSync(releaseManifest, JSON.stringify({ dsh: { profile: { bundles: ['@kingsoftcloud/agentkit-studio', routeMind] } } }))
++    await manager.applyRelease()
++    const read = () => readProfileManifest('dsh', manager.paths.profile)
++    const manifest = read()
++    expect(manifest.dsh?.profile?.bundles?.includes(routeMind)).toBe(kind !== 'market-disabled')
++    expect(manifest.dependencies?.[routeMind]).toBe(kind.startsWith('market-') ? '0.1.2' : undefined)
++    const next = manifest.dsh!.profile!
++    next.bundles = (next.bundles ?? []).filter(name => name !== routeMind)
++    writeFileSync(manifestPath, JSON.stringify(manifest))
++    await manager.applyRelease()
++    expect(read().dsh?.profile?.bundles).not.toContain(routeMind)
++  })
++
+   it('rejects malformed product activation history without changing the profile', async () => {
+     const { manager } = setup()
+     await manager.applyRelease()
+diff --git a/packages/boot/plugin-market/src/index.ts b/packages/boot/plugin-market/src/index.ts
+index 892af342483d75edddce6a0b097340ff56f35baf..9525f322a0efa26db7fdbc8da7905425c6b28a84 100644
+--- a/packages/boot/plugin-market/src/index.ts
++++ b/packages/boot/plugin-market/src/index.ts
+@@ -497,8 +497,8 @@ function listingOf(
+ function installationOf(name: string, version: string, bundles: readonly BundleInfo[]): MarketInstallation {
+   const bundle = bundles.find(candidate => candidate.name === name)
+   // An on-demand catalog entry is listed before the profile installs it.
+-  if (bundle === undefined || (!bundle.installed && bundle.availability !== 'installation')) return { status: 'not-installed' }
+-  if (!bundle.installed) return { status: 'provided', ...bundle.version === undefined ? {} : { installedVersion: bundle.version } }
++  if (bundle?.availability === 'installation') return { status: 'provided', ...bundle.version === undefined ? {} : { installedVersion: bundle.version } }
++  if (bundle === undefined || !bundle.installed) return { status: 'not-installed' }
+   if (bundle.version === undefined) return { status: 'different-version' }
+   const installedVersion = bundle.version
+   if (installedVersion === version) return { status: 'installed', installedVersion }
+diff --git a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+index d3433166b6ce235d0f8bf141632276b5e8b5cedc..50325462e5a99d63e2c4528ba2587b621c579e6a 100644
+--- a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
++++ b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+@@ -31,7 +31,7 @@ import {
+   type InstallInputError, type InstallState, type InstallSubject, type PackageRow, type PackageView,
+   type PluginManagerFace, type PluginManagerState, type RegistryChoice, type VersionCheck,
+ } from './manager-store.ts'
+-import { managementText, noticeText, packageText, registryText, restartText, rowText, type Translate } from './presentation.ts'
++import { isBuiltInRouteMind, managementText, noticeText, packageText, registryText, restartText, rowText, type Translate } from './presentation.ts'
+ import type { PluginPackageRef, PluginRowRef, PluginsSubject } from './slot-contract.ts'
+ import type { ConfigPageForm, ManagedItemDetailPresentation } from './slot-contract.ts'
+ import { ManagedVersionSection, UpdateDialog, VersionSection } from './versions.tsx'
+@@ -355,12 +355,13 @@ function RowsSection({ rows, t, resolveText, toggle, configure, stateLabel }: {
+ }
+ 
+ /** Declared install source and versions; unavailable files retain their recorded dependency spec. */
+-function SourceSection({ pkg, t, sourceUrl }: {
++function SourceSection({ pkg, t, sourceUrl, showBuiltIn = false }: {
+   readonly pkg: Pick<PackageView, 'source' | 'installed' | 'availability' | 'optional' | 'version' | 'installTarget'>
+   readonly t: Translate
+   readonly sourceUrl?: string
++  readonly showBuiltIn?: boolean
+ }): ReactNode {
+-  if (pkg.source === undefined && !pkg.installed && pkg.availability === 'installation' && !pkg.optional) return null
++  if (pkg.source === undefined && !pkg.installed && pkg.availability === 'installation' && !pkg.optional && !showBuiltIn) return null
+   return (
+     <section className={css.detailSection} data-plugin-source>
+       <h4 className={css.sectionTitle}>{t('sourceTitle')}</h4>
+@@ -809,7 +810,7 @@ function PackageDetail({
+                 {t('versionsUpdateLabel', { version: newer })}
+               </Button>
+             )}
+-            {pkg.installed || pkg.removable
++            {(pkg.installed || pkg.removable) && !isBuiltInRouteMind(pkg)
+               ? (
+                 <Button
+                   variant="outline"
+@@ -863,7 +864,7 @@ function PackageDetail({
+         <VersionSection
+           pkg={pkg} check={versions} t={t} busy={busy} onEnsure={onEnsureVersions} onCheck={onCheckVersions} onUpdate={onUpdateVersion}
+         />
+-        <SourceSection pkg={pkg} t={t} />
++        <SourceSection pkg={pkg} t={t} showBuiltIn={isBuiltInRouteMind(pkg)} />
+         {renderSlot('plugins.detail.section', { subject })}
+       </div>
+     </div>
+@@ -1628,8 +1629,9 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+   // unreadable selections remain manageable; Settings' Plugin list inspects the full Host inventory.
+   const listed = state.packages.filter(pkg => !HIDDEN_BUNDLES.has(pkg.name)
+     && (pkg.listedByDefault !== false || pkg.enabled || pkg.installed || rowsRunning(pkg))
+-    && (pkg.installed || pkg.official || pkg.error !== undefined))
+-  const mine = listed.filter(pkg => !pkg.official)
++    && (pkg.installed || pkg.official || pkg.error !== undefined || isBuiltInRouteMind(pkg)))
++  const builtIn = listed.filter(isBuiltInRouteMind)
++  const mine = listed.filter(pkg => !pkg.official && !isBuiltInRouteMind(pkg))
+   const official = listed.filter(pkg => pkg.official)
+   // Both lists read one order over the eligible bundles: the main list holds the always-held ones plus the held-back
+   // ones the profile enabled, and the More list holds the eligible ones, so enabling a bundle from the More list pins it
+@@ -1689,9 +1691,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+       onSetEnabled={(enabled) => { setBundleEnabled(pkg.name, enabled) }}
+     />
+   )
+-  const basicCards = ledger.items.map(item => (
+-    <ItemCard key={`item:${item.id}`} item={item} t={t} renderSlot={renderSlot} onOpen={() => { setView({ kind: 'item', id: item.id }) }} />
+-  ))
++  const basicCards = [
++    ...ledger.items.map(item => (
++      <ItemCard key={`item:${item.id}`} item={item} t={t} renderSlot={renderSlot} onOpen={() => { setView({ kind: 'item', id: item.id }) }} />
++    )),
++    ...builtIn.map(packageCard),
++  ]
+   const renderGroup = (id: 'basic' | 'extensions' | 'bundles', heading: string, cards: readonly ReactNode[]): ReactNode => {
+     const offersMore = id === 'extensions' && more.length > 0
+     if (cards.length === 0 && !offersMore) return null
+@@ -1948,7 +1953,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+         : (
+           <ConfirmDialog
+             name={packageText(
+-              state.packages.find(pkg => pkg.name === state.confirm?.packageName) ?? { name: state.confirm.packageName },
++              state.packages.find(pkg => pkg.name === state.confirm?.packageName) ?? { name: state.confirm.packageName, availability: 'missing' },
+               resolveText,
+             ).title}
+             t={t}
+diff --git a/packages/client/ui-plugin-manager/src/client/presentation.ts b/packages/client/ui-plugin-manager/src/client/presentation.ts
+index e532eadc9e1dd0093882d38ad8f2c65590bfeeb9..355d8c749038b3fb178358888a17f2a9eb5d2092 100644
+--- a/packages/client/ui-plugin-manager/src/client/presentation.ts
++++ b/packages/client/ui-plugin-manager/src/client/presentation.ts
+@@ -110,6 +110,11 @@ export function shortName(name: string): string {
+   return unscoped.replace(/^dsh-(?:host-|client-)?/, '')
+ }
+ 
++/** RouteMind joins the built-in group only when the desktop runtime carries it. */
++export function isBuiltInRouteMind(pkg: Pick<PackageView, 'name' | 'availability'>): boolean {
++  return pkg.name === 'routemind-studio' && pkg.availability === 'installation'
++}
++
+ /**
+  * Resolve installed package metadata without changing its technical identity.
+  * @param pkg - package identity and local metadata.
+@@ -117,8 +122,16 @@ export function shortName(name: string): string {
+  * @returns localized copy with a technical-name fallback and the independent beta status.
+  */
+ export function packageText(
+-  pkg: Pick<PackageView, 'name' | 'meta'>, resolveText: PluginManagerFace['resolveText'],
++  pkg: Pick<PackageView, 'name' | 'meta' | 'availability'>, resolveText: PluginManagerFace['resolveText'],
+ ): { title: string; description: string | undefined; beta: boolean } {
++  if (isBuiltInRouteMind(pkg)) return {
++    title: resolveText({ zh: 'RouteMind 智能路由', en: 'RouteMind' }),
++    description: resolveText({
++      zh: '通过 RouteMind 网关自动选择模型，在对话选模菜单中查看模型评分和价格。',
++      en: 'Route requests through the RouteMind gateway and see model scores and prices in the conversation model picker.',
++    }),
++    beta: false,
++  }
+   return {
+     title: pkg.meta?.title === undefined ? pkg.name : resolveText(pkg.meta.title),
+     description: pkg.meta?.description === undefined ? undefined : resolveText(pkg.meta.description) || undefined,
+diff --git a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
+index 29dd9ffd63fc9c3d839cf598ac0a31c1d2b7e465..afdddc1a586c9307b4ba39b05d58abe00421b3ce 100644
+--- a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
++++ b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
+@@ -21,7 +21,7 @@ import type { PluginTab } from '../src/client/tab-ledger.ts'
+ import type { ConfigLedger } from '../src/client/config-ledger.ts'
+ import { rowKey, type InstallState, type PackageRow, type PackageView, type PluginManagerState, type UpdateState, type VersionCheck } from '../src/client/manager-store.ts'
+ import { INSTALL_GIT_EXAMPLE, INSTALL_PATH_EXAMPLE, en, zh, type PluginManagerLocaleKey } from '../src/client/locales.ts'
+-import type { PluginActivationOwnerProps, PluginAddActionsProps, PluginDetailProps, PluginTabProps, PluginsSubject } from '../src/client/slot-contract.ts'
++import type { PluginActivationOwnerProps, PluginAddActionsProps, ManagedItemDetailProps, PluginDetailProps, PluginTabProps, PluginsSubject } from '../src/client/slot-contract.ts'
+ 
+ beforeEach(() => { localStorage.clear() })
+ afterEach(cleanup)
+@@ -192,7 +192,7 @@ function renderTab(
+       if (name === 'plugins.bundle.activation') return body('activation', owner)
+       if (name === 'plugins.add.actions') return body('add', owner)
+       if (name === 'plugins.tab') return body('tab', owner)
+-      if (name.startsWith('plugins.detail.')) return body('detail', owner)
++      if (name === 'plugins.item.detail' || name.startsWith('plugins.detail.')) return body('detail', owner)
+       if (!('view' in owner) || (owner.view !== 'summary' && owner.view !== 'page')) {
+         throw new Error('Plugin configuration fixture requires a summary or page view')
+       }
+@@ -228,6 +228,42 @@ function renderTab(
+ }
+ 
+ describe('PluginManagerPage', () => {
++  it.each([false, true])('renders bundled RouteMind once in built-ins, with an old marketplace dependency: %s', (installed) => {
++    const name = 'routemind-studio'
++    const { actions } = renderTab({ packages: [pkg({ name, availability: 'installation', version: '0.1.2', installed, removable: false })] })
++    const selector = '[data-plugin-package="routemind-studio"]'
++    expect(document.querySelectorAll(selector)).toHaveLength(1)
++    const basic = document.querySelector('[data-plugin-group="basic"]') as HTMLElement
++    expect(basic.querySelector(selector)).toBeTruthy()
++    const toggle = within(basic).getByRole('switch', { name: 'Enable RouteMind' })
++    expect(toggle.getAttribute('aria-checked')).toBe('true')
++    fireEvent.click(toggle)
++    expect(actions.setEnabled).toHaveBeenCalledExactlyOnceWith(name, false)
++    fireEvent.click(within(basic).getByRole('button', { name: 'View RouteMind' }))
++    expect(screen.getByRole('heading', { name: 'RouteMind' })).toBeTruthy()
++    expect(within(document.querySelector('[data-plugin-source]') as HTMLElement).getByText(en.sourceBuiltIn)).toBeTruthy()
++    expect(screen.queryByRole('button', { name: 'Uninstall RouteMind' })).toBeNull()
++  })
++
++  it('renders the native document, components and actions for a host-managed Star Harness item', () => {
++    const id = 'agentkit-star-harness'
++    const { navigation } = renderTab({}, { items: [{ id, label: 'Star Harness' }], managedDetails: new Set([id]) }, {
++      [`plugins.item.detail:${id}`]: (_view, owner) => (owner as ManagedItemDetailProps).renderDetail({
++        name: id, regionLabel: 'Star Harness details', version: '0.0.32', description: 'Studio native tasks.',
++        headerActions: <button type="button">Roll back</button>,
++        document: { markdown: '## Resume a task', images: {} },
++        components: [{ id: 'engine', moduleName: '@kingsoftcloud/agentkit-harness-node', title: 'Harness engine',
++          description: 'Executes tasks', state: 'active', stateLabel: 'Running' }],
++        source: { label: 'Signed releases', url: 'https://releases.example.org/harness' },
++      }),
++    })
++    act(() => { navigation.actions.setView({ kind: 'item', id }) })
++    const panel = within(screen.getByRole('region', { name: 'Star Harness details' }))
++    expect(panel.getByRole('heading', { name: 'Resume a task' })).toBeTruthy()
++    expect(panel.getByText('Harness engine')).toBeTruthy()
++    expect(panel.getByRole('button', { name: 'Roll back' })).toBeTruthy()
++  })
++
+   it('shows no tabs without contributions, and switches between Installed and a contributed tab', () => {
+     const { actions, navigation, setTabs } = renderTab({ packages: [pkg()] }, {}, {
+       'plugins.tab:discover': (_view, owner) => {

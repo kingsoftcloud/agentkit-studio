@@ -152,6 +152,35 @@ test('chat selector label: name, price and measured scores; trigger stays name-o
   assert.doesNotMatch(unknown, /编程|¥/);
 });
 
+test('radar and price comparisons omit invalid values instead of rendering them', () => {
+  const radar = renderToStaticMarkup(renderRadar(createElement, { agentic: NaN, speed: 150, cost: -25 }));
+  assert.match(radar, /编程 Agent 暂无数据，速度 100，性价比 0/);
+  assert.doesNotMatch(radar, /NaN|Infinity/);
+  const price = (input, output) => ({ pricing: { currency: 'USD', input, output } });
+  assert.equal(priceMultiplier(price(1, 1), price(0, 0)), null);
+  assert.equal(priceMultiplier(price(1, 1), price(Number.MIN_VALUE, Number.MIN_VALUE)), null);
+  assert.equal(priceMultiplier(price(2, 2), price(1, 1)), 2);
+});
+
+test('the trigger observes the menu name without holding open stale price eligibility', async () => {
+  const { createModelCardIndex } = await import('../src/client/dsh/model-label.mjs');
+  const provider = 'agentkit-studio-fixture';
+  const card = { ...modelCard(flash), displayName: 'Verified Display Name' };
+  let calls = 0;
+  const index = createModelCardIndex(async () => { calls++; return { enabled: true, cardsByProvider: { [provider]: { [flash.id]: card } } }; });
+  let triggerUpdates = 0;
+  const closeTrigger = index.subscribe(() => { triggerUpdates++; }, { menu: false });
+  assert.equal(calls, 0);
+  const closeMenu = index.subscribe(() => {});
+  await index.refresh();
+  assert.equal(triggerUpdates, 1);
+  assert.equal(index.card(provider, flash.id), card);
+  closeMenu();
+  assert.equal(index.card(provider, flash.id), null);
+  assert.equal(index.card(provider, flash.id, { allowCached: true }), card);
+  closeTrigger();
+});
+
 test('model labels show scores only during an enabled plugin generation', async () => {
   const { createModelCardIndex } = await import('../src/client/dsh/model-label.mjs');
   const card = modelCard(flash);

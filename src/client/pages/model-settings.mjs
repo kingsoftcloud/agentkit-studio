@@ -520,7 +520,11 @@ export function createModelSettingsSection({
       }
       const stored = storedConnectionFor(profile);
       if (stored && profileCredential(stored).configured && typeof hostRemote.modelCatalog === 'function') {
-        return hostRemote.modelCatalogWithCards?.(stored.id) ?? hostRemote.modelCatalog(stored.id);
+        try {
+          const catalog = await hostRemote.modelCatalogWithCards?.(stored.id);
+          if (catalog) return catalog;
+        } catch { /* The plain catalog is still available when card loading fails. */ }
+        return hostRemote.modelCatalog(stored.id);
       }
       throw new Error('请先填写 API Key');
     };

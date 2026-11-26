@@ -50,6 +50,7 @@ typings/
 
 # Output of 'npm pack'
 *.tgz
+!/vendor/routemind/routemind-studio-*.tgz
 
 # Yarn Integrity file
 .yarn-integrity

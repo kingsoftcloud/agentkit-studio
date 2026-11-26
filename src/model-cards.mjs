@@ -255,7 +255,8 @@ export function modelCard(raw = {}, { live, reasoningLevels } = {}) {
 export function priceMultiplier(card, reference) {
   const own = blendedPrice(card?.pricing), base = blendedPrice(reference?.pricing);
   if (own === null || !base || card.pricing.currency !== reference.pricing.currency) return null;
-  return Math.round(own / base * 100) / 100;
+  const multiplier = Math.round(own / base * 100) / 100;
+  return Number.isFinite(multiplier) ? multiplier : null;
 }
 
 /** List price as "¥2/¥8" (input/output per 1M tokens), "起" for tiered prices; '' when unknown. */

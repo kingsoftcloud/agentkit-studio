@@ -2957,7 +2957,9 @@
         "evidence": "Studio signed Star Harness detail integration."
       },
       "verification": {
-        "hostTests": [],
+        "hostTests": [
+          "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
+        ],
         "integrations": [
           "source",
           "dsh-web",
@@ -2966,12 +2968,66 @@
       },
       "sequence": 60,
       "sha256": "c183c05383bfeb04b238fa99da1fb2ac18fc6aecc7972986fad114336a06ad2f"
+    },
+    {
+      "id": "092",
+      "file": "092-routemind-desktop-bundle.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "medium",
+      "maintainerRole": "Studio desktop and plugin maintainers",
+      "removeWhen": "The pinned DSH release supports switchable product bundles in the native built-ins group.",
+      "contracts": [
+        "Installation-owned RouteMind appears once in the native built-ins group and exposes the normal bundle switch and source details.",
+        "Desktop defaults select RouteMind for fresh profiles and profiles without a previous installation. Existing selection and subsequent opt-out persist.",
+        "Discover identifies installation-owned bundles as provided even if the profile previously installed a copy."
+      ],
+      "affectedPackages": [
+        "apps/desktop",
+        "packages/boot/plugin-market",
+        "packages/client/ui-plugin-manager"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/bundled-plugin-alignment.ts",
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/tests/project-manager.spec.ts",
+        "packages/boot/plugin-market/src/index.ts",
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx",
+        "packages/client/ui-plugin-manager/src/client/presentation.ts",
+        "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
+      ],
+      "dependsOn": [
+        "074",
+        "078",
+        "087",
+        "088",
+        "091"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio Desktop ships a separately released RouteMind bundle."
+      },
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/project-manager.spec.ts",
+          "packages/boot/plugin-market/tests/detail-remote.spec.ts",
+          "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "product-profiles",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 61,
+      "sha256": "866ef7157855f3b71e00543e5e40d1af227cb5126de7fafbb522b9df76b8ab70"
     }
   ],
-  "patchedTree": "e509f2b296556798a57b287b199c08370da369e6",
-  "patchedSourceSha256": "7d4e26ab236a27d9b99cd14425a958c3a8fbf7b082d9c1f77bb8fbcad187231f",
+  "patchedTree": "d08acdb9b0c346747deb4010f4e68edbdd111422",
+  "patchedSourceSha256": "8346f0d444ec739fb4b34c4668c2dc4c3f21d152c25da7cd3b93a63eb456b2f4",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "002adb8fe948e6fb3460d5945444dbcb5ca8c1f67c65065c654dacfbf9a21056"
+    "sha256": "74870d18c0067c2329f7bd5784270910c916e8a8a30e5f95038b3d8b2fe6cbcd"
   }
 }

@@ -4,7 +4,7 @@ import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { STUDIO_REASONING_LEVELS, studioReasoning } from './model-reasoning.mjs';
 import { catalogReasoningMetadata } from './model-catalog-reasoning.mjs';
 import { modelCard } from './model-cards.mjs';
-import { dshModelRoute } from './model-route.mjs';
+import { dshModelRoute, HARNESS_SERVICE_MODEL_PROVIDER } from './model-route.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from './model-capabilities.mjs';
 import { hasConfiguredAuthentication, providerWireApi, requestHeaders } from './model-profile-contract.mjs';
@@ -138,8 +138,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       return new Map((Array.isArray(body?.models) ? body.models : []).filter(card => typeof card?.name === 'string').map(card => [card.name, card]));
     } catch { return new Map(); }
   }
-  async function displayModels(selected, refresh = false) {
-    const snapshot = await gatewayCatalog(selected, refresh);
+  function displayModels(selected, snapshot) {
     if (!displayCatalogs.has(snapshot)) {
       displayCatalogs.set(snapshot, routeMindCards(selected.baseUrl, snapshot.headers, snapshot.raw).then(live =>
         snapshot.items.map((item, index) => ({
@@ -150,9 +149,10 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     return displayCatalogs.get(snapshot);
   }
   async function catalogForDisplay(selected) {
-    if (!await routeMindActive()) return gatewayModels(selected, true);
-    const items = await displayModels(selected, true);
-    return await routeMindActive() ? items : gatewayModels(selected);
+    const snapshot = await gatewayCatalog(selected, true);
+    if (!await routeMindActive()) return snapshot.items;
+    const items = await displayModels(selected, snapshot);
+    return await routeMindActive() ? items : snapshot.items;
   }
   /**
    * Display cards for every model the enabled profiles' catalogs list, keyed by
@@ -163,11 +163,21 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const inactive = { enabled: false, cards: {}, cardsByProvider: {} };
     if (!await routeMindActive()) return inactive;
     const { values } = await configuration.resolve();
-    const ids = (values.modelProfiles || []).filter(item => item.enabled !== false).map(item => item.id);
-    const lists = await Promise.all((ids.length ? ids : ['']).map(async id => {
+    const enabledProfiles = (values.modelProfiles || []).filter(item => item.enabled !== false);
+    const candidates = enabledProfiles.length ? enabledProfiles : [{ id: 'default' }];
+    const seen = new Set([HARNESS_SERVICE_MODEL_PROVIDER]), ambiguous = new Set();
+    const routes = candidates.map(candidate => {
+      const provider = dshModelRoute(candidate);
+      if (seen.has(provider)) ambiguous.add(provider);
+      seen.add(provider);
+      return { id: candidate.id, provider };
+    });
+    // Existing DSH routes can outlive a conflicting edit. Avoid attaching any
+    // gateway's price to that route, even if only one catalog can be read.
+    const lists = await Promise.all(routes.filter(route => !ambiguous.has(route.provider)).map(async ({ id, provider }) => {
       try {
         const selected = await profile(id);
-        return { provider: dshModelRoute(selected), items: await displayModels(selected) };
+        return { provider, items: await displayModels(selected, await gatewayCatalog(selected)) };
       } catch { return null; }
     }));
     if (!await routeMindActive()) return inactive;
@@ -179,7 +189,8 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
         else if (byModel.get(item.id) !== item.card) byModel.set(item.id, null);
       }
     }
-    return { enabled: true, cards: Object.fromEntries([...byModel].filter(([, card]) => card)), cardsByProvider: Object.fromEntries(byProvider) };
+    return { enabled: true, cards: ambiguous.size ? {} : Object.fromEntries([...byModel].filter(([, card]) => card)),
+      cardsByProvider: Object.fromEntries(byProvider) };
   }
   async function catalog(id, { includeCards = false } = {}) {
     const selected = await profile(id);

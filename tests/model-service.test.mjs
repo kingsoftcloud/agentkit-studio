@@ -370,3 +370,38 @@ test('model cards and pricing follow the live RouteMind plugin inventory', async
   assert.equal(await isRouteMindPluginActive({ list: async () => { throw Error('unavailable'); } }), false);
   assert.equal(await isRouteMindPluginActive(), false);
 });
+
+test('ambiguous legacy routes cannot attach another gateway price or use the Star Harness route', async () => {
+  const profiles = ['a.b', 'a_b', 'harness-service', 'valid'].map(id => ({ id, provider: 'custom',
+    modelName: 'same-model', baseUrl: 'https://gateway.test/v1', credentialName: id }));
+  const reads = [];
+  const service = createModelService({
+    routeMindActive: () => true,
+    configuration: configuration({ modelProfiles: profiles }),
+    credentials: { resolve: async value => { reads.push(value); return { value }; } },
+    fetchImpl: async () => Response.json({ data: [{ id: 'same-model', pricing: { prompt: '5元', completion: '10元' } }] }),
+  });
+  const { cards, cardsByProvider } = await service.cards();
+  assert.deepEqual(reads, ['valid']);
+  assert.deepEqual(cards, {});
+  assert.deepEqual(Object.keys(cardsByProvider), ['agentkit-studio-valid']);
+  assert.equal(cardsByProvider['agentkit-studio-valid']['same-model'].pricing.input, 5);
+});
+
+test('disabling RouteMind during card loading returns the same plain catalog without another fetch', async () => {
+  let enabled = true;
+  const reads = [];
+  const service = createModelService({
+    routeMindActive: () => enabled,
+    configuration: configuration({ modelProfiles: [{ id: 'gateway', provider: 'custom', modelName: 'same-model', baseUrl: 'https://gateway.test/v1' }] }),
+    credentials: { resolve: async () => ({ value: 'fixture' }) },
+    fetchImpl: async url => {
+      reads.push(url);
+      if (url.endsWith('/routemind/models')) { enabled = false; return Response.json({ models: [] }); }
+      return Response.json({ data: [{ id: 'same-model', owned_by: 'routemind' }] });
+    },
+  });
+  const result = await service.catalog('gateway', { includeCards: true });
+  assert.equal(result.items[0].card, undefined);
+  assert.deepEqual(reads, ['https://gateway.test/v1/models', 'https://gateway.test/routemind/models']);
+});

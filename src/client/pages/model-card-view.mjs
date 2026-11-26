@@ -46,7 +46,8 @@ export function renderRadar(h, values) {
   const width = 320, height = 230, cx = 160, cy = 118, r = 72;
   const axes = SCORE_DIMENSIONS.map(([key, label], index) => {
     const angle = -Math.PI / 2 + index * (2 * Math.PI / SCORE_DIMENSIONS.length);
-    return { key, label, angle, value: typeof values[key] === 'number' ? values[key] : null };
+    const score = values?.[key];
+    return { key, label, angle, value: Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : null };
   });
   const point = (angle, radius) => [cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius];
   const ring = level => axes.map(axis => point(axis.angle, r * level).join(',')).join(' ');

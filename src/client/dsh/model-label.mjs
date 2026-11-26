@@ -6,6 +6,7 @@ import { renderModelScoreBars } from '../pages/model-card-view.mjs';
 export function createModelCardIndex(load) {
   let cards = {}, cardsByProvider = {}, enabled = false, checked = false, pending = null, version = 0;
   const listeners = new Set();
+  let menuListeners = 0;
   const emit = () => {
     version += 1;
     for (const listener of listeners) listener();
@@ -37,16 +38,22 @@ export function createModelCardIndex(load) {
     refresh,
     invalidate,
     get version() { return version; },
-    subscribe(listener) {
+    subscribe(listener, { menu = true } = {}) {
       listeners.add(listener);
+      if (menu) menuListeners += 1;
       return () => {
         listeners.delete(listener);
-        // Revalidate the plugin when the model menu opens again.
+        const lastMenu = menu && --menuListeners === 0;
         if (!listeners.size) invalidate();
+        else if (lastMenu) {
+          // Keep the trigger's name while the next menu opening revalidates prices.
+          checked = false;
+          pending = null;
+        }
       };
     },
-    card(provider, id) {
-      if (!enabled || !id) return null;
+    card(provider, id, { allowCached = false } = {}) {
+      if (!enabled || !id || (!checked && !allowCached)) return null;
       const catalog = provider === HARNESS_SERVICE_MODEL_PROVIDER
         ? cards
         : Object.hasOwn(cardsByProvider, provider) ? cardsByProvider[provider] : {};
@@ -81,21 +88,25 @@ export function installModelLabel(ctx, { React, Tag, hostRemote, window }) {
   function ModelLabel({ provider, model, placement }) {
     const [, setVersion] = React.useState(index.version);
     React.useEffect(() => {
-      if (placement === 'trigger') return;
+      const menu = placement !== 'trigger';
       const unsubscribe = index.subscribe(() => {
         setVersion(index.version);
-        index.refresh();
-      });
-      index.refresh();
+        if (menu) index.refresh();
+      }, { menu });
+      if (menu) index.refresh();
+      setVersion(index.version);
       return unsubscribe;
     }, [placement]);
-    return modelLabel(React.createElement, Tag, index.card(provider?.id, model?.id), model, placement);
+    const card = index.card(provider?.id, model?.id, { allowCached: placement === 'trigger' });
+    return modelLabel(React.createElement, Tag, card, model, placement);
   }
   ctx.effect(() => {
     const invalidate = () => index.invalidate();
+    const unsubscribe = ctx.remote?.$on?.('plugin-manager/changed', invalidate);
     window.addEventListener('agentkit-studio:model-credential-changed', invalidate);
     window.addEventListener('agentkit-studio:connection-reset', invalidate);
     return () => {
+      unsubscribe?.();
       window.removeEventListener('agentkit-studio:model-credential-changed', invalidate);
       window.removeEventListener('agentkit-studio:connection-reset', invalidate);
     };
