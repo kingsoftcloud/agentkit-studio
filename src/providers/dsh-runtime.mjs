@@ -120,6 +120,15 @@ function textOf(message) {
   return content.filter(part => part?.type === 'text' || part?.kind === 'text')
     .map(part => String(part.text || part.value || '')).join('');
 }
+function previousNativeRun(agent, sessionId) {
+  const session = agent?.session;
+  if (!sessionId || session?.id !== sessionId || typeof session.snapshotEvents !== 'function'
+    || typeof session.isOwnSeq !== 'function') return null;
+  const entry = session.snapshotEvents().findLast(event => event.type === NATIVE_ENGINE_EVENT
+    && event.ignorable === true && session.isOwnSeq(event.seq));
+  if (!entry || entry.data?.event?.kind === 'run.terminal') return null;
+  return { runId: entry.data?.runId, cursor: entry.data?.event?.seq };
+}
 function nativeInboxGuidance(agent, messages) {
   if (!agent?.inbox || !agent.session || typeof agent.session.append !== 'function') return {};
   const { inbox, session } = agent;
@@ -747,7 +756,10 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               ...(runtime === 'native-engine' ? { inputImages: Array.isArray(content) ? content.filter(part => part.type === 'image_url') : [] }
                 : { imageInputs: history.flatMap(message => Array.isArray(message.content)
                   ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : []) }),
-              ...(runtime === 'native-engine' ? nativeInboxGuidance(toolAgent, options.messages) : {}),
+              ...(runtime === 'native-engine' ? {
+                ...nativeInboxGuidance(toolAgent, options.messages),
+                previousRun: () => previousNativeRun(toolAgent, String(options.sessionId || '')),
+              } : {}),
               signal: options.signal,
               systemPrompt: resources.systemPrompt || '',
               dynamicTools,

@@ -374,6 +374,31 @@ test('an unbound workspace uses its own model even while a managed Harness is en
   assertContinuousBlocks(chunks, [[0, 'text', 'Local Native response']]);
 });
 
+test('the Native adapter offers the last owned Harness event even after an error-only turn', async t => {
+  const bridge = createRuntimeBridge(); t.after(() => bridge.close());
+  const sessionId = 'interrupted-session', runId = 'studio-' + 'a'.repeat(32);
+  const row = (seq, runId, kind, cursor) => ({ seq, type: 'agentkit/native-engine-event', ignorable: true,
+    data: { runId, event: { kind, seq: cursor } } });
+  const events = [
+    row(10, runId, 'effect.prepared', 35),
+    { seq: 11, type: 'turn/end', data: { reason: { kind: 'error' } } },
+    row(12, 'studio-' + 'b'.repeat(32), 'effect.prepared', 8),
+    { seq: 13, type: 'user/message' },
+  ];
+  const agent = { session: { id: sessionId, header: { cwd: '/tmp/native-resume-fixture' },
+    snapshotEvents: () => events, isOwnSeq: seq => seq !== 12 } };
+  bridge.bindRoute(sessionId, { agentId: 'native-resume', runtime: 'native-engine', local: true, agent });
+  const observed = [];
+  const adapter = createDshRuntimeAdapter({ bridge, nativeEngineRuntime: { usesService: true, async *stream(options) {
+    observed.push(options.previousRun());
+    yield { type: 'text', text: 'resumed' };
+  } } });
+  await Array.fromAsync(adapter.stream({ ...prompt, sessionId }));
+  events.push(row(14, runId, 'run.terminal', 41));
+  await Array.fromAsync(adapter.stream({ ...prompt, sessionId }));
+  assert.deepEqual(observed, [{ runId, cursor: 35 }, null]);
+});
+
 test('Native body fragments enter the live Session presentation without contaminating the final reply', async t => {
   const bridge = createRuntimeBridge(); t.after(() => bridge.close());
   const stored = [], sessionId = 'body-preview-session';

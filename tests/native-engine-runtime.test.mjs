@@ -743,6 +743,54 @@ for (const settles of [true, false]) test(`Studio resumes an output-limited Run 
     assert.ok(f.model.requests.at(-1).messages.some(message => message.role === 'tool'));
   });
 
+for (const previous of ['interrupted', 'running', 'completed', 'missing', 'resume race', 'new instruction']) {
+  test(`managed Harness dispatches Continue according to the previous Run status (${previous})`, async () => {
+    const runId = 'studio-' + 'a'.repeat(32);
+    const cwd = realpathSync(tmpdir());
+    const staged = [];
+    let inspectedPrevious = false;
+    const binding = { endpoint: 'http://127.0.0.1:8787', token: 'fixture-engine-service-token',
+      async fetchImpl(_url, init) {
+        const frame = JSON.parse(init.body);
+        staged.push({ method: frame.method, params: frame.params });
+        const reply = result => Response.json({ jsonrpc: '2.0', id: frame.id, result });
+        const reject = (code, message) => Response.json({ jsonrpc: '2.0', id: frame.id, error: { code, message } });
+        if (frame.method === 'initialize') return reply({ capabilities: { methods: ['run/resume'] } });
+        if (frame.method === 'run/status') {
+          if (frame.params.runId !== runId || inspectedPrevious)
+            return reply({ terminal: true, running: false, finalText: 'continued', phase: 'completed' });
+          inspectedPrevious = true;
+          if (previous === 'missing') return reject(-32011, 'run not found');
+          return reply({ runId, running: previous === 'running', terminal: previous === 'completed', cursor: 9 });
+        }
+        if (frame.method === 'run/resume') return previous === 'resume race' ? reject(-32012, 'run is already running') : reply({ runId });
+        if (frame.method === 'run/start') return reply({ runId: frame.params.runId });
+        if (frame.method === 'run/events') return reply({ events: [], cursor: frame.params.cursor, running: false });
+        assert.fail(`unexpected RPC ${frame.method}`);
+      },
+    };
+    const starHarness = { enabled: true, route: () => ({ managed: true, workspaceRoot: cwd }),
+      acquire: async () => ({ connection: binding, release() {} }) };
+    const runtime = createNativeEngineRuntime({ stateRoot: cwd, env: {}, starHarness });
+    const result = collect(runtime.stream({ cwd, input: previous === 'new instruction' ? '继续，先检查其他文件' : '继续',
+      sessionId: 'same-session', turnId: 'new-turn', previousRun: () => ({ runId, cursor: 7 }) }));
+    if (previous === 'running' || previous === 'resume race') {
+      await assert.rejects(result, { code: 'NATIVE_ENGINE_RUN_BUSY' });
+      assert.equal(staged.some(call => ['run/start', 'run/events', 'run/cancel'].includes(call.method)), false);
+      assert.equal(staged.some(call => call.method === 'run/resume'), previous === 'resume race');
+      return;
+    }
+    assert.equal((await result).findLast(chunk => chunk.type === 'text').text, 'continued');
+    const resuming = previous === 'interrupted';
+    const start = staged.find(call => call.method === 'run/start');
+    const resume = staged.find(call => call.method === 'run/resume');
+    assert.equal(resume?.params.runId, resuming ? runId : undefined);
+    if (resuming) assert.equal(start, undefined);
+    else assert.notEqual(start.params.runId, runId);
+    assert.equal(staged.find(call => call.method === 'run/events').params.cursor, resuming ? 7 : 0);
+  });
+}
+
 test('reconnecting an active Run refuses a replacement service that lacks its tool policy', async () => {
   const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
   const contract = 'agentkit.native-agent-policy/v1';
