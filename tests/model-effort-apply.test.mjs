@@ -58,7 +58,7 @@ test('probing then applying writes the usable levels into the saved profile', as
   await view.settle();
   await view.openEditor();
   // Run the probe, then apply the levels it found (low/high accepted, max rejected).
-  await view.click(node => node.type === 'button' && (node.children || []).includes('探测档位'));
+  await view.click(node => node.type === 'button' && node.props['aria-label'] === '探测档位');
   await view.settle();
   // 探测完成后自动写回，不需要二次点「应用」。
   assert.ok(view.text().includes('已应用探测到的 2 个档位'));

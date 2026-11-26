@@ -483,9 +483,18 @@ export default String.raw`
 [data-studio-model-settings] .ms-field-head {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
+  min-height: 16px;
   gap: var(--ms-space-1);
 }
+[data-studio-model-settings] .ms-probe-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; margin: 0;
+  border: 0; background: transparent; color: var(--ms-ink-2);
+  font-size: 13px; line-height: 1; cursor: pointer; border-radius: 3px;
+}
+[data-studio-model-settings] .ms-probe-icon:hover:not(:disabled) { color: var(--ms-ink-1); background: var(--ms-surface-2, rgba(0,0,0,.05)); }
+[data-studio-model-settings] .ms-probe-icon:disabled { opacity: .4; cursor: default; }
 [data-studio-model-settings] .ms-field {
   display: grid;
   gap: var(--ms-space-1);

@@ -281,7 +281,7 @@ test('reprobing a saved model leaves its range and default intact even after a t
   } });
   await view.settle();
   await selectModel(view, 0);
-  await button(view, '探测档位').props.onClick();
+  await view.nodes().find(n => n.type === 'button' && n.props['aria-label'] === '探测档位').props.onClick();
   await view.settle();
   assert.equal(field(view, '思考等级').props.value, 'high');
   assert.deepEqual(field(view, '思考等级').children.map(option => option.props.value), ['', 'low', 'high']);
@@ -294,7 +294,7 @@ test('reprobing a saved model leaves its range and default intact even after a t
   assert.deepEqual(view.values.modelProfiles[0].reasoningLevels, ['low', 'high']);
 
   outcome = 'timeout';
-  await button(view, '探测档位').props.onClick();
+  await view.nodes().find(n => n.type === 'button' && n.props['aria-label'] === '探测档位').props.onClick();
   await view.settle();
   assert.match(view.text(), /超时 高/);
   assert.equal(field(view, '思考等级').props.value, 'high');
