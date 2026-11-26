@@ -8,11 +8,13 @@ const failure = (code, message) => Object.assign(new Error(message), { code });
 
 export async function resolveConfiguredCodexModel({ provider, model }, models) {
   const settings = await models.settings();
-  const profiles = (settings.modelProfiles || []).filter(item => item.enabled !== false && dshModelRoute(item) === provider);
-  if (profiles.length !== 1) throw failure('CODEX_MODEL_PROVIDER_UNAVAILABLE', '所选模型提供商不存在、已停用或路由重复，请检查模型设置。');
-  // Resolve by the selected route, not the global default: equal model names
-  // on two gateways must never redirect a credential to the other gateway.
-  const profile = await models.profile(profiles[0].id);
+  // A route is a connection and serves several models, so pick the profile whose
+  // model the caller selected. Resolve by the selected route, not the global
+  // default: equal model names on two gateways must never redirect a credential
+  // to the other gateway.
+  const routed = (settings.modelProfiles || []).filter(item => item.enabled !== false && dshModelRoute(item) === provider);
+  if (!routed.length) throw failure('CODEX_MODEL_PROVIDER_UNAVAILABLE', '所选模型提供商不存在、已停用或路由重复，请检查模型设置。');
+  const profile = await models.profile((routed.find(item => item.modelName === model) || routed[0]).id);
   if (model !== profile.modelName && !(await models.catalog(profile.id)).items.some(item => item.id === model)) {
     throw failure('CODEX_MODEL_UNAVAILABLE', '所选模型不在此提供商的目录中，请重新选择模型。');
   }

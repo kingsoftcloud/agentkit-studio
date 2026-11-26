@@ -27,12 +27,21 @@ test('Codex uses the exact selected profile and its credentials, including catal
   await assert.rejects(resolveConfiguredCodexModel({ provider: 'other', model: 'same-model' }, models), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' });
 });
 
-test('disabled and colliding provider routes cannot redirect a Codex credential', async () => {
+test('a disabled provider route cannot redirect a Codex credential', async () => {
   const { models, profiles } = services();
   profiles[1].enabled = false;
   await assert.rejects(resolveConfiguredCodexModel({ provider: 'agentkit-studio-b', model: 'same-model' }, models), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' });
-  profiles.push({ ...profiles[0], id: 'A' });
-  await assert.rejects(resolveConfiguredCodexModel({ provider: 'agentkit-studio-a', model: 'same-model' }, models), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' });
+});
+
+test('several models on one connection share a route and each resolves its own profile', async () => {
+  const { models, profiles } = services();
+  // A second model on connection b: same route, different model name.
+  profiles.push({ ...profiles[1], id: 'b-second', modelName: 'second-model', connectionId: 'b' });
+  const first = await resolveConfiguredCodexModel({ provider: 'agentkit-studio-b', model: 'same-model' }, models);
+  assert.equal(first.modelProvider.apiKey, 'key-b');
+  const second = await resolveConfiguredCodexModel({ provider: 'agentkit-studio-b', model: 'second-model' }, models);
+  assert.equal(second.modelProvider.apiKey, 'key-b');
+  assert.equal(second.model, 'second-model');
 });
 
 test('an explicit configured Codex API reaches the runtime without changing its credential route', async () => {

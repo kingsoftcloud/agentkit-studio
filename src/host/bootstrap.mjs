@@ -398,7 +398,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
     resolveModelMetadata: async (provider, model) => {
       const settings = await models.settings();
-      const profile = (settings.modelProfiles || []).find(item => item.enabled !== false && dshModelRoute(item) === provider);
+      // A route serves several models; pick the one the caller named.
+      const routed = (settings.modelProfiles || []).filter(item => item.enabled !== false && dshModelRoute(item) === provider);
+      const profile = routed.find(item => item.modelName === model) || routed[0];
       if (!profile) return null;
       if (profile.modelName === model) return profile;
       try { return (await models.catalog(profile.id)).items.find(item => item.id === model) || null; } catch { return null; }
