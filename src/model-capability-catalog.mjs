@@ -14,7 +14,7 @@
  * capacities, so entries are never merged across providers — a miss returns
  * null and the caller keeps its existing fallback rather than a wrong answer.
  */
-import { MODEL_CATALOG } from './model-catalog-data/catalog.mjs';
+import { MODEL_CATALOG as BUNDLED_CATALOG } from './model-catalog-data/catalog.mjs';
 import { STUDIO_REASONING_LEVELS } from './model-reasoning.mjs';
 
 const normalizeEndpoint = value => {
@@ -33,15 +33,21 @@ const normalizeId = id => String(id || '').trim().toLowerCase()
 
 const effortsFor = entry => (entry?.efforts ? STUDIO_REASONING_LEVELS.filter(level => entry.efforts.includes(level)) : []);
 
+// Same-family minor versions: deepseek-v4.1-flash is the v4 line's minor
+// release and shares its facts with deepseek-v4-flash. Only ever used as a
+// single, unambiguous hit inside one provider, never to collapse distinct models.
+const stripPatch = id => normalizeId(id).replace(/(\d+)\.\d+/g, '$1');
+
 const findInGroup = (group, modelName) => {
   const want = normalizeId(modelName);
   if (!want || !group?.models) return undefined;
-  // Exact id only (after normalizing -latest and build/date suffixes). Never
-  // collapse distinct versions (v4.1 must not be answered with v4's facts).
   for (const [id, entry] of Object.entries(group.models)) {
     if (normalizeId(id) === want) return entry;
   }
-  return undefined;
+  // Same-family minor-version fallback, only when unambiguous within this provider.
+  const wantStem = stripPatch(want);
+  const hits = Object.entries(group.models).filter(([id]) => stripPatch(id) === wantStem);
+  return hits.length === 1 ? hits[0][1] : undefined;
 };
 
 /** Model-id prefix → the original vendor's catalog ids, in preference order. */
@@ -57,12 +63,25 @@ const MODEL_ORIGINS = [
   [/^minimax-/, ['minimax-cn', 'minimax']],
 ];
 
-const endpointIndex = new Map();
-for (const [providerId, group] of Object.entries(MODEL_CATALOG)) {
-  if (!group.api) continue;
-  const key = normalizeEndpoint(group.api);
-  if (key && !endpointIndex.has(key)) endpointIndex.set(key, providerId);
+let catalog = BUNDLED_CATALOG;
+let endpointIndex = new Map();
+const rebuildEndpointIndex = () => {
+  endpointIndex = new Map();
+  for (const [providerId, group] of Object.entries(catalog)) {
+    if (!group.api) continue;
+    const key = normalizeEndpoint(group.api);
+    if (key && !endpointIndex.has(key)) endpointIndex.set(key, providerId);
+  }
+};
+rebuildEndpointIndex();
+
+/** Replace the catalog at runtime (after a Host refresh of models.dev). */
+export function setModelCapabilityCatalog(next) {
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return;
+  catalog = next;
+  rebuildEndpointIndex();
 }
+export function currentModelCapabilityCatalog() { return catalog; }
 
 const shape = (providerId, group, entry) => ({
   providerId, providerName: group.name, efforts: effortsFor(entry),
@@ -79,19 +98,19 @@ const shape = (providerId, group, entry) => ({
 export function lookupModelCapabilities({ baseUrl, provider, modelName } = {}) {
   const endpointHit = endpointIndex.get(normalizeEndpoint(baseUrl));
   if (endpointHit) {
-    const entry = findInGroup(MODEL_CATALOG[endpointHit], modelName);
-    if (entry) return shape(endpointHit, MODEL_CATALOG[endpointHit], entry);
+    const entry = findInGroup(catalog[endpointHit], modelName);
+    if (entry) return shape(endpointHit, catalog[endpointHit], entry);
   }
   const providerKey = String(provider || '').trim();
-  if (providerKey && MODEL_CATALOG[providerKey]) {
-    const entry = findInGroup(MODEL_CATALOG[providerKey], modelName);
-    if (entry) return shape(providerKey, MODEL_CATALOG[providerKey], entry);
+  if (providerKey && catalog[providerKey]) {
+    const entry = findInGroup(catalog[providerKey], modelName);
+    if (entry) return shape(providerKey, catalog[providerKey], entry);
   }
   const id = normalizeId(modelName);
   for (const [pattern, origins] of MODEL_ORIGINS) {
     if (!pattern.test(id)) continue;
     for (const originId of origins) {
-      const group = MODEL_CATALOG[originId];
+      const group = catalog[originId];
       if (!group) continue;
       const entry = findInGroup(group, modelName);
       if (entry) return shape(originId, group, entry);
@@ -102,7 +121,7 @@ export function lookupModelCapabilities({ baseUrl, provider, modelName } = {}) {
   }
   // Unknown family: only an unambiguous global hit is trusted.
   const hits = [];
-  for (const [groupId, group] of Object.entries(MODEL_CATALOG)) {
+  for (const [groupId, group] of Object.entries(catalog)) {
     const entry = findInGroup(group, modelName);
     if (entry) hits.push({ groupId, group, entry });
   }

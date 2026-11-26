@@ -1,10 +1,12 @@
 /** models operations; authentication and lifetime belong to the dispatcher. */
-export function createModelRoutes({ models, syncModelCredential, describeGlobalModelCredential, configurationPromise, credentialsService, listCodexAgentModels, codexModels }) {
+export function createModelRoutes({ models, syncModelCredential, describeGlobalModelCredential, configurationPromise, credentialsService, listCodexAgentModels, codexModels, capabilityCatalog }) {
     return async (endpoint, payload, signal) => {
         if (endpoint === 'models/sync-credential')
             return { ok: true, value: await syncModelCredential() };
         if (endpoint === 'models/credential-status')
             return { ok: true, value: await describeGlobalModelCredential({ configuration: await configurationPromise, credentials: credentialsService }) };
+        if (endpoint === 'models/capability-catalog')
+            return { ok: true, value: await capabilityCatalog.read() };
         if (endpoint === 'models/create')
             return { ok: true, value: await models.create(payload) };
         if (endpoint === 'settings/get')

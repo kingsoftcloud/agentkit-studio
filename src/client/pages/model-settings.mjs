@@ -2,8 +2,8 @@ import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, mode
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
-import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
-import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback } from './model-settings-capability.mjs';
+import { lookupModelCapabilities, setModelCapabilityCatalog } from '../../model-capability-catalog.mjs';
+import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback, createProbeAllJobs, applyAllProbeResults, createProbeAll } from './model-settings-capability.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
 import { createModelSettingsDirectory } from './model-settings-directory.mjs';
@@ -461,6 +461,7 @@ export function createModelSettingsSection({
     const catalogScope = profile => stableString([connectionIdentity(profile), profile.apiKey?.trim() || '']);
     const effortScope = profile => stableString([profile.id, profile.modelName, profile.protocol, catalogScope(profile)]);
     const effortProbe = useEffortProbe((editing || mode === 'model') ? effortScope(selected) : '');
+    const allProbe = useEffortProbe('all-models');
     const activeResult = (results, profile) => {
       const result = results[profileCatalogKey(profile)];
       return result?.scope === catalogScope(profile) ? result : undefined;
@@ -527,6 +528,7 @@ export function createModelSettingsSection({
     }, signal);
     const probeSelectedEfforts = () => effortProbe.progress ? effortProbe.stop() : effortProbe.run([{ key: selected.id }],
       (_job, signal) => probeEfforts(selected, selected.modelName, signal, Boolean(selected.modelOnly && !selected.protocol && !savedProfile(profileKey(selected)))));
+    const { probeAllEfforts } = createProbeAll({ allProbe, form, lookupModelCapabilities, probeEfforts, setMessage, profileKey, useEffect, patchProfile, applicableProbeLevels, hostRemote, setModelCapabilityCatalog });
     const fetchCatalog = async profile => {
       if (profile.apiKey?.trim() && typeof hostRemote.probeModelEndpoint === 'function') {
         return hostRemote.probeModelEndpoint(candidateFor(profile));
@@ -671,6 +673,7 @@ export function createModelSettingsSection({
       status, saving, connections, profileCount: profiles.length, drafts, stageModels, stageProvider, saveProvider, removeProvider,
       fetchCatalog: fetchProviderCatalog,
       probeEfforts: typeof hostRemote.probeModelEfforts === 'function' ? probeEfforts : undefined,
+      probeAll: { run: probeAllEfforts, progress: allProbe.progress },
       checkProvider: input => {
         const group = connections.find(item => item.id === input.id);
         if (!input.apiKey.trim() && group?.provider === input.provider && group.address === input.baseUrl) return fetchProviderCatalog(group);

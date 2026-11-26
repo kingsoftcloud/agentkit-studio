@@ -31,7 +31,7 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
 
   function useModelSettingsDirectory({
     status, saving, connections, profileCount, drafts, openModel, credentialConfigured,
-    fetchCatalog, checkProvider, probeEfforts, stageModels, stageProvider, saveProvider, removeProvider,
+    fetchCatalog, checkProvider, probeEfforts, probeAll, stageModels, stageProvider, saveProvider, removeProvider,
   }) {
     const [query, setQuery] = useState('');
     const [modelQuery, setModelQuery] = useState('');
@@ -352,7 +352,9 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
         h('div', { className: 'ms-intro' },
           h('div', null, h('h3', null, '模型提供商'),
             ready ? h('p', null, connections.length + ' 个提供商 · ' + profileCount + ' 个模型') : null),
-          button('＋ 添加提供商', () => editProvider(), 'primary', { disabled: !ready })),
+          h('div', { className: 'ms-actions' },
+            probeAll ? button(probeAll.progress ? '停止全部探测' : '全部探测档位', probeAll.run, undefined, { disabled: !ready, 'data-probe-all': true }) : null,
+            button('＋ 添加提供商', () => editProvider(), 'primary', { disabled: !ready }))),
         ready ? h('div', { className: 'ms-panel' },
           h('div', { className: 'ms-directory-toolbar' }, searchField('搜索提供商或模型', query, setQuery)),
           h('div', { className: 'ms-group-list', 'aria-label': '提供商列表' },

@@ -26,14 +26,17 @@ test('vision-capable models are marked as such', () => {
   assert.equal(lookupModelCapabilities({ ...star, modelName: 'kimi-k3.1-pro-highspeed' }).image, true);
 });
 
-test('distinct model versions are never collapsed onto each other', () => {
-  // deepseek-v4.1-flash is not in the catalog (which lists deepseek-v4-flash):
-  // v4.1 must not be answered with v4's facts, even after dropping a build suffix.
-  assert.equal(lookupModelCapabilities({ ...star, modelName: 'deepseek-v4.1-flash' }), null);
-  assert.equal(lookupModelCapabilities({ ...star, modelName: 'deepseek-v4.1-flash-1017' }), null);
-  const hit = lookupModelCapabilities({ ...star, modelName: 'deepseek-v4-flash' });
+test('same-family minor versions match the family entry, distinct models do not', () => {
+  // deepseek-v4.1-flash is a minor release in the v4 line: it shares the family facts.
+  const hit = lookupModelCapabilities({ ...star, modelName: 'deepseek-v4.1-flash' });
   assert.equal(hit.providerId, 'deepseek');
-  assert.ok(hit.context > 0);
+  assert.equal(hit.context, 1048576);
+  assert.deepEqual(hit.efforts, ['low', 'high', 'max']);
+  assert.equal(lookupModelCapabilities({ ...star, modelName: 'deepseek-v4.1-flash-1017' }).providerId, 'deepseek');
+  // glm-4.5 and glm-4.6 are distinct models, each resolved exactly (not merged).
+  assert.equal(lookupModelCapabilities({ ...star, modelName: 'glm-4.5' }).context, 131072);
+  assert.equal(lookupModelCapabilities({ ...star, modelName: 'glm-4.6' }).context, 204800);
+  assert.equal(lookupModelCapabilities({ ...star, modelName: 'no-such-model-xyz' }), null);
 });
 
 test('an unknown model returns null instead of guessing', () => {

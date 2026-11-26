@@ -755,7 +755,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   } else {
     await bindRuntime();
   }
+  const capabilityCatalog = (await import('./services/model-capability-refresh.mjs')).createModelCapabilityRefresh({ storeDir: studioStoreDir });
+  capabilityCatalog.start();
+  ctx.effect(() => capabilityCatalog.stop(), 'agentkit-studio: model capability refresh');
   const routes = createStudioRoutes(ctx, {
+    capabilityCatalog,
     ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,

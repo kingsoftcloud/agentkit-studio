@@ -57,3 +57,39 @@ export async function applyProfilesWithRollback({ dshModel, persistedProfiles, k
     throw Object.assign(new Error(`同步到对话引擎失败：${reason?.message || reason}。本机配置已回滚到保存前，请重试。`), { code: reason?.code });
   }
 }
+
+/** Jobs for "probe all levels": only models the catalog does not describe. */
+export function createProbeAllJobs({ profiles, lookupModelCapabilities, profileKey }) {
+  return profiles.map((profile, index) => ({ key: profileKey(profile, index), index, modelName: profile.modelName, connection: profile }))
+    .filter(job => job.modelName?.trim() && !lookupModelCapabilities(job.connection));
+}
+
+/** "Probe all levels" runner plus the batch write-back effect. */
+export function createProbeAll({ allProbe, form, lookupModelCapabilities, probeEfforts, setMessage, profileKey, useEffect, patchProfile, applicableProbeLevels, hostRemote, setModelCapabilityCatalog }) {
+  // 拉取 Host 后台刷新的最新能力目录（内置目录是离线兜底），更新内存缓存。
+  if (hostRemote.capabilityCatalog) hostRemote.capabilityCatalog().then(catalog => { if (catalog) setModelCapabilityCatalog(catalog); }).catch(() => {});
+  const probeAllEfforts = () => {
+    if (allProbe.progress) { allProbe.stop(); return; }
+    const jobs = createProbeAllJobs({ profiles: form.profiles, lookupModelCapabilities, profileKey });
+    if (!jobs.length) { setMessage('所有模型都已在能力目录中，无需探测'); return; }
+    void allProbe.run(jobs, (job, signal) => probeEfforts(job.connection, job.modelName, signal, false));
+  };
+  const autoApplyJson = form.profiles.map((p, i) => allProbe.reportFor(profileKey(p, i))).filter(Boolean).map(r => JSON.stringify(r.outcomes)).join('|');
+  useEffect(() => {
+    applyAllProbeResults({ profiles: form.profiles, reportFor: allProbe.reportFor, patchProfile, applicableProbeLevels, profileKey });
+  }, [autoApplyJson]);
+  return { probeAllEfforts };
+}
+
+/** Write every model's probed-usable levels back into its own profile (draft). */
+export function applyAllProbeResults({ profiles, reportFor, patchProfile, applicableProbeLevels, profileKey }) {
+  for (const [index, profile] of profiles.entries()) {
+    const levels = applicableProbeLevels(reportFor(profileKey(profile, index)));
+    if (!levels.length) continue;
+    if (JSON.stringify(profile.reasoningLevels || []) === JSON.stringify(levels)) continue;
+    patchProfile(index, {
+      reasoningLevels: levels, reasoningEfforts: true,
+      defaultReasoningEffort: levels.includes('high') ? 'high' : levels[levels.length - 1],
+    });
+  }
+}
