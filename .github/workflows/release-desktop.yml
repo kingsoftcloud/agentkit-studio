@@ -1,4 +1,4 @@
-name: Finish signed Studio macOS nightly publication
+name: Import signed Studio macOS update ZIP into KS3
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
       STUDIO_PRODUCT_NAME: AgentKit Studio
       STUDIO_PRODUCT_APP_ID: com.kingsoftcloud.agentkit-studio
       STUDIO_PRODUCT_UPDATE_ENV: production
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     environment: studio-signing
     timeout-minutes: 60
     concurrency:
@@ -62,6 +62,16 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.2
+      - name: Verify original candidate checksums
+        working-directory: candidate
+        run: shasum -a 256 -c SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        id: raw_update
+        with:
+          path: candidate/deepseek-harness-0.2.2-rc.1.20261125.2-mac-arm64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
       - name: Publish via Studio KS3 uploader and verify public feed
         working-directory: studio
         env:
@@ -71,6 +81,7 @@ jobs:
           EXPECTED_DSH_COMMIT: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
           EXPECTED_UPDATE_ORIGIN: https://agentkit.ks3-cn-beijing.ksyuncs.com
           SIGNED_RUN_ID: "45609895727"
+          SOURCE_ARTIFACT_ID: ${{ steps.raw_update.outputs.artifact-id }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           STUDIO_DOWNLOAD_PROD_KS3_BUCKET: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_BUCKET }}
@@ -111,7 +122,7 @@ jobs:
             exit 0
           fi
           test "$current" = "$EXPECTED_PREVIOUS"
-          node "$GITHUB_WORKSPACE/scripts/stage-macos-nightly-zip.mjs" "$zip"
+          node "$GITHUB_WORKSPACE/scripts/import-macos-nightly-zip.mjs" "$zip"
           args=(publish --candidate "$GITHUB_WORKSPACE/candidate" --origin "$EXPECTED_UPDATE_ORIGIN"
             --storage-origin "$STORAGE_ORIGIN" --layout "$RELEASE_LAYOUT" --update-mode "$UPDATE_MODE"
             --channel 'nightly')
