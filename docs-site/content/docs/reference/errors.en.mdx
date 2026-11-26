@@ -51,7 +51,7 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:197` | `sessionId` must not be empty |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | Wait for the build to become available before downloading |
 | `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:74` | `runtime.type` is not one of `STUDIO_RUNTIME_TYPES` |
-| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:38` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
+| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:39` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
 | `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:76` | Shrink the request body or switch to chunked upload |
 | `INVALID_QUERY` | `src/agent-catalog.mjs:9` | Check the query string types and enum values |
 | `CREDENTIAL_VALUE_MISSING` | `src/host/routes/credentials.mjs:7` | Fill in the value for that credential reference |
@@ -96,7 +96,7 @@ The remaining 171 codes are grouped by namespace, with meaning and the first tri
 | `DEPLOYMENT` | 2 | Deployment interruption and recovery. | `src/deployment-rollouts.mjs:194` |
 | `EVALUATION` | 2 | Evaluation targets and runs. | `src/host/routes/evaluations.mjs:8` |
 | `REQUEST` | 2 | Request body and cancellation. | `src/model-proxy-handler.mjs:76` |
-| `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:38` |
+| `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:39` |
 | `STAR` | 2 | Local Star Harness install, version and workspace binding. | `src/host/routes/http.mjs:65` |
 | `A2A` | 1 | Agent-to-Agent control plane. | `src/providers/native-a2a-tool-activity.mjs:175` |
 | `BOUND` | 1 | Resource binding resolution. | `src/providers/codex-resource-context.mjs:144` |
