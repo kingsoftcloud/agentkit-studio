@@ -62,14 +62,20 @@ const modelRows = view => view.nodes().filter(node => node.type === 'button' && 
 const providerRows = view => view.nodes().filter(node => node.type === 'button' && node.props['data-model-connection']);
 const field = (view, label) => view.nodes().find(node => node.props?.['aria-label'] === label);
 const selectProvider = async (view, index) => {
+  // 编辑模型时目录不渲染：先返回提供商列表。
   if (button(view, '返回提供商')) { button(view, '返回提供商').props.onClick(); await view.settle(); }
-  if (button(view, '模型提供商')) { button(view, '模型提供商').props.onClick(); await view.settle(); }
+  // 两层列表一次只展开一个：先收起所有已展开的提供商。
+  for (const row of providerRows(view)) {
+    if (row.props['aria-expanded'] === true) { row.props.onClick(); await view.settle(); }
+  }
   providerRows(view)[index].props.onClick();
   await view.settle();
 };
 const selectModel = async (view, index) => {
   await selectProvider(view, index);
-  modelRows(view)[0].props.onClick();
+  const rows = modelRows(view);
+  assert.ok(rows.length, `provider ${index} should expose its models`);
+  rows[0].props.onClick();
   await view.settle();
 };
 const saveButton = view => view.nodes().find(node => node.type === 'button' && node.props.type === 'submit' && node.props['data-variant'] === 'primary');

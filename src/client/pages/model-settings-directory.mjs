@@ -35,14 +35,13 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
   }) {
     const [query, setQuery] = useState('');
     const [modelQuery, setModelQuery] = useState('');
-    const [providerId, setProviderId] = useState('');
+    const [expandedProviderId, setExpandedProviderId] = useState('');
     const [providerForm, setProviderForm] = useState(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
     const [catalog, setCatalog] = useState(null);
     const batch = useEffortProbe(providerForm?.check || catalog?.token);
     const probing = Boolean(batch.progress);
     const ready = status === 'ready';
-    const active = connections.find(group => group.id === providerId);
     const importGroup = catalog && connections.find(group => group.id === catalog.providerId);
     const importedCount = catalog ? [...catalog.picks.values()].reduce((total, items) => total + items.size, 0) : 0;
     const reportKey = (connection, modelName) => JSON.stringify([connection.id, modelName]);
@@ -58,7 +57,7 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
     };
 
     const openProvider = id => {
-      setProviderId(id);
+      setExpandedProviderId(id);
       setModelQuery('');
       setConfirmRemove(false);
     };
@@ -316,33 +315,23 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
       dirty ? h('span', { className: 'ms-row-status', 'data-tone': 'draft' }, '未保存') : null,
       h('span', { className: 'ms-chevron', 'aria-hidden': 'true' })));
     };
-    const renderProvider = group => {
+    const renderProviderBody = group => {
       const validOthers = connections.some(item => item.id !== group.id && item.models.some(({ profile }) => profile.enabled !== false));
       const canRemove = validOthers || group.models.every(({ profile }) => profile.enabled === false);
       const removingDefault = group.models.some(({ profile }) => profile.enabled !== false && profile.default);
       const matches = group.models.filter(({ profile }) => profile.modelName.toLowerCase().includes(modelQuery.trim().toLowerCase()));
-      return h('section', { 'data-model-provider': group.id },
-        backButton('模型提供商', () => openProvider('')),
-        h('div', { className: 'ms-intro' },
-          h('div', null, h('h3', null, title(group)), h('p', null, connectionAddressLabel(group))),
-          h('div', { className: 'ms-actions' },
-            button('编辑提供商', () => editProvider(group)),
-            button('移除提供商', () => setConfirmRemove(true), 'danger'))),
+      return h('div', { className: 'ms-provider-body', 'data-model-provider': group.id },
         confirmRemove ? h('section', { className: 'ms-remove-confirm', 'aria-label': '移除提供商确认' },
           h('strong', null, '移除「' + title(group) + '」？'),
           h('p', null, canRemove
-            ? '保存后将移除该提供商及其 ' + group.models.length + ' 个模型。' + (removingDefault ? 'Studio 将使用剩余的一个已启用模型作为默认模型。' : '')
+            ? '移除后将删除该提供商及其 ' + group.models.length + ' 个模型。' + (removingDefault ? 'Studio 将使用剩余的一个已启用模型作为默认模型。' : '')
             : '此提供商包含最后一个已启用模型。请先在其他提供商添加或启用模型。'),
           h('div', { className: 'ms-actions' },
             button('取消', () => setConfirmRemove(false)),
-            button('确认移除', () => { if (removeProvider(group)) openProvider(''); }, 'danger', { disabled: !canRemove }))) : null,
-        h('div', { className: 'ms-panel' },
-          h('div', { className: 'ms-provider-model-head' },
-            h('h4', null, '已添加模型'), h('span', { className: 'ms-row-status' }, group.models.length + ' 个'),
-            button('添加模型', () => openImport(group), 'primary')),
-          group.models.length > 6 ? h('div', { className: 'ms-directory-toolbar' }, searchField('搜索这个提供商的模型', modelQuery, setModelQuery)) : null,
-          matches.length ? h('ul', { className: 'ms-model-list ms-group-list', 'aria-label': '已添加模型' }, matches.map(renderModelRow))
-            : note(group.models.length ? '没有匹配的模型' : '暂未添加模型')));
+            button('确认移除', () => { if (removeProvider(group)) setExpandedProviderId(''); }, 'danger', { disabled: !canRemove }))) : null,
+        group.models.length > 6 ? h('div', { className: 'ms-directory-toolbar' }, searchField('搜索这个提供商的模型', modelQuery, setModelQuery)) : null,
+        matches.length ? h('ul', { className: 'ms-model-list ms-group-list', 'aria-label': '已添加模型' }, matches.map(renderModelRow))
+          : note(group.models.length ? '没有匹配的模型' : '暂未添加模型'));
     };
     const renderOverview = () => {
       const term = query.trim().toLowerCase();
@@ -359,18 +348,28 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
           h('div', { className: 'ms-directory-toolbar' }, searchField('搜索提供商或模型', query, setQuery)),
           h('div', { className: 'ms-group-list', 'aria-label': '提供商列表' },
             !matches.length ? note('没有匹配的提供商') : null,
-            matches.map(group => h('button', { key: group.id, type: 'button', className: 'ms-provider-row',
-              'data-model-connection': group.id, onClick: () => openProvider(group.id) },
-            h('span', { className: 'ms-connection-text' },
-              h('span', { className: 'ms-connection-name' }, title(group)),
-              h('span', { className: 'ms-connection-address' }, [
-                group.name ? providerLabel(group.provider) : '', connectionAddressLabel(group),
-              ].filter(Boolean).join(' · '))),
-            !(group.connection.apiKey || credentialConfigured(group.connection)) ? h('span', { className: 'ms-connection-warning' }, '缺少 Key') : null,
-            h('span', { className: 'ms-connection-count' }, group.models.length + ' 个模型'),
-            h('span', { className: 'ms-chevron', 'aria-hidden': 'true' }))))) : status === 'loading' ? note('正在读取模型配置…') : null);
+            matches.map(group => {
+              const expanded = expandedProviderId === group.id;
+              return h('div', { key: group.id, className: 'ms-provider-group' },
+                h('div', { className: 'ms-provider-row-wrap' },
+                  h('button', { type: 'button', className: 'ms-provider-row', 'data-model-connection': group.id, 'aria-expanded': expanded,
+                    onClick: () => setExpandedProviderId(expanded ? '' : group.id) },
+                    h('span', { className: 'ms-connection-text' },
+                      h('span', { className: 'ms-connection-name' }, title(group)),
+                      h('span', { className: 'ms-connection-address' }, [
+                        group.name ? providerLabel(group.provider) : '', connectionAddressLabel(group),
+                      ].filter(Boolean).join(' · '))),
+                    !(group.connection.apiKey || credentialConfigured(group.connection)) ? h('span', { className: 'ms-connection-warning' }, '缺少 Key') : null,
+                    h('span', { className: 'ms-connection-count' }, group.models.length + ' 个模型'),
+                    h('span', { className: 'ms-chevron', 'aria-hidden': 'true' }, expanded ? '▾' : '▸')),
+                  h('div', { className: 'ms-actions' },
+                    button('编辑提供商', () => editProvider(group), undefined, { 'data-size': 'sm' }),
+                    button('移除提供商', () => { setExpandedProviderId(group.id); setConfirmRemove(true); }, 'danger', { 'data-size': 'sm' }),
+                    button('添加模型', () => openImport(group), 'primary', { 'data-size': 'sm' }))),
+                expanded ? renderProviderBody(group) : null);
+            }))) : status === 'loading' ? note('正在读取模型配置…') : null);
     };
-    const renderDirectory = () => providerForm ? renderProviderForm() : active ? renderProvider(active) : renderOverview();
+    const renderDirectory = () => providerForm ? renderProviderForm() : renderOverview();
     const selectedCount = providerForm?.picks.size || 0;
     const saveLabel = selectedCount ? '保存提供商和 ' + selectedCount + ' 个模型' : '仅保存提供商';
     const editorActions = providerForm ? [
@@ -381,8 +380,8 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
     return {
       renderDirectory, importPanel: importGroup ? renderImportPanel() : null,
       importedCount, selectedConnections: catalog?.picks.size || 0, addSelected,
-      editorActions, atOverview: !active && !providerForm && !importGroup,
-      showOverview: () => { openProvider(''); setProviderForm(null); setCatalog(null); },
+      editorActions, atOverview: !providerForm && !importGroup,
+      showOverview: () => { setExpandedProviderId(''); setProviderForm(null); setCatalog(null); },
     };
   }
   return { useModelSettingsDirectory, backButton };
