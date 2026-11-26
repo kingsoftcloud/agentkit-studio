@@ -245,8 +245,8 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
       if (items.size) picks.set(group.id, items); else picks.delete(group.id);
       return { ...current, picks, ...(manual ? { manual: null, query: '' } : {}) };
     });
-    const addSelected = () => {
-      if (!importedCount || !stageModels(catalog.picks)) return;
+    const addSelected = async () => {
+      if (!importedCount || !(await stageModels(catalog.picks))) return;
       openProvider(importGroup.id);
       setCatalog(null);
     };

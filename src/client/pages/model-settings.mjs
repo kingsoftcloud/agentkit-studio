@@ -257,13 +257,12 @@ export function createModelSettingsSection({
     const setHeaderRow = (rowIndex, key, value) => updateHeaderRows(selectedIndex,
       rows => rows.map((row, cursor) => cursor === rowIndex ? { ...row, [key]: value } : row));
     const removeHeaderRow = rowIndex => updateHeaderRows(selectedIndex, rows => rows.filter((_, cursor) => cursor !== rowIndex));
-    const setDefaultProfile = index => {
-      form.profiles.forEach((profile, cursor) => {
-        if ((cursor === index) !== (profile.default === true)) rememberDraft(profile, cursor, { default: cursor === index });
-      });
-      setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => ({ ...profile, default: cursor === index })) }));
+    const setDefaultProfile = async index => {
+      const next = form.profiles.map((profile, cursor) => ({ ...profile, default: cursor === index }));
+      setForm(current => ({ ...current, profiles: next }));
+      await saveConfiguration({ ...form, profiles: next });
     };
-    const toggleProfileEnabled = index => {
+    const toggleProfileEnabled = async index => {
       const target = form.profiles[index];
       if (!target) return;
       if (target.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1) {
@@ -277,16 +276,10 @@ export function createModelSettingsSection({
       const activeDefault = flipped.findIndex(profile => profile.enabled !== false && profile.default === true);
       const fallbackDefault = activeDefault >= 0 ? activeDefault : enabledIndexes[0];
       const next = flipped.map((profile, cursor) => ({ ...profile, default: cursor === fallbackDefault }));
-      next.forEach((profile, cursor) => {
-        const before = form.profiles[cursor];
-        const fields = {};
-        if (profile.enabled !== before.enabled) fields.enabled = profile.enabled;
-        if (profile.default !== before.default) fields.default = profile.default;
-        if (Object.keys(fields).length) rememberDraft(profile, cursor, fields);
-      });
       setForm(current => ({ ...current, profiles: next }));
+      await saveConfiguration({ ...form, profiles: next });
     };
-    const removeProfile = index => {
+    const removeProfile = async index => {
       if (form.profiles.length <= 1) return;
       const target = form.profiles[index];
       if (target.enabled !== false && form.profiles.filter(profile => profile.enabled !== false).length <= 1) {
@@ -298,14 +291,10 @@ export function createModelSettingsSection({
       const nextDefaultIndex = target.default ? remaining.findIndex(profile => profile.enabled !== false) : -1;
       const next = nextDefaultIndex < 0 ? remaining
         : remaining.map((profile, cursor) => ({ ...profile, default: cursor === nextDefaultIndex }));
-      // A pending removal is a draft too: it survives closing the sheet and only
-      // reaches storage on 「保存配置」; 「重新读取」 brings the model back.
-      if (isNewProfile(target, index)) modelDrafts.delete(profileKey(target, index));
-      else modelDrafts.set(profileKey(target, index), { kind: MODEL_DRAFT_REMOVED });
-      if (nextDefaultIndex >= 0) rememberDraft(next[nextDefaultIndex], nextDefaultIndex, { default: true });
       if (remaining[neighbourIndex]) setSelectedKey(profileKey(remaining[neighbourIndex], neighbourIndex));
       if (mode === 'all') setEditing(false);
       setForm(current => ({ ...current, profiles: next }));
+      await saveConfiguration({ ...form, profiles: next });
     };
     // 取消新增：这份新草稿还没进过存储，直接丢弃，列表与选中项回到添加前。
     // 撤销修改：只丢掉当前模型的草稿，回到已保存的那份配置。
@@ -622,27 +611,21 @@ export function createModelSettingsSection({
     const cloudDirty = ready && cloudIsDirty();
     const providerCount = mode === 'all' ? providerDraftCount() : 0;
     const formDirty = draftCount > 0 || providerCount > 0 || cloudDirty;
-    const stageModels = picks => {
+    const stageModels = async picks => {
       if (!ready || saving) return false;
       const added = importedProfiles(connections, picks, newProfileId);
       if (!added.length) return false;
-      for (const profile of added) modelDrafts.set(profileKey(profile), { kind: MODEL_DRAFT_NEW, profile });
-      setForm(current => ({ ...current, profiles: [...current.profiles, ...added] }));
+      const next = [...form.profiles, ...added];
+      setForm(current => ({ ...current, profiles: next }));
       setError(''); setMessage('');
+      await saveConfiguration({ ...form, profiles: next });
       return true;
     };
-    const stageProviderChanges = (providers, profiles) => {
-      const next = new Map(profiles.map(profile => [profile.id, profile]));
-      form.profiles.forEach((profile, index) => {
-        const updated = next.get(profile.id);
-        if (!updated) {
-          if (isNewProfile(profile, index)) modelDrafts.delete(profileKey(profile, index));
-          else modelDrafts.set(profileKey(profile, index), { kind: MODEL_DRAFT_REMOVED });
-        } else if (updated !== profile) rememberDraft(profile, index, updated);
-      });
+    const stageProviderChanges = async (providers, profiles) => {
       rememberProviders(providers, savedState.providers);
       setForm(current => ({ ...current, providers, profiles }));
       setError(''); setMessage('');
+      await saveConfiguration({ ...form, providers, profiles });
     };
     const stageProvider = input => {
       if (!ready || saving) return '';
@@ -661,12 +644,12 @@ export function createModelSettingsSection({
       const saved = await saveConfiguration({ ...form, providers, profiles: [...updated.profiles, ...added] });
       return saved ? id : '';
     };
-    const removeProvider = group => {
+    const removeProvider = async group => {
       if (!ready || saving) return false;
       const removed = new Set(group.models.map(({ profile }) => profile.id));
       const remaining = keepDefaultModel(profiles.filter(profile => !removed.has(profile.id)));
-      if (!remaining) { setError('请先保留一个已启用的模型'); return false; }
-      stageProviderChanges(form.providers.filter(item => item.id !== group.id), remaining);
+      if (!remaining.length) { setError('请先保留一个已启用的模型'); return false; }
+      await stageProviderChanges(form.providers.filter(provider => provider.id !== group.id), remaining);
       return true;
     };
     const modelDirectory = useModelSettingsDirectory({

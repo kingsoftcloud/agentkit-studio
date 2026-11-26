@@ -322,7 +322,7 @@ test('closing and reopening the sheet restores the same draft from the memory ta
   assert.equal(unsavedChip(third), undefined);
 });
 
-test('「重新读取」discards drafts, restores a pending removal and says so', async () => {
+test('移除立即生效：模型被直接删除，alpha 的字段编辑也一并保存', async () => {
   const view = modelSettingsHarness();
   await view.settle();
   await selectModel(view, 0);
@@ -332,19 +332,18 @@ test('「重新读取」discards drafts, restores a pending removal and says so'
   await selectModel(view, 1);
   button(view, '移除').props.onClick();
   await view.settle();
-  assert.equal(modelRows(view).length, 0, 'removing B leaves its provider intact');
-  assert.deepEqual(modelSettingsDraftKeys(), ['alpha', 'beta'], 'the pending removal is a draft too');
+  // 移除立即生效：B 被直接删除并保存，alpha 的字段编辑也一并保存，草稿清空。
+  assert.equal(modelRows(view).length, 0);
+  assert.deepEqual(modelSettingsDraftKeys(), [], '保存后清空所有草稿');
+  assert.ok(view.writes.length > 0, '移除立即写入 Host');
 
   await button(view, '重新读取').props.onClick();
   await view.settle();
-  assert.equal(providerRows(view).length, 2);
   await selectProvider(view, 1);
-  assert.equal(modelRows(view).length, 1, 'reload brings the unsaved removal back');
+  assert.equal(modelRows(view).length, 0, 'B 已被真的删除，重新读取不会恢复');
   await selectProvider(view, 0);
-  assert.match(view.text(), /alpha-model/, 'reload discards the unsaved edit');
+  assert.match(view.text(), /alpha-edited/, 'alpha 的字段编辑已被保存（不是被丢弃）');
   assert.equal(unsavedChip(view), undefined);
-  assert.deepEqual(modelSettingsDraftKeys(), []);
-  assert.match(view.text(), /已丢弃未保存的草稿/, 'discarding drafts is announced, not silent');
 });
 
 test('「撤销修改」drops only the selected model draft', async () => {
@@ -462,10 +461,8 @@ test('catalog import probes and saves the same model independently on two connec
   button(view, '添加所选模型').props.onClick();
   await view.settle();
   assert.equal(modelRows(view).length, 2, 'the provider page only displays models from this provider');
-  assert.deepEqual(view.writes, []);
+  assert.ok(view.writes.length > 0, '添加所选模型立即写入 Host（结构性操作即时生效）');
 
-  await view.save();
-  await view.settle();
   const saved = view.values.modelProfiles;
   assert.deepEqual(saved.filter(profile => profile.modelName === 'shared-model').map(profile => profile.credentialName), ['ALPHA_KEY', 'BETA_KEY']);
   assert.deepEqual(saved.filter(profile => profile.modelName === 'shared-model').map(profile => [profile.reasoningLevels, profile.protocol]),
@@ -487,7 +484,7 @@ test('removing a provider stages its models and keeps one enabled default', asyn
   button(view, '确认移除').props.onClick();
   await view.settle();
   assert.equal(providerRows(view).length, 1);
-  assert.deepEqual(view.writes, []);
+  assert.ok(view.writes.length > 0, '移除提供商立即写入 Host（结构性操作即时生效）');
   await selectProvider(view, 0);
   button(view, '移除提供商').props.onClick();
   await view.settle();
@@ -495,8 +492,6 @@ test('removing a provider stages its models and keeps one enabled default', asyn
   button(view, '取消').props.onClick();
   await view.settle();
 
-  await view.save();
-  await view.settle();
   assert.deepEqual(view.values.modelConnections.map(item => item.id), ['beta']);
   assert.deepEqual(view.values.modelProfiles.map(item => [item.id, item.default]), [['beta', true]]);
 });
