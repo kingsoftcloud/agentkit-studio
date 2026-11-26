@@ -31,7 +31,8 @@ test('a desktop Host with no environment still gets KSXC from the shipped config
 test('the settings status is served for a desktop Host with no environment', async t => {
   const storeDir = await realpath(await mkdtemp(join(tmpdir(), 'ksxc-company-')));
   t.after(() => rm(storeDir, { force: true, recursive: true }));
-  const ksxc = await createKsxcHost({ storeDir, env: {}, credentials: { readRecord: async () => null } });
+  const ksxc = await createKsxcHost({ storeDir, env: {}, credentials: { readRecord: async () => null },
+    gatewayFetchImpl: async () => ({ status: 401, body: null }) });
   const result = await createKsxcRoute(ksxc)('ksxc/status', {});
   assert.equal(result.value.supported, true);
   assert.equal(result.value.release.installable, installable);

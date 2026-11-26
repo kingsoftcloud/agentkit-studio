@@ -11,7 +11,7 @@ const nodes = tree => tree && typeof tree === 'object' ? [tree, ...tree.children
 const text = tree => tree && typeof tree === 'object' ? tree.children.map(text).join('') : String(tree ?? '');
 const react = values => {
   let cursor = 0;
-  return { createElement: h, useEffect() {}, useState: initial => [cursor in values ? values[cursor++] : (cursor++, initial), () => {}] };
+  return { createElement: h, useEffect() {}, useRef: initial => ({ current: initial }), useState: initial => [cursor in values ? values[cursor++] : (cursor++, initial), () => {}] };
 };
 const ui = values => ({ React: react(values), BRAND: {}, buttonStyle: () => ({}), SectionHeading: 'SectionHeading', EmptyState: 'EmptyState', StartChecks: 'StartChecks', Pill: 'Pill' });
 
