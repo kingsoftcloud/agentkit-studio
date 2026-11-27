@@ -14,17 +14,24 @@ assert.ok(target, 'Pass a packaged macOS app or Windows executable');
 async function verifyApprovedCommand(load, root, runtime, version) {
   const { createNativeEngineRuntime } = await load('providers/native-engine-runtime.mjs');
   const { startStarHarness } = await load('host/services/star-harness-release.mjs');
+  const { compareStarHarnessVersions } = await load('host/services/star-harness-catalog.mjs');
+  const desktopSandbox = compareStarHarnessVersions(version, '0.0.34') >= 0;
   const workspace = join(root, 'workspace');
-  const markerFile = join(workspace, 'approval.txt');
+  const confinedFile = join(workspace, 'confined.txt');
+  const markerFile = join(desktopSandbox ? root : workspace, 'approval.txt');
   await mkdir(workspace);
   const modelName = 'desktop-approval-fixture';
   const apiKey = 'desktop-approval-fixture';
   let requests = 0;
   const model = createServer(async (req, res) => {
     for await (const _chunk of req) { /* drain the fixture request */ }
-    const command = requests++ === 0;
-    const delta = command ? { role: 'assistant', tool_calls: [{ index: 0, id: 'approve-once', type: 'function',
-      function: { name: 'run_command', arguments: JSON.stringify({ command: "printf approved >> approval.txt", timeout: 8 }) } }] }
+    const step = requests++;
+    const command = desktopSandbox ? [
+      { command: 'printf confined >> confined.txt' },
+      { command: 'printf approved >> ../approval.txt', sandbox_permissions: 'danger-full-access' },
+    ][step] : step === 0 ? { command: 'printf approved >> approval.txt' } : undefined;
+    const delta = command ? { role: 'assistant', tool_calls: [{ index: 0, id: `approval-step-${step}`, type: 'function',
+      function: { name: 'run_command', arguments: JSON.stringify({ ...command, timeout: 8 }) } }] }
       : { role: 'assistant', content: 'Approved command completed.' };
     const frame = (delta, finish_reason) => `data: ${JSON.stringify({ id: 'desktop-approval-' + requests,
       object: 'chat.completion.chunk', model: modelName, choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
@@ -52,14 +59,16 @@ async function verifyApprovedCommand(load, root, runtime, version) {
       sandbox: 'workspace-write', signal: AbortSignal.timeout(25000), requestApproval: async request => {
         assert.equal(request.toolName, 'native/run_command');
         await assert.rejects(readFile(markerFile), { code: 'ENOENT' });
+        if (desktopSandbox) assert.equal(await readFile(confinedFile, 'utf8'), 'confined');
         approvals++;
         return 'allowed-once';
       },
     })) results.push(result);
     assert.equal(approvals, 1);
-    assert.equal(requests, 2);
+    assert.equal(requests, desktopSandbox ? 3 : 2);
     assert.equal(await readFile(markerFile, 'utf8'), 'approved');
-    assert.equal(results.findLast(chunk => chunk.event?.kind === 'tool.completed')?.event.status, 'ok');
+    assert.deepEqual(results.filter(chunk => chunk.event?.kind === 'tool.completed').map(chunk => chunk.event.status),
+      desktopSandbox ? ['ok', 'ok'] : ['ok']);
     assert.equal(results.findLast(chunk => chunk.type === 'text')?.text, 'Approved command completed.');
   } finally {
     await service?.stop();
