@@ -562,7 +562,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         throw Object.assign(new Error('请绑定 KSXC Agent，并从当前企业账号的模型目录选择模型。'), { code: 'KSXC_AGENT_MODEL_REQUIRED' });
       }
       const ksxcGateway = ksxcModel && runtime !== 'ksxc';
-      if (ksxcGateway && (mode !== 'local' || !ksxcModelAccess || !['codex', 'native-engine'].includes(runtime))) {
+      if (ksxcGateway && (mode !== 'local' || !ksxcModelAccess || !isProcessRuntimeType(runtime))) {
         throw Object.assign(new Error('当前运行时无法使用 Studio 桌面的 KSXC 企业模型。'), { code: 'KSXC_HOST_UNAVAILABLE' });
       }
       if (mode === 'local' && runtime === 'harness') throw Object.assign(new Error('Native Harness requires the whole-turn execution port.'), { code: 'STUDIO_NATIVE_TURN_REQUIRED' });
