@@ -35,7 +35,8 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     const save=model.getByRole('button',{name:'保存并继续',exact:true});
     await expect(save).toBeEnabled({timeout:90000});
 
-    // 1. Provider, then 2. the API address it reveals for custom providers.
+    // Open the connection disclosure before configuring its provider and API address.
+    await model.locator('[data-model-connection] > summary').click();
     const provider=model.getByRole('combobox',{name:'提供商',exact:true});
     await expect(provider).toBeVisible();
     await provider.selectOption('custom');
