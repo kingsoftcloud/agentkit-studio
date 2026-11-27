@@ -45,8 +45,8 @@ description: "197 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `TEAM_TEMPLATE_INVALID` | `src/team-template-audit.mjs:53` | 检查 `kind`、`id`、`version` 与必填文本 |
 | `TEAM_TEMPLATE_ROLE_INVALID` | `src/team-template-contract.mjs:58` | `roles[0].name` 必须是 `lead`，角色名不可重复 |
 | `TEAM_RUNTIME_UNAVAILABLE` | `src/studio-team-runtime.mjs:105` | 角色运行时只能选 `dsh-native` 或 `harness` |
-| `DEPLOYMENT_CREATE_INTERRUPTED` | `src/studio-deployments.mjs:383` | 先对账云端状态，再决定重试 |
-| `DEPLOYMENT_UPDATE_INTERRUPTED` | `src/deployment-rollouts.mjs:194` | 同上；不要连续重试更新 |
+| `DEPLOYMENT_CREATE_INTERRUPTED` | `src/studio-deployments.mjs:392` | 先对账云端状态，再决定重试 |
+| `DEPLOYMENT_UPDATE_INTERRUPTED` | `src/deployment-rollouts.mjs:223` | 同上；不要连续重试更新 |
 | `SESSION_NOT_FOUND` | `src/host/routes/sessions.mjs:27` | 确认 `sessionId` 属于当前 Host |
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:197` | `sessionId` 不能为空 |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | 等构建进入可用状态再下载 |
@@ -93,7 +93,7 @@ description: "197 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `AGENT` | 2 | Agent 目录与修订版本解析。 | `src/host/routes/agents.mjs:13` |
 | `BUILD` | 2 | 构建与冻结运行时。 | `src/agent-preset-admission.mjs:323` |
 | `CREDENTIAL` | 2 | 凭证引用与取值。 | `src/host/routes/credentials.mjs:6` |
-| `DEPLOYMENT` | 2 | 部署中断与恢复。 | `src/deployment-rollouts.mjs:194` |
+| `DEPLOYMENT` | 2 | 部署中断与恢复。 | `src/deployment-rollouts.mjs:223` |
 | `EVALUATION` | 2 | 评测目标与执行。 | `src/host/routes/evaluations.mjs:8` |
 | `REQUEST` | 2 | 请求体与取消。 | `src/model-proxy-handler.mjs:76` |
 | `RUN` | 2 | 运行标识。 | `src/providers/dsh-runtime.mjs:39` |
