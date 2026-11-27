@@ -73,3 +73,16 @@ export function starflowWebSearch(profile, fetchImpl = hostFetch) {
     return { sources, content: typeof message?.content === 'string' ? message.content.slice(0, 6000) : '', searchCount: count };
   };
 }
+
+/** Codex App Server disables its hosted search for custom model routes. */
+export function createStarflowSearchTool(search) {
+  if (!search) return undefined;
+  const spec = {
+    type: 'function', name: 'studio_web_search',
+    description: 'Search the web for current information and cite the returned sources.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' } },
+      required: ['query'], additionalProperties: false },
+  };
+  return { spec, handler: async ({ name, arguments: args, signal }) =>
+    name === spec.name ? JSON.stringify(await search(args?.query, 5, signal)) : undefined };
+}

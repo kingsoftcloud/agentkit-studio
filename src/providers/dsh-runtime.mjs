@@ -20,6 +20,7 @@ import { gatewayHistory, isDshUserInput, isDshAgentNotice, textOf } from './dsh-
 import { nativeSessionRunOptions } from './dsh-native-run.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
+import { createStarflowSearchTool } from './starflow-web-search.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 const ROUTE = 'agentkit-studio';
@@ -704,24 +705,12 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
             ? await resolveStarflowSearch?.(selection, selected.modelProvider
               && { ...selected.modelProvider, modelName: selection.model }, toolAgent)
             : undefined;
-          const searchTool = starflowSearch ? {
-            type: 'function', name: 'studio_web_search',
-            description: 'Search the web for current information and cite the returned sources.',
-            inputSchema: { type: 'object', properties: { query: { type: 'string' } },
-              required: ['query'], additionalProperties: false },
-          } : undefined;
+          const searchTool = createStarflowSearchTool(starflowSearch);
           const dynamicTools = [...(resources.dynamicTools || []),
-            ...(userQuestionTool ? [userQuestionTool.spec] : []), ...(searchTool ? [searchTool] : [])];
+            ...(userQuestionTool ? [userQuestionTool.spec] : []), ...(searchTool ? [searchTool.spec] : [])];
           const toolHandler = userQuestionTool || searchTool
-            ? async call => {
-              const outcome = await userQuestionTool?.handler(call);
-              if (outcome !== undefined) return outcome;
-              if (searchTool?.name === call.name) {
-                const result = await starflowSearch(call.arguments?.query, 5, call.signal);
-                return JSON.stringify(result);
-              }
-              return resources.toolHandler?.(call);
-            }
+            ? async call => (await userQuestionTool?.handler(call)) ?? (await searchTool?.handler(call))
+              ?? resources.toolHandler?.(call)
             : resources.toolHandler;
           try {
             yield* codexFrames(processRuntime, {
