@@ -45,8 +45,8 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | `TEAM_TEMPLATE_INVALID` | `src/team-template-audit.mjs:53` | Check `kind`, `id`, `version` and required text |
 | `TEAM_TEMPLATE_ROLE_INVALID` | `src/team-template-contract.mjs:58` | `roles[0].name` must be `lead`; role names must be unique |
 | `TEAM_RUNTIME_UNAVAILABLE` | `src/studio-team-runtime.mjs:105` | A role runtime must be `dsh-native` or `harness` |
-| `DEPLOYMENT_CREATE_INTERRUPTED` | `src/studio-deployments.mjs:383` | Reconcile the cloud side before retrying |
-| `DEPLOYMENT_UPDATE_INTERRUPTED` | `src/deployment-rollouts.mjs:194` | Same; do not retry the update repeatedly |
+| `DEPLOYMENT_CREATE_INTERRUPTED` | `src/studio-deployments.mjs:392` | Reconcile the cloud side before retrying |
+| `DEPLOYMENT_UPDATE_INTERRUPTED` | `src/deployment-rollouts.mjs:223` | Same; do not retry the update repeatedly |
 | `SESSION_NOT_FOUND` | `src/host/routes/sessions.mjs:27` | Confirm `sessionId` belongs to this Host |
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:197` | `sessionId` must not be empty |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | Wait for the build to become available before downloading |
@@ -93,7 +93,7 @@ The remaining 172 codes are grouped by namespace, with meaning and the first tri
 | `AGENT` | 2 | Agent catalog and revision resolution. | `src/host/routes/agents.mjs:13` |
 | `BUILD` | 2 | Builds and frozen runtime. | `src/agent-preset-admission.mjs:323` |
 | `CREDENTIAL` | 2 | Credential references and values. | `src/host/routes/credentials.mjs:6` |
-| `DEPLOYMENT` | 2 | Deployment interruption and recovery. | `src/deployment-rollouts.mjs:194` |
+| `DEPLOYMENT` | 2 | Deployment interruption and recovery. | `src/deployment-rollouts.mjs:223` |
 | `EVALUATION` | 2 | Evaluation targets and runs. | `src/host/routes/evaluations.mjs:8` |
 | `REQUEST` | 2 | Request body and cancellation. | `src/model-proxy-handler.mjs:76` |
 | `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:39` |

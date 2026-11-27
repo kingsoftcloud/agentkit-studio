@@ -36,11 +36,20 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
     // pristine. Retire the receipt and keep the product copy readable: an
     // upgrade is impossible, which is different from a transient platform fault.
     let remote;
-    try { remote = await detail(record); }
+    try { remote = await detail(record, { repair: true }); }
     catch (error) {
-      if (!cloudAgentGone(error)) throw error;
-      await store.update(record.id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
-      throw portableError('DEPLOYMENT_CLOUD_DELETED', CLOUD_AGENT_GONE_FAILURE.message);
+      if (cloudAgentGone(error)) {
+        await store.update(record.id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
+        throw portableError('DEPLOYMENT_CLOUD_DELETED', CLOUD_AGENT_GONE_FAILURE.message);
+      }
+      // A READY or STARTING receipt whose cloud declaration drifted is a foreign
+      // mutation: refuse this preview, but park the receipt so the panel offers
+      // "用所选版本修复" instead of repeating the same refusal forever.
+      if (error?.code === 'DEPLOYMENT_PROVENANCE_MISMATCH' && record.state !== 'ACTION_REQUIRED') {
+        await store.update(record.id, { state: 'ACTION_REQUIRED', tokenBound: false, failure: failure(error), lastCheckedAt: new Date().toISOString() });
+        throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '云端 Agent 的声明已变化，已标记为需要处理；请用所选版本修复');
+      }
+      throw error;
     }
     if (remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '云端实例当前不允许更新');
     await identity(record);
@@ -63,16 +72,36 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
       }
     } else {
       const sameBuild = input.buildId === current.plan.buildId;
-      prepared = await assemble({ ...input, ...(ksxc ? { deploymentType: 'ManagedRuntime' } : {}), ...(sameBuild ? { bundleId: current.plan.bundleId } : {}),
+      // An in-place update must keep the receipt's deployment type. Without it
+      // `assemble()` falls back to `AGENTKIT_STUDIO_DEPLOYMENT_TYPE` or Container,
+      // so updating a managed Agent (dsh-native, harness, codex) rebuilt a Container
+      // plan whose bucket and storage endpoint are set where the receipt has null
+      // and answered DEPLOYMENT_UPDATE_SCOPE_CHANGED for every managed deployment.
+      prepared = await assemble({ ...input, deploymentType: current.plan.deploymentType, ...(sameBuild ? { bundleId: current.plan.bundleId } : {}),
         releaseId: input.releaseId || (!input.useRecommendedImage && current.plan.image.runtimeIdentity ? current.plan.image.id : undefined),
         agentId: current.plan.agentId, resources: { ...current.plan.resources, storageGiB: current.plan.resources.storageGiB ?? 0 } }, exporting && !sameBuild);
     }
     if (!ksxc && !prepared.plan.image.runtimeIdentity) throw portableError('DEPLOYMENT_IMAGE_UPGRADE_REQUIRED', '目标镜像尚未声明版本探测能力，请先发布支持升级回滚的 Studio 镜像');
     prepared.plan = { ...prepared.plan, name: current.plan.name };
-    for (const field of ['agentId', 'runtime', 'credentialScope', 'region', 'environment', 'bucket', 'storageEndpoint']) {
-      if (prepared.plan[field] !== current.plan[field]) throw portableError('DEPLOYMENT_UPDATE_SCOPE_CHANGED', '升级须保留 Agent、运行时、账号和部署位置；其他场景请创建独立部署');
+    // Name the field that drifted: "升级须保留 Agent、运行时、账号和部署位置" alone
+    // leaves the operator guessing which setting to restore, and every one of these
+    // fields is silent until the frozen receipt is compared with a fresh resolution.
+    const scope = [['agentId', 'Agent'], ['runtime', '运行时'], ['credentialScope', '账号'], ['region', '区域'],
+      ['environment', '环境'], ['bucket', '存储桶'], ['storageEndpoint', '存储地址']];
+    const drift = scope.filter(([field]) => (prepared.plan[field] ?? null) !== (current.plan[field] ?? null));
+    if (drift.length) {
+      const show = (field, value) => value === null || value === undefined ? '未设置'
+        : field === 'credentialScope' ? `${String(value).slice(0, 8)}…` : String(value);
+      throw portableError('DEPLOYMENT_UPDATE_SCOPE_CHANGED',
+        `升级须保留 Agent、运行时、账号和部署位置；当前变化：${drift.map(([field, label]) => `${label}（${show(field, current.plan[field])} → ${show(field, prepared.plan[field])}）`).join('、')}。其他场景请创建独立部署`);
     }
-    const sameContent = ksxc ? prepared.plan.managedManifestSha256 === current.plan.managedManifestSha256
+    // A managed declaration is the content that changes; only a receipt that also
+    // carries a portable bundle has a digest of its own. Comparing `bundleSha256`
+    // for every non-KSXC runtime made a changed prompt look like "already running"
+    // because both sides were null.
+    const sameContent = prepared.plan.deploymentType === 'ManagedRuntime'
+      ? prepared.plan.managedManifestSha256 === current.plan.managedManifestSha256
+        && (prepared.plan.bundleSha256 ?? null) === (current.plan.bundleSha256 ?? null)
       : prepared.plan.bundleSha256 === current.plan.bundleSha256;
     if (sameContent && prepared.plan.image.image === current.plan.image.image) {
       throw portableError('DEPLOYMENT_VERSION_UNCHANGED', '所选冻结包和镜像已在运行');

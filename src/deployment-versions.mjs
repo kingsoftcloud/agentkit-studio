@@ -100,6 +100,27 @@ export function readyKsxcDeployment(detail, plan) {
   return receipt && { platformVersionId: state.ObservedVersionId, manifestSha256: receipt.manifestSha256 };
 }
 
+/**
+ * Prove the cloud Agent is still the one this receipt created, ignoring which
+ * declaration it currently serves.
+ *
+ * A receipt parked in ACTION_REQUIRED by a provenance mismatch is exactly the
+ * record the repair path must be able to update; re-proving the frozen
+ * declaration there would answer "用所选版本修复" with the same mismatch forever.
+ * Identity is the part that must never drift: a different AgentId or name means
+ * the receipt belongs to another Agent, not to a repairable deployment.
+ */
+export function verifyDeploymentIdentity(detail, record) {
+  const managed = record.plan?.deploymentType === 'ManagedRuntime';
+  const sameAgent = detail.Basic?.AgentId === record.cloudAgentId && detail.Basic.Name === record.plan.name
+    && (!managed || detail.Deployment?.DeploymentType === 'ManagedRuntime');
+  if (!sameAgent) {
+    throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', managed
+      ? '云端 ManagedRuntime Agent 与冻结部署记录不一致，已停止管理操作'
+      : '云端 Agent 与冻结部署记录不一致，已停止管理操作');
+  }
+}
+
 export function verifyDeploymentRemote(detail, record) {
   if (record.plan?.deploymentType === 'ManagedRuntime') {
     const runtime = detail.Deployment?.RuntimeConfig || detail.RuntimeConfig || {};

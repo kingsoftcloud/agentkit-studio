@@ -922,3 +922,55 @@ test('a platform-canonicalized declaration keeps managed provenance for non-KSXC
   assert.equal(mismatched.state, 'ACTION_REQUIRED');
   assert.equal(mismatched.failure.code, 'DEPLOYMENT_PROVENANCE_MISMATCH');
 });
+
+test('an in-place managed update keeps the receipt deployment type instead of rebuilding a Container plan', async t => {
+  const f = await fixture(t, { runtime: 'dsh-native', deploymentType: 'ManagedRuntime' });
+  const creation = await f.service.create(f.request); await f.settled(); await f.service.refresh(creation.id);
+  const input = { agentId: f.input.agentId, revision: 3,
+    metadata: { id: f.input.agentId, name: 'Agent', local: true, revision: 3 },
+    spec: { runtime: { type: 'dsh-native' }, instructions: { system: 'New behavior' }, bindings: { modelProfileId: 'model' } },
+  };
+  const built = await f.options.build.build({ ...input, bindings: input.spec.bindings });
+  // Without forwarding the receipt's deployment type, `assemble()` falls back to
+  // Container and the managed receipt's null bucket/storage endpoint drift apart.
+  const preview = await f.service.prepareUpdate({ deploymentId: creation.id, buildId: built.id });
+  assert.equal(preview.deploymentType, 'ManagedRuntime');
+  assert.equal(preview.runtime, 'dsh-native');
+  assert.equal(preview.buildId, built.id);
+});
+
+test('a drifted managed receipt parks itself and can still be repaired in place', async t => {
+  const f = await fixture(t, { runtime: 'dsh-native', deploymentType: 'ManagedRuntime' });
+  const creation = await f.service.create(f.request); await f.settled(); await f.service.refresh(creation.id);
+  const input = { agentId: f.input.agentId, revision: 3,
+    metadata: { id: f.input.agentId, name: 'Agent', local: true, revision: 3 },
+    spec: { runtime: { type: 'dsh-native' }, instructions: { system: 'New behavior' }, bindings: { modelProfileId: 'model' } },
+  };
+  const built = await f.options.build.build({ ...input, bindings: input.spec.bindings });
+  // Someone else moved the cloud declaration after this receipt froze it.
+  f.remote.Deployment.ManagedRuntimeConfig = { Manifest: 'prompt: foreign\n' };
+  f.remote.Deployment.RuntimeConfig.ManifestSha256 = sha256('prompt: foreign\n');
+  await assert.rejects(() => f.service.prepareUpdate({ deploymentId: creation.id, buildId: built.id }),
+    { code: 'DEPLOYMENT_PROVENANCE_MISMATCH' });
+  assert.equal((await f.service.get(creation.id)).state, 'ACTION_REQUIRED');
+  // The repair preview is the only path that may write the frozen declaration back.
+  const preview = await f.service.prepareUpdate({ deploymentId: creation.id, buildId: built.id });
+  assert.equal(preview.deploymentId, creation.id);
+  assert.equal(preview.buildId, built.id);
+});
+
+test('a scope drift names the field that changed', async t => {
+  const f = await fixture(t);
+  const initial = await f.service.create(f.request); await f.settled(); await f.service.refresh(initial.id);
+  const input = { agentId: f.input.agentId, revision: 3,
+    metadata: { id: f.input.agentId, name: 'Agent', local: true, revision: 3 },
+    spec: { runtime: { type: 'harness' }, instructions: { system: 'New behavior' }, bindings: { modelProfileId: 'model' } },
+  };
+  const built = await f.options.build.build({ ...input, bindings: input.spec.bindings });
+  f.values.cloudBucket = 'another-bucket';
+  await assert.rejects(() => f.service.prepareUpdate({ deploymentId: initial.id, buildId: built.id }), error => {
+    assert.equal(error.code, 'DEPLOYMENT_UPDATE_SCOPE_CHANGED');
+    assert.match(error.message, /存储桶（private-test → another-bucket）/);
+    return true;
+  });
+});
