@@ -79,6 +79,11 @@ export function createModelBridge({ hostRemote }) {
         // endpoint 404s while the engine's own turns keep working.
         const routedBaseUrl = harnessModelEndpoint(baseUrl, wire);
         const credentialName = modelCredentialName(profile, index);
+        // A route default is applied to every model the route serves. Only a
+        // route that serves this profile's model alone can take one; on a
+        // shared route a sibling that never declared the level would fail
+        // with `UNSUPPORTED_REASONING_EFFORT` before the request leaves DSH.
+        const dedicated = members.length === 1;
         // A route serves exactly the models configured on its connection —
         // never the whole vendor catalog, which dragged embeddings, video and
         // speech models into the chat selector.
@@ -92,7 +97,11 @@ export function createModelBridge({ hostRemote }) {
           const capability = admitModelCapabilities({ ...member, input: member.input }, configuredModel || fallback);
           return { id: memberName, name: memberName, contextWindow: capability.contextWindow,
             maxTokens: capability.maxOutputTokens, input: capability.input,
-            ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}) };
+            ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
+            // Keep each reasoning model's own default on a shared route; the
+            // route-level default would otherwise also be sent to siblings
+            // that do not declare it.
+            ...(reasoning && supportsModelDefaults && !dedicated ? { defaultReasoningEffort: reasoning.defaultEffort } : {}) };
         });
         // Route-level default thinking comes from the default model of the route.
         const defaultMember = members.find(({ profile: member }) => member.default === true) || members[0];
@@ -120,7 +129,7 @@ export function createModelBridge({ hostRemote }) {
           ...(wire !== 'anthropic-messages' ? {
             compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
           } : {}),
-          ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}),
+          ...(reasoning && dedicated ? { reasoning: reasoning.defaultEffort } : {}),
           models,
         } } };
       });

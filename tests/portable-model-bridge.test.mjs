@@ -55,13 +55,19 @@ test('two models of one gateway share a route and keep both in the selector', as
     mutate: async (ns, ops) => { for (const op of ops) providers[op.path[1]] = op.value; } };
   const gateway = 'https://shared.example/v1';
   const profiles = [
-    { id: 'first-model', connectionId: 'shared-gw', provider: 'openai-compatible', modelName: 'first', baseUrl: gateway, credentialName: 'KEY' },
+    { id: 'first-model', connectionId: 'shared-gw', provider: 'openai-compatible', modelName: 'first', baseUrl: gateway, credentialName: 'KEY', reasoningEfforts: true, defaultReasoningEffort: 'high' },
     { id: 'second-model', connectionId: 'shared-gw', provider: 'openai-compatible', modelName: 'second', baseUrl: gateway, credentialName: 'KEY' },
   ];
   await syncPortableModelProfiles({ settings, profiles });
   const routes = Object.keys(providers);
   assert.equal(routes.length, 1, `expected one route, got ${routes.join(',')}`);
   assert.deepEqual(providers[routes[0]].models.map(model => model.id), ['first', 'second']);
+  // The second model declares no reasoning level; a route default would be
+  // sent to it too and rejected with `UNSUPPORTED_REASONING_EFFORT`.
+  assert.equal(providers[routes[0]].reasoning, undefined);
+  assert.deepEqual(providers[routes[0]].models[0].reasoningEfforts,
+    { low: 'low', high: 'high' });
+  assert.equal(Object.hasOwn(providers[routes[0]].models[1], 'reasoningEfforts'), false);
 });
 
 test('the portable projection forwards connectionId', async () => {

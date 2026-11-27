@@ -43,6 +43,10 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
   }
   for (const [route, { members }] of routes) {
     const profile = members[0];
+    // A route default reaches every model on the route, including a sibling
+    // that never declared that reasoning level. Keep it only when the route
+    // serves one model.
+    const dedicated = members.length === 1;
     const reasoning = studioReasoning(profile);
     const wire = providerWireApi(profile);
     const models = [];
@@ -71,7 +75,7 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
       // sets it while no model speaks that protocol, which is what a profile
       // declaring `protocol: openai-responses` would otherwise hit.
       compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
-      ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}), models };
+      ...(reasoning && dedicated ? { reasoning: reasoning.defaultEffort } : {}), models };
     if (!isDeepStrictEqual(namespace.value?.providers?.[route], value)) operations.push({ op: 'set', path: ['providers', route], value });
   }
   if (operations.length) await settings.mutate('llm-pi-ai', operations, namespace.revision);
