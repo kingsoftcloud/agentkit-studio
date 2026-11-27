@@ -6,13 +6,14 @@ import { lookupModelCapabilities, setModelCapabilityCatalog } from '../../model-
 import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback, createProbeAllJobs, applyAllProbeResults, createProbeAll, renderCloudField } from './model-settings-capability.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
-import { createModelSettingsDirectory } from './model-settings-directory.mjs';
+import { createModelSettingsDirectory, useModelSettingsCards } from './model-settings-directory.mjs';
 import { createUseEffortProbe, REASONING_LABELS, renderModelEffortSettings } from './model-settings-effort-probe.mjs';
 import { bindProviders, checkImportedWires, clearProviderDrafts, importedProfiles, keepDefaultModel, providerDraftCount,
   providerMetadata, rememberProviders, restoreProviders, updateProvider } from './model-provider-drafts.mjs';
 import { modelReasoningConfig, reasoningProfileFor, studioReasoning } from '../../model-reasoning.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import modelSettingsStyles from '../styles/model-settings.css.mjs';
+import { renderProfileScores } from './model-card-view.mjs';
 import modelCardStyles from '../styles/model-card.css.mjs';
 
 /** The settings sheet is a document-level asset shared by every mount. */
@@ -671,7 +672,9 @@ export function createModelSettingsSection({
       await stageProviderChanges(form.providers.filter(provider => provider.id !== group.id), remaining);
       return true;
     };
+    const cardForProfile = useModelSettingsCards({ useState, useEffect, hostRemote, window });
     const modelDirectory = useModelSettingsDirectory({
+      cardForProfile,
       status, saving, connections, profileCount: profiles.length, drafts, stageModels, stageProvider, saveProvider, removeProvider,
       fetchCatalog: fetchProviderCatalog,
       probeEfforts: typeof hostRemote.probeModelEfforts === 'function' ? probeEfforts : undefined,
@@ -811,6 +814,7 @@ export function createModelSettingsSection({
         simple ? null : reasoningField),
       simple ? null : capacitySummary,
       simple ? null : capability,
+      renderProfileScores(h, cardForProfile(selected)),
       mode !== 'cloud' ? h('details', { className: 'ms-advanced', 'data-model-connection': true },
         h('summary', null, '连接'),
       h('div', { className: 'ms-editor-section-head' },

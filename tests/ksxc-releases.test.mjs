@@ -36,7 +36,8 @@ async function archiveFor(directory, version, executableName = 'codex', platform
   await writeFile(join(payload, 'codex-package.json'), '{}');
   const archive = join(directory, `ksxc-${platform}-${version}.tar.gz`);
   // COPYFILE_DISABLE keeps macOS from adding AppleDouble entries to the fixture.
-  await run('/usr/bin/tar', ['-czf', archive, '-C', payload, 'bin', 'codex-package.json'], { env: { PATH: '/usr/bin:/bin', COPYFILE_DISABLE: '1' } });
+  await run('tar', ['-czf', archive, '-C', payload, 'bin', 'codex-package.json'],
+    { env: { PATH: process.env.PATH, COPYFILE_DISABLE: '1' } });
   const bytes = await readFile(archive);
   return { version, archive, bytes, digest: sha256(bytes), executable: sha256(fakePayload(version)) };
 }
@@ -84,7 +85,7 @@ async function fixture(t, { server: serverOptions = {}, ...instanceOptions } = {
   const first = await archiveFor(dir, '1.8.0', executableName, platform);
   const create = (releases = { '1.8.0': first }, server = {}, options = {}) => {
     const served = releaseServer({ releases, platform, ...server });
-    return { server: served, releases: createKsxcReleases({ target: 'darwin-arm64', ...options,
+    return { server: served, releases: createKsxcReleases({ target: 'darwin-arm64', tarPath: 'tar', ...options,
       root, companyConfigPath, fetchImpl: served.fetchImpl }) };
   };
   const shared = create({ '1.8.0': first }, serverOptions, instanceOptions);
@@ -329,9 +330,9 @@ test('an unsupported platform is not installable', async t => {
 });
 
 test('a Windows x64 target installs the .exe payload', async t => {
-  // `tarPath` is injected because this machine runs the POSIX tar; a real Windows
+  // The fixture uses the runner's tar; a real Windows
   // Host resolves `%SystemRoot%\System32\tar.exe` on its own.
-  const f = await fixture(t, { target: 'win32-x64', executableName: 'codex.exe', tarPath: '/usr/bin/tar' });
+  const f = await fixture(t, { target: 'win32-x64', executableName: 'codex.exe' });
   const status = await f.releases.status({ refresh: true });
   assert.equal(status.installable, true);
   assert.deepEqual(status.versions, ['1.8.0']);
@@ -352,7 +353,7 @@ test('a static lock stays authoritative and never reaches the network', async t 
   const companyConfigPath = join(dir, 'company.json');
   await writeFile(companyConfigPath, JSON.stringify({ baseUrl: 'http://mgw.example.test', code: 'kc',
     installerUrl: 'https://ks3-cn-beijing.ksyuncs.com/fe-frame/install.sh' }));
-  const releases = createKsxcReleases({ root: join(dir, 'store'), lock, companyConfigPath, target: 'darwin-arm64',
+  const releases = createKsxcReleases({ root: join(dir, 'store'), lock, companyConfigPath, target: 'darwin-arm64', tarPath: 'tar',
     fetchImpl: async () => assert.fail('no request') });
   await releases.refresh();
   assert.deepEqual((await releases.status()).versions, ['1.8.0']);

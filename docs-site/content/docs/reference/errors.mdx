@@ -1,13 +1,13 @@
 ---
 title: "错误码"
-description: "197 个错误码：Top 30 给「错误码 → 用户动作」，其余按 45 个命名空间给含义与排查入口。"
+description: "199 个错误码：Top 30 给「错误码 → 用户动作」，其余按 45 个命名空间给含义与排查入口。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 错误码口径
 
-共 197 个错误码：192 个来自 `src/**` 的 `code: '...'` 字面量，5 个来自 wire 边界的 `STUDIO_WIRE_ERRORS`（两者有重叠，取并集）。
+共 199 个错误码：194 个来自 `src/**` 的 `code: '...'` 字面量，5 个来自 wire 边界的 `STUDIO_WIRE_ERRORS`（两者有重叠，取并集）。
 
 错误码是**稳定契约**：它出现在客户端分支、日志与排障文档里，改名就是破坏性变更。
 
@@ -31,9 +31,9 @@ description: "197 个错误码：Top 30 给「错误码 → 用户动作」，�
 | --- | --- | --- |
 | `AGENT_NOT_FOUND` | `src/host/routes/agents.mjs:13` | 确认 Agent 是否已被删除，或在当前工作区重新创建 |
 | `INVALID_AGENT_ID` | `src/host/routes/agents.mjs:52` | 检查 `agentId` 是否为空或含非法字符 |
-| `MODEL_CREDENTIAL_MISSING` | `src/model-service.mjs:74` | 到设置里补该模型 profile 的 API Key |
-| `MODEL_NOT_FOUND` | `src/model-service.mjs:62` | 刷新模型目录；自建端点检查 `OPENAI_BASE_URL` |
-| `MODEL_URL_INVALID` | `src/model-service.mjs:38` | 端点必须是 `http(s)://` 绝对地址 |
+| `MODEL_CREDENTIAL_MISSING` | `src/model-service.mjs:75` | 到设置里补该模型 profile 的 API Key |
+| `MODEL_NOT_FOUND` | `src/model-service.mjs:63` | 刷新模型目录；自建端点检查 `OPENAI_BASE_URL` |
+| `MODEL_URL_INVALID` | `src/model-service.mjs:39` | 端点必须是 `http(s)://` 绝对地址 |
 | `CLOUD_CONFIGURATION_REQUIRED` | `src/remote/control-client.mjs:447` | 先配置云端凭证与控制面地址 |
 | `CLOUD_EXECUTION_MODE_DENIED` | `src/host/routes/agents.mjs:119` | 该执行模式被策略拒绝，改申请更低档 |
 | `MCP_NOT_FOUND` | `src/mcp-probes.mjs:21` | 确认 MCP Server 仍在资源列表里 |
@@ -62,7 +62,7 @@ description: "197 个错误码：Top 30 给「错误码 → 用户动作」，�
 
 ## 命名空间索引
 
-其余 170 个码按命名空间分组，每组的含义与首个排查入口如下。
+其余 172 个码按命名空间分组，每组的含义与首个排查入口如下。
 
 | 命名空间 | 条数 | 含义 | 排查入口 |
 | --- | --- | --- | --- |
@@ -72,10 +72,10 @@ description: "197 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `SKILL` | 11 | Skill 下载、授权与运行。 | `src/host/routes/resources.mjs:37` |
 | `MODEL` | 10 | 模型目录、端点与凭证。 | `src/model-endpoint.mjs:9` |
 | `NATIVE` | 10 | 原生引擎、A2A 与 Web 授权。 | `src/agent-preset-admission.mjs:333` |
+| `OTHER` | 9 | 未归入命名空间的独立错误码。 | `src/cloud-headers.mjs:26` |
 | `INVALID` | 8 | 入参校验。 | `src/agent-catalog.mjs:9` |
 | `MANAGED` | 8 | 托管运行时、资源与输入冲突。 | `src/host/bootstrap.mjs:170` |
 | `RUNTIME` | 8 | 运行时路由与传输。 | `src/cloud-runtime-fetch.mjs:6` |
-| `OTHER` | 7 | 未归入命名空间的独立错误码。 | `src/cloud-headers.mjs:26` |
 | `MCP` | 6 | MCP Server 绑定与配置。 | `src/host/services/resource-tools.mjs:21` |
 | `RESOURCE` | 5 | 资源目录与适配器。 | `src/host/services/optional-resource.mjs:10` |
 | `SESSION` | 5 | 会话标识与导出。 | `src/host/routes/sessions.mjs:19` |
@@ -128,13 +128,13 @@ description: "197 个错误码：Top 30 给「错误码 → 用户动作」，�
 
 **NATIVE** (10) — `NATIVE_ENGINE_CONFIG_INVALID` · `NATIVE_ENGINE_CONTEXT_UNAVAILABLE` · `NATIVE_ENGINE_HOOKS_UNAVAILABLE` · `NATIVE_ENGINE_MODEL_UNAVAILABLE` · `NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE` · `NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE` · `NATIVE_ENGINE_TOOLS_CLOSED` · `NATIVE_ENGINE_UNAVAILABLE` · `NATIVE_ENGINE_VERIFICATION_UNAVAILABLE` · `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE`
 
+**OTHER** (9) — `KSXC` · `KSXC_AGENT_MODEL_REQUIRED` · `KSXC_CALLER_PERMIT_REQUIRED` · `KSXC_CONNECTION_REQUIRED` · `KSXC_HOST_UNAVAILABLE` · `KSXC_TOOL_NOT_APPROVED` · `ROUTEMIND_DISABLED` · `ROUTEMIND_GATEWAY_UNAVAILABLE` · `TRAFFIC_SOURCE_INVALID`
+
 **INVALID** (8) — `INVALID_AGENT_ID` · `INVALID_CONVERSATION_INPUT` · `INVALID_FEEDBACK` · `INVALID_JSON` · `INVALID_QUERY` · `INVALID_RESOURCE_CURSOR` · `INVALID_RESOURCE_SOURCE` · `INVALID_SESSION_ID`
 
 **MANAGED** (8) — `MANAGED_HARNESS_RUN_INCOMPLETE` · `MANAGED_HOST_INPUT_CONFLICT` · `MANAGED_RESOURCE_IDENTITY_UNAVAILABLE` · `MANAGED_RESOURCE_INVALID` · `MANAGED_RESOURCE_PERMIT_REQUIRED` · `MANAGED_RUNTIME_DELETE_UNCONFIRMED` · `MANAGED_RUNTIME_MODEL_INVALID` · `MANAGED_RUNTIME_REQUIRED`
 
 **RUNTIME** (8) — `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` · `RUNTIME_MODEL_UNAVAILABLE` · `RUNTIME_PROTOCOL_UNSUPPORTED` · `RUNTIME_REQUEST_CONFLICT` · `RUNTIME_REQUEST_HISTORY_UNAVAILABLE` · `RUNTIME_REQUEST_METADATA_UNAVAILABLE` · `RUNTIME_TRANSPORT_CLOSED` · `RUNTIME_UNSUPPORTED`
-
-**OTHER** (7) — `KSXC` · `KSXC_AGENT_MODEL_REQUIRED` · `KSXC_CALLER_PERMIT_REQUIRED` · `KSXC_CONNECTION_REQUIRED` · `KSXC_HOST_UNAVAILABLE` · `KSXC_TOOL_NOT_APPROVED` · `TRAFFIC_SOURCE_INVALID`
 
 **MCP** (6) — `MCP_BINDING_AMBIGUOUS` · `MCP_CONFIGURATION_REQUIRED` · `MCP_ID_INVALID` · `MCP_NOT_FOUND` · `MCP_RESOURCE_ADAPTER_MISSING` · `MCP_RESOURCE_NOT_BOUND`
 
@@ -210,7 +210,7 @@ description: "197 个错误码：Top 30 给「错误码 → 用户动作」，�
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| 错误码总数 | `197` | 新增只增不改；改名要留别名 |
+| 错误码总数 | `199` | 新增只增不改；改名要留别名 |
 | wire 码 | `5` | `src/contracts/definitions.mjs` |
 | 命名空间 | `45` | 首段下划线前缀 |
 | 非错误码排除 | `ENOTFOUND · UNKNOWN · CLOUD` | Node errno / A2A 信封 / 工具标签，不是 Studio 错误码 |

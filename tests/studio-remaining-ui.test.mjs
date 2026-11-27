@@ -91,12 +91,12 @@ test('overview zero-agent onboarding avoids empty workspace widgets and keeps re
   }
 });
 
-test('runtime catalog renders disabled Star Harness and existing Codex availability as rows', () => {
+test('runtime catalog renders disabled StarOrigin Harness and existing Codex availability as rows', () => {
   const Page = createRuntimeCatalogPage({ ui: ui(['ready', [{ runtimeType: 'harness' }, { runtimeType: 'codex' }, { runtimeType: 'dsh-native' }], false, false, '']), hostRemote: {}, window: {} });
   const rows = nodes(Page({})).filter(node => node.props.className === 'studio-row studio-runtime-row');
   assert.equal(rows.length, 3);
   assert.equal(rows[0].props['aria-disabled'], true);
-  assert.equal(rows[0].props.title, '在插件页安装并启用 Star Harness');
+  assert.equal(rows[0].props.title, '在插件页安装并启用 StarOrigin Harness');
   assert.match(text(rows[0]), /未启用/);
   assert.doesNotMatch(text(rows[0]), /可选/);
   assert.match(text(rows[1]), /Provider 未注册/);

@@ -129,7 +129,7 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
   };
   const revision = version => join(directory, version);
   const assertRelease = async (folder, version) => {
-    if (!starHarnessVersion(version)) throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 版本无效。');
+    if (!starHarnessVersion(version)) throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'StarOrigin Harness 版本无效。');
     const stat = await lstat(folder);
     try {
       if (!stat.isDirectory()) throw new Error('Release directory is invalid');
@@ -137,7 +137,7 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
       return { entry: verifyReleaseTree(folder, version, release), release };
     }
     catch (cause) {
-      throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 文件完整性校验失败，请重新安装。', { cause });
+      throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'StarOrigin Harness 文件完整性校验失败，请重新安装。', { cause });
     }
   };
   async function assets(version) {
@@ -145,19 +145,19 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
     const { release, entry } = await assertRelease(folder, version);
     const bytes = await readFile(join(folder, 'node_modules', STAR_HARNESS_UI, STAR_HARNESS_CLIENT_FILE));
     if (createHash('sha256').update(bytes).digest('hex') !== release.uiSha256)
-      throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 前端完整性校验失败。');
+      throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'StarOrigin Harness 前端完整性校验失败。');
     const client = { version, sha256: release.uiSha256, bytes };
     let toolCatalog = null;
     const catalogHash = release.packages[STAR_HARNESS_PACKAGE]?.files?.[ENGINE_TOOL_CATALOG_FILE];
     if (catalogHash) {
       try {
         const path = join(entry, ENGINE_TOOL_CATALOG_FILE);
-        if ((await lstat(path)).size > 256 * 1024) throw Error('Star Harness tool catalog is too large');
+        if ((await lstat(path)).size > 256 * 1024) throw Error('StarOrigin Harness tool catalog is too large');
         const bytes = await readFile(path);
-        if (createHash('sha256').update(bytes).digest('hex') !== catalogHash) throw Error('Star Harness tool catalog digest mismatch');
+        if (createHash('sha256').update(bytes).digest('hex') !== catalogHash) throw Error('StarOrigin Harness tool catalog digest mismatch');
         toolCatalog = readEngineToolCatalog(JSON.parse(bytes.toString('utf8')), version);
       } catch (cause) {
-        throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 工具目录完整性校验失败。', { cause });
+        throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'StarOrigin Harness 工具目录完整性校验失败。', { cause });
       }
     }
     return { client, toolCatalog };
@@ -196,7 +196,7 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
       return rows.filter(Boolean);
     },
     async install(version, signal) {
-      if (!starHarnessVersion(version)) throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 版本无效。');
+      if (!starHarnessVersion(version)) throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'StarOrigin Harness 版本无效。');
       await mkdir(directory, { recursive: true, mode: 0o700 });
       try { return (await assertRelease(revision(version), version)).entry; } catch (error) {
         if (!['STAR_HARNESS_RELEASE_INVALID', 'ENOENT'].includes(error.code)) throw error;
@@ -232,7 +232,7 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
           signal?.throwIfAborted();
           if (error.code === 'STAR_HARNESS_NPM_MISSING') throw error;
           if (error.code === 'ENOENT') throw starHarnessError('STAR_HARNESS_NPM_MISSING', 'Studio 宿主找不到 npm，请安装 Node.js 和 npm 后重试。');
-          throw starHarnessError('STAR_HARNESS_DOWNLOAD_FAILED', 'Star Harness 下载失败，请检查 npm 网络连接和版本号。');
+          throw starHarnessError('STAR_HARNESS_DOWNLOAD_FAILED', 'StarOrigin Harness 下载失败，请检查 npm 网络连接和版本号。');
         }
         await assertRelease(stage, version);
         signal?.throwIfAborted();
@@ -268,7 +268,7 @@ export async function inspectStarHarness(connection, { version, signal, required
       || hello.engine?.version !== version || hello.capabilities?.hostVerification !== ENGINE_VERIFICATION
       || hello.capabilities?.workspaceCommandVerification !== ENGINE_COMMAND_VERIFIER
       || hello.capabilities?.approvals !== 'durable'))
-      throw starHarnessError('STAR_HARNESS_INCOMPATIBLE', '此 Star Harness 版本与当前 Studio 不兼容。');
+      throw starHarnessError('STAR_HARNESS_INCOMPATIBLE', '此 StarOrigin Harness 版本与当前 Studio 不兼容。');
     return { version: hello.engine?.version ?? null, images: Number(hello.capabilities?.inputImages?.maxCount) > 0 };
   } finally {
     check.removeEventListener('abort', abort);
@@ -292,10 +292,13 @@ export async function startStarHarness({ packageDirectory, version, workspaceRoo
   const child = fork(workerEntry, [packageDirectory, '--workspace', workspaceRoot, '--state-dir', stateDir,
     '--agent', agentId], {
     execPath, execArgv, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-    env: { ...childEnvironment(env), ...search, ...(process.versions.electron && !useDesktopNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    env: { ...childEnvironment(env), ...search,
+      ...(process.platform === 'darwin' ? { AGENTKIT_ENGINE_DESKTOP_WORKSPACE_SANDBOX: '1' } : {}),
+      ...(process.versions.electron && !useDesktopNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_MODEL_BASE_URL: harnessModelEndpoint(profile.baseUrl, profile.protocol),
       AGENTKIT_ENGINE_MODEL_API_KEY: profile.apiKey, AGENTKIT_ENGINE_MODEL_NAME: profile.modelName,
-      AGENTKIT_ENGINE_MODEL_PROTOCOL: profile.protocol || 'openai-chat',
+      AGENTKIT_ENGINE_MODEL_PROTOCOL: profile.protocol === 'openai-completions' ? 'openai-chat' : profile.protocol || 'openai-chat',
+      ...(profile.selectedReasoningEffort ? { AGENTKIT_ENGINE_MODEL_REASONING_EFFORT: profile.selectedReasoningEffort } : {}),
       ...(profile.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),
       ...(profile.contextWindow ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(profile.contextWindow) } : {}),
       ...(profile.maxOutputTokens ? { AGENTKIT_ENGINE_MODEL_MAX_OUTPUT_TOKENS: String(profile.maxOutputTokens) } : {}),
@@ -332,8 +335,8 @@ export async function startStarHarness({ packageDirectory, version, workspaceRoo
     signal?.throwIfAborted();
     if (error.code === 'STAR_HARNESS_INCOMPATIBLE') throw error;
     if (error.code === 'NATIVE_ENGINE_VERIFICATION_UNAVAILABLE')
-      throw starHarnessError('STAR_HARNESS_INCOMPATIBLE', '此 Star Harness 版本与当前 Studio 不兼容。');
-    throw starHarnessError('STAR_HARNESS_START_FAILED', 'Star Harness 服务启动或握手失败。');
+      throw starHarnessError('STAR_HARNESS_INCOMPATIBLE', '此 StarOrigin Harness 版本与当前 Studio 不兼容。');
+    throw starHarnessError('STAR_HARNESS_START_FAILED', 'StarOrigin Harness 服务启动或握手失败。');
   }
 }
 

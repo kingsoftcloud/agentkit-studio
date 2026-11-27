@@ -4,6 +4,7 @@ import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { STUDIO_REASONING_LEVELS, studioReasoning } from './model-reasoning.mjs';
 import { catalogReasoningMetadata } from './model-catalog-reasoning.mjs';
 import { modelCard } from './model-cards.mjs';
+import { ROUTEMIND_MODELS, ROUTEMIND_PROVIDER } from './host/services/routemind-models.mjs';
 import { dshModelRoute, HARNESS_SERVICE_MODEL_PROVIDER } from './model-route.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from './model-capabilities.mjs';
@@ -14,7 +15,7 @@ import { probeModelWire, probeModelWires } from './model-wire-probe.mjs';
 import { inputModalities, modelInput } from './model-input.mjs';
 export { modelInput };
 
-export function createModelService({ configuration, credentials, fetchImpl = hostFetch, routeMindActive = () => false }) {
+export function createModelService({ configuration, credentials, fetchImpl = hostFetch, routeMindActive = () => false, routeMindGateway = async () => null }) {
   const catalogs = new Map();
   const pendingCatalogs = new Map();
   const displayCatalogs = new WeakMap();
@@ -141,20 +142,32 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       return new Map((Array.isArray(body?.models) ? body.models : []).filter(card => typeof card?.name === 'string').map(card => [card.name, card]));
     } catch { return new Map(); }
   }
-  function displayModels(selected, snapshot) {
-    if (!displayCatalogs.has(snapshot)) {
-      displayCatalogs.set(snapshot, routeMindCards(selected.baseUrl, snapshot.headers, snapshot.raw).then(live =>
-        snapshot.items.map((item, index) => ({
-          ...item,
-          card: modelCard(snapshot.raw[index], { live: live.get(item.id), reasoningLevels: item.reasoningLevels }),
-        }))));
-    }
-    return displayCatalogs.get(snapshot);
+  async function routeMindProfile(provider, modelName) {
+    if (provider !== ROUTEMIND_PROVIDER || !ROUTEMIND_MODELS.some(model => model.id === modelName)) return null;
+    if (!await routeMindActive()) throw Object.assign(new Error('请先启用 RouteMind 智能路由'), { code: 'ROUTEMIND_DISABLED' });
+    const gateway = await routeMindGateway();
+    if (!gateway || !gateway.apiKey && !gateway.local)
+      throw Object.assign(new Error('请配置可用的 RouteMind 网关和凭据'), { code: 'ROUTEMIND_GATEWAY_UNAVAILABLE' });
+    return { id: provider + ':' + modelName, provider, modelName, ...gateway, protocol: 'openai-completions' };
   }
+  async function routeMindLiveCatalog() {
+    const gateway = await routeMindGateway();
+    if (!gateway) return new Map();
+    const headers = gateway.apiKey ? { Authorization: 'Bearer ' + gateway.apiKey } : {};
+    return routeMindCards(gateway.baseUrl, headers, [{ owned_by: 'routemind' }]);
+  }
+  function displayModels(selected, snapshot, shared = new Map()) {
+    if (!displayCatalogs.has(snapshot)) displayCatalogs.set(snapshot, routeMindCards(selected.baseUrl, snapshot.headers, snapshot.raw));
+    return displayCatalogs.get(snapshot).then(live => snapshot.items.map((item, index) => ({
+      ...item,
+      card: modelCard(snapshot.raw[index], { live: live.get(item.id) ?? scoreOnly(shared.get(item.id)), reasoningLevels: item.reasoningLevels }),
+    })));
+  }
+  const scoreOnly = card => card && { scores: card.scores };
   async function catalogForDisplay(selected) {
     const snapshot = await gatewayCatalog(selected, true);
     if (!await routeMindActive()) return snapshot.items;
-    const items = await displayModels(selected, snapshot);
+    const items = await displayModels(selected, snapshot, await routeMindLiveCatalog());
     return await routeMindActive() ? items : snapshot.items;
   }
   /**
@@ -169,19 +182,29 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const enabledProfiles = (values.modelProfiles || []).filter(item => item.enabled !== false);
     const candidates = enabledProfiles.length ? enabledProfiles : [{ id: 'default' }];
     const seen = new Set([HARNESS_SERVICE_MODEL_PROVIDER]), ambiguous = new Set();
-    const routes = candidates.map(candidate => {
+    const routes = [...new Map(candidates.map(candidate => {
       const provider = dshModelRoute(candidate);
-      if (seen.has(provider)) ambiguous.add(provider);
-      seen.add(provider);
-      return { id: candidate.id, provider };
+      const binding = [candidate.baseUrl, candidate.connectionId, candidate.credentialName];
+      const key = JSON.stringify([provider, binding]);
+      return [key, { id: candidate.id, provider }];
+    })).values()].map(route => {
+      if (seen.has(route.provider)) ambiguous.add(route.provider);
+      seen.add(route.provider);
+      return route;
     });
+    const shared = await routeMindLiveCatalog();
     // Existing DSH routes can outlive a conflicting edit. Avoid attaching any
     // gateway's price to that route, even if only one catalog can be read.
     const lists = await Promise.all(routes.filter(route => !ambiguous.has(route.provider)).map(async ({ id, provider }) => {
       try {
         const selected = await profile(id);
-        return { provider, items: await displayModels(selected, await gatewayCatalog(selected)) };
-      } catch { return null; }
+        return { provider, items: await displayModels(selected, await gatewayCatalog(selected), shared) };
+      } catch {
+        const names = candidates.filter(candidate => dshModelRoute(candidate) === provider && candidate.modelName);
+        const items = names.map(item => ({ id: item.modelName,
+          card: modelCard({ id: item.modelName }, { live: scoreOnly(shared.get(item.modelName)) }) })).filter(item => item.card.scores);
+        return items.length ? { provider, items } : null;
+      }
     }));
     if (!await routeMindActive()) return inactive;
     const byModel = new Map(), byProvider = new Map();
@@ -193,7 +216,8 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       }
     }
     return { enabled: true, cards: ambiguous.size ? {} : Object.fromEntries([...byModel].filter(([, card]) => card)),
-      cardsByProvider: Object.fromEntries(byProvider) };
+      cardsByProvider: Object.fromEntries(byProvider),
+      sharedScores: Object.fromEntries([...shared].map(([id, card]) => [id, modelCard({ id }, { live: scoreOnly(card) }).scores]).filter(([, scores]) => scores)) };
   }
   async function catalog(id, { includeCards = false } = {}) {
     const selected = await profile(id);
@@ -312,5 +336,5 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     if ((!apiKey && !hasConfiguredAuthentication(candidate?.headers)) || !baseUrl) return admitModelCapabilities(candidate);
     return capabilities({ ...candidate, baseUrl, apiKey }, signal);
   }
-  return { settings, save, create, sync, profile, catalog, cards, probe, probeEfforts, probeWire, capabilities, capabilitiesOf };
+  return { settings, save, create, sync, profile, routeMindProfile, catalog, cards, probe, probeEfforts, probeWire, capabilities, capabilitiesOf };
 }

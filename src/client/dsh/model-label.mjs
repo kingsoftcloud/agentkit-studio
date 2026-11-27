@@ -1,10 +1,10 @@
 /** Display-only annotations inside DSH's native model-selection controls. */
-import { modelDisplayName, modelScores, priceText } from '../../model-cards.mjs';
+import { modelDisplayName, modelScores, priceText, SCORE_DIMENSIONS } from '../../model-cards.mjs';
 import { HARNESS_SERVICE_MODEL_PROVIDER } from '../../model-route.mjs';
 import { renderModelScoreBars } from '../pages/model-card-view.mjs';
 
 export function createModelCardIndex(load) {
-  let cards = {}, cardsByProvider = {}, enabled = false, checked = false, pending = null, version = 0;
+  let cards = {}, cardsByProvider = {}, sharedScores = {}, enabled = false, checked = false, pending = null, version = 0;
   const listeners = new Set();
   let menuListeners = 0;
   const emit = () => {
@@ -18,6 +18,7 @@ export function createModelCardIndex(load) {
       enabled = value?.enabled === true;
       cards = value?.cards ?? {};
       cardsByProvider = value?.cardsByProvider ?? {};
+      sharedScores = value?.sharedScores ?? {};
       checked = true;
       emit();
     }).catch(() => {}).finally(() => {
@@ -29,6 +30,7 @@ export function createModelCardIndex(load) {
   function invalidate() {
     cards = {};
     cardsByProvider = {};
+    sharedScores = {};
     enabled = false;
     checked = false;
     pending = null;
@@ -58,7 +60,7 @@ export function createModelCardIndex(load) {
         ? cards
         : Object.hasOwn(cardsByProvider, provider) ? cardsByProvider[provider] : {};
       if (Object.hasOwn(catalog, id)) return catalog[id];
-      const scores = modelScores(id);
+      const scores = Object.hasOwn(sharedScores, id) ? sharedScores[id] : modelScores(id);
       return scores ? { displayName: modelDisplayName(id), scores } : null;
     },
   };
@@ -70,7 +72,7 @@ export function modelLabel(h, Tag, card, model, placement) {
   const badgeText = typeof text === 'string' ? text : text?.['zh-CN'] || text?.zh || text?.en;
   const badge = badgeText ? h(Tag, { tone: model.badge.tone }, badgeText) : null;
   const price = placement === 'trigger' ? '' : priceText(card);
-  const bars = placement === 'trigger' ? null : renderModelScoreBars(h, card?.scores);
+  const bars = placement === 'trigger' ? null : renderModelScoreBars(h, card?.scores, SCORE_DIMENSIONS);
   const nameRow = h('span', { style: { display: 'inline-flex', minWidth: 0, alignItems: 'center', gap: '6px' } },
     placement === 'trigger' ? badge : null,
     h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, name),
@@ -101,7 +103,10 @@ export function installModelLabel(ctx, { React, Tag, hostRemote, window }) {
     return modelLabel(React.createElement, Tag, card, model, placement);
   }
   ctx.effect(() => {
-    const invalidate = () => index.invalidate();
+    const invalidate = () => {
+      index.invalidate();
+      window.dispatchEvent(new window.Event('agentkit-studio:routemind-changed'));
+    };
     const unsubscribe = ctx.remote?.$on?.('plugin-manager/changed', invalidate);
     window.addEventListener('agentkit-studio:model-credential-changed', invalidate);
     window.addEventListener('agentkit-studio:connection-reset', invalidate);

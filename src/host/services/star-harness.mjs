@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { dshModelRoute } from '../../model-route.mjs';
+import { providerDisplayName, studioReasoning } from '../../model-reasoning.mjs';
 import { canonicalEngineWorkspace, HARNESS_SERVICE_MODEL_PROVIDER } from '../../providers/engine-service-workspaces.mjs';
 import { modelInput } from '../../model-input.mjs';
 import { createStarHarnessReleases, inspectStarHarness, probeStarHarness, startStarHarness, starHarnessError, starHarnessVersion } from './star-harness-release.mjs';
@@ -88,7 +90,7 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
     workspaceRoot: binding.workspace, modelSelection: modelSelection(binding.model), managed: true,
   });
   async function savedProfile(binding, signal) {
-    const selected = await profile(binding.profileId, signal);
+    const selected = binding.turnProfile ?? await profile(binding.profileId, signal);
     if (selected.modelName !== binding.model && (!binding.automatic || binding.profileId))
       throw starHarnessError('STAR_HARNESS_MODEL_CHANGED', '工作区绑定的模型已变化，请重新绑定后启动。');
     return { ...selected,
@@ -119,7 +121,8 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
     const pending = starting.get(binding.workspace);
     if (pending) return pending.result;
     if (existing?.connection.alive && existing.binding.profileId === binding.profileId && existing.binding.model === binding.model
-      && existing.binding.images === binding.images && existing.binding.contextWindow === binding.contextWindow)
+      && existing.binding.images === binding.images && existing.binding.contextWindow === binding.contextWindow
+      && existing.binding.profileKey === binding.profileKey)
       return Promise.resolve(existing.connection);
     const result = (async () => {
       await stop(binding.workspace);
@@ -198,7 +201,17 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       return profiles.length === 1 ? profiles[0] : undefined;
     },
     modelInfo(model) {
-      const capabilities = activeBindings().filter(binding => binding.model === model).flatMap(binding => {
+      const bindings = activeBindings().filter(binding => binding.model === model);
+      const origins = bindings.map(binding => configuredProfile(binding.profileId));
+      const origin = origins[0];
+      const presentationProvider = (origin?.baseUrl || origin?.connectionId)
+        && origins.every(profile => (profile?.baseUrl || profile?.connectionId) && dshModelRoute(profile) === dshModelRoute(origin))
+        ? { id: dshModelRoute(origin), name: providerDisplayName(origin) } : null;
+      const declared = presentationProvider && studioReasoning(origin);
+      const reasoning = declared && origins.every(profile => JSON.stringify(studioReasoning(profile)) === JSON.stringify(declared))
+        ? { efforts: Object.keys(declared.efforts).map(id => ({ id, name: id[0].toUpperCase() + id.slice(1) })),
+          defaultEffort: declared.defaultEffort } : null;
+      const capabilities = bindings.flatMap(binding => {
         const { automatic, workspace, profileId, images, contextWindow } = binding;
         // A legacy binding without a profile has no known capacity.
         if (!profileId) return [{ images, window: undefined }];
@@ -212,15 +225,27 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       // must not strip the context window from the whole model.
       const windows = capabilities.map(row => row.window).filter(value => value !== undefined);
       return { images: capabilities.some(row => row.images),
+        ...(presentationProvider ? { presentationProvider } : {}),
+        ...(reasoning ? { reasoning } : {}),
         ...(windows.length && windows.every(value => Number.isSafeInteger(value) && value > 0)
           ? { contextWindow: Math.min(...windows) } : {}) };
     },
-    async acquire(workspace) {
+    async acquire(workspace, turnProfile) {
       if (mutation) throw codes.busy();
       if (lifetime.signal.aborted) throw codes.closed();
-      const binding = bindingFor(workspace);
+      const configured = managedBinding(workspace);
+      const base = configured ? { ...configured, contextWindow: configuredProfile(configured.profileId)?.contextWindow }
+        : automaticBinding(workspace);
+      const profileKey = turnProfile && createHash('sha256').update(JSON.stringify([
+        turnProfile.id, turnProfile.modelName, turnProfile.baseUrl, turnProfile.apiKey,
+        turnProfile.protocol, turnProfile.selectedReasoningEffort,
+      ])).digest('hex');
+      const binding = !turnProfile && leases.has(workspace) ? bindingFor(workspace) : turnProfile && base ? { ...base, automatic: false, turnProfile, profileKey,
+        profileId: turnProfile.id, model: turnProfile.modelName, contextWindow: turnProfile.contextWindow,
+        images: modelInput(turnProfile).includes('image') } : base;
+      if (leases.has(workspace) && bindingFor(workspace)?.profileKey !== profileKey) throw codes.busy();
       if (clientError) throw clientError;
-      if (!route(workspace)) throw codes.unbound();
+      if (!binding || !route(workspace)) throw codes.unbound();
       leases.set(workspace, (leases.get(workspace) ?? 0) + 1);
       let released = false;
       const release = () => {

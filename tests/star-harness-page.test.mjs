@@ -42,7 +42,7 @@ test('the details use the catalog cache on mount and explicitly refresh when ask
   assert.deepEqual(requests[2].options, { checkUpdates: true, includeVersions: true, refreshVersions: true });
 });
 
-test('the Star Harness card applies an upgrade once and explains automatic workspace selection', async () => {
+test('the StarOrigin Harness card applies an upgrade once and explains automatic workspace selection', async () => {
   const installed = Promise.withResolvers();
   const requests = [], events = [];
   const view = render({ ...state, releaseVersions: [{ version: '0.0.25', action: 'upgrade' }] }, {
@@ -61,7 +61,7 @@ test('the Star Harness card applies an upgrade once and explains automatic works
   assert.deepEqual(events, [STAR_HARNESS_CHANGED]);
 });
 
-test('the Star Harness details show components and allow rollback to the locally available version while offline', async () => {
+test('the StarOrigin Harness details show components and allow rollback to the locally available version while offline', async () => {
   const requests = [];
   const status = { ...state, previousVersion: '0.0.23', rollbackVersion: '0.0.23', registryUnavailable: true,
     releaseVersions: [{ version: '0.0.23', action: 'rollback', publishedAt: '2026-11-20T10:02:13.000Z' },
@@ -115,7 +115,7 @@ test('the DSH detail lists only the recommended, current and rollback releases',
 });
 
 
-test('the Star Harness summary toggles activation without a workspace binding', async () => {
+test('the StarOrigin Harness summary toggles activation without a workspace binding', async () => {
   const updates = [], events = [];
   const view = render(state, {
     async enableStarHarness(enabled) {

@@ -46,20 +46,20 @@ async function releaseArtifact(fetchImpl, version, name, signal) {
   });
   if (!response.ok || !response.body) {
     await response.body?.cancel();
-    throw Object.assign(Error('Star Harness release evidence unavailable'), { status: response.status });
+    throw Object.assign(Error('StarOrigin Harness release evidence unavailable'), { status: response.status });
   }
   const chunks = [];
   let size = 0;
   for await (const chunk of response.body) {
     size += chunk.byteLength;
-    if (size > artifactLimit) throw Error('Star Harness release evidence exceeds its size limit');
+    if (size > artifactLimit) throw Error('StarOrigin Harness release evidence exceeds its size limit');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
 }
 
 export async function fetchStarHarnessProof(version, { fetchImpl, signal }) {
-  if (!starHarnessVersion(version)) throw Error('Invalid Star Harness version');
+  if (!starHarnessVersion(version)) throw Error('Invalid StarOrigin Harness version');
   const [manifest, bundle] = await Promise.all([
     releaseArtifact(fetchImpl, version, manifestName, signal), releaseArtifact(fetchImpl, version, bundleName, signal),
   ]);
@@ -73,11 +73,11 @@ function validFiles(files) {
 
 export async function verifyStarHarnessProof(version, proof, { verifySignature = verify, cachePath, offline = false } = {}) {
   if (!starHarnessVersion(version) || typeof proof?.manifest !== 'string' || proof.manifest.length > artifactLimit * 2
-    || !object(proof.bundle)) throw Error('Invalid Star Harness release evidence');
+    || !object(proof.bundle)) throw Error('Invalid StarOrigin Harness release evidence');
   const bytes = Buffer.from(proof.manifest, 'base64');
   const bundle = proof.bundle;
   if (bytes.length > artifactLimit || bundle.dsseEnvelope?.payloadType !== 'application/vnd.in-toto+json')
-    throw Error('Invalid Star Harness attestation format');
+    throw Error('Invalid StarOrigin Harness attestation format');
   await verifySignature(bundle, {
     certificateIdentityURI: workflow + version, certificateIssuer: 'https://token.actions.githubusercontent.com',
     tlogThreshold: 1, timeout: 10000, retry: 1, tufCachePath: cachePath, tufForceCache: offline,
@@ -86,32 +86,32 @@ export async function verifyStarHarnessProof(version, proof, { verifySignature =
   const digest = createHash('sha256').update(bytes).digest('hex');
   if (statement._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://slsa.dev/provenance/v1'
     || !statement.subject?.some(subject => subject.name === 'manifest.json' && subject.digest?.sha256 === digest))
-    throw Error('Star Harness manifest differs from the attested artifact');
+    throw Error('StarOrigin Harness manifest differs from the attested artifact');
 
   const manifest = JSON.parse(bytes);
   const studio = manifest.studio;
   if (manifest.schemaVersion !== 'agentkit.native-packages/v1' || !/^[a-f0-9]{40}$/.test(manifest.sourceCommit ?? '')
     || studio?.engineProtocol !== STAR_HARNESS_ENGINE_PROTOCOL || studio.uiContract !== STAR_HARNESS_UI_CONTRACT
     || !sha256.test(studio.uiSha256 ?? '') || !Array.isArray(manifest.packages) || manifest.packages.length !== 3)
-    throw Error('Star Harness release has an incompatible upgrade contract');
+    throw Error('StarOrigin Harness release has an incompatible upgrade contract');
 
   const names = [STAR_HARNESS_CORE, STAR_HARNESS_PACKAGE, STAR_HARNESS_UI];
   const packages = Object.fromEntries(manifest.packages.map(pin => [pin.name, { ...pin, files: pin.fileHashes }]));
   for (const name of names) {
     const pin = packages[name];
     if (!pin || pin.version !== version || !integrity.test(pin.integrity ?? '') || !validFiles(pin.files))
-      throw Error('Star Harness package pins must match the release version');
+      throw Error('StarOrigin Harness package pins must match the release version');
   }
   if (packages[STAR_HARNESS_UI].files[STAR_HARNESS_CLIENT_FILE] !== studio.uiSha256)
-    throw Error('Star Harness UI digest does not match its package');
+    throw Error('StarOrigin Harness UI digest does not match its package');
   const dependencies = { [STAR_HARNESS_CORE]: version };
   const dependencyPackages = manifest.dependencyPackages;
-  if (!object(dependencyPackages)) throw Error('Invalid Star Harness dependency evidence');
+  if (!object(dependencyPackages)) throw Error('Invalid StarOrigin Harness dependency evidence');
   for (const [key, pin] of Object.entries(dependencyPackages)) {
     if (!object(pin) || !packageName.test(pin.name ?? '') || names.includes(pin.name)
       || !dependencyVersion.test(pin.version ?? '') || key !== pin.name + '@' + pin.version
       || Object.hasOwn(dependencies, pin.name) || !integrity.test(pin.integrity ?? '') || !validFiles(pin.files))
-      throw Error('Star Harness dependency pins are invalid or ambiguous');
+      throw Error('StarOrigin Harness dependency pins are invalid or ambiguous');
     Object.defineProperty(dependencies, pin.name, { value: pin.version, enumerable: true });
   }
   return { packages, dependencies, dependencyPackages, uiSha256: studio.uiSha256 };

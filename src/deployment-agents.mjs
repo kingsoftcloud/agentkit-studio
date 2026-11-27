@@ -6,6 +6,8 @@ import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDepl
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { verifyDeploymentStorage } from './deployment-storage.mjs';
+import { dshModelRoute } from './model-route.mjs';
+import { providerDisplayName } from './model-reasoning.mjs';
 import { frozenModels } from './frozen-models.mjs';
 import { isStudioRuntimeType } from './runtime-contract.mjs';
 import { DSH_MANIFEST_FORMAT } from './managed-runtime-manifest.mjs';
@@ -53,7 +55,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
   async function project(record) {
     record = currentDeployment(record);
     const frozen = await build.resolve(record.plan.agentId, record.plan.buildId);
-    let models, profile;
+    let models, profile, modelOrigins;
     if (record.plan.runtime === 'ksxc') {
       profile = { id: ksxcAgentPreference(frozen.spec) };
       models = [];
@@ -63,6 +65,11 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
       const { manifest } = verifyPortableBundle(zip);
       if (manifest.agentId !== record.plan.agentId || manifest.buildId !== record.plan.buildId) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包身份不一致');
       models = frozenModels(manifest.resources.profiles);
+      modelOrigins = Object.fromEntries(models.flatMap(model => {
+        const origin = manifest.resources.profiles.find(item => item.id === model.profileId);
+        return origin?.connectionId || origin?.baseUrl
+          ? [[model.id, { id: dshModelRoute(origin), name: providerDisplayName(origin) }]] : [];
+      }));
       profile = models.find(item => item.default) || models[0];
     } else {
       const model = String(record.plan.managedModelConfig?.Model || '').trim();
@@ -74,7 +81,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
       name: record.plan.agentName, createdAt: record.createdAt }, spec: frozen.spec,
       deployment: { id: record.id, versionId: deploymentVersionId(record), agentId: record.plan.agentId, buildId: record.plan.buildId, bundleId: record.plan.bundleId,
         state: record.state, available: available.has(record.state), ...(record.plan.runtime === 'ksxc' ? {} : { model: profile.id }), models: models.map(item => item.id),
-        environment: record.plan.environment, region: record.plan.region } };
+        ...(modelOrigins ? { modelOrigins } : {}), environment: record.plan.environment, region: record.plan.region } };
   }
   async function getRecord(agentId) {
     const found = (await records(true)).find(row => row.cloudAgentId === agentId);
@@ -143,7 +150,20 @@ export function createDeploymentModelAdapter({ agents, runtime }) {
   const metadata = (provider, model) => ({ provider, id: model, name: model, modalities: ['text'] });
   return Object.assign(Object.create(Object.getPrototypeOf(runtime)), runtime, {
     providerInfo(provider) { return { id: provider, name: '云端部署' }; },
-    async listModels(provider) { return [...new Set((await (await agents()).list()).items.flatMap(item => item.deployment.models || [item.deployment.model]))].map(model => metadata(provider, model)); },
+    async listModels(provider) {
+      const entries = new Map();
+      for (const { deployment } of (await (await agents()).list()).items) {
+        for (const model of deployment.models || [deployment.model]) {
+          if (!model) continue;
+          const origin = deployment.modelOrigins?.[model] ?? null;
+          if (!entries.has(model)) entries.set(model, origin);
+          else if (entries.get(model)?.id !== origin?.id) entries.set(model, null);
+        }
+      }
+      return [...entries].map(([model, origin]) => ({
+        ...metadata(provider, model), ...(origin ? { presentationProvider: origin } : {}),
+      }));
+    },
     // A deleted deployment must still render historical messages. Admission and
     // each invocation separately verify its receipt and live remote identity.
     async resolveModel(provider, model) { return metadata(provider, model); },

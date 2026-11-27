@@ -193,7 +193,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ksxcStoreDir: managedRuntime ? join(runtimeEnv.AGENTKIT_USER_HOME || runtimeEnv.AGENTKIT_HOME || homedir(), '.agentkit', 'studio') : studioStoreDir,
     env: runtimeEnv,
     credentials: ctx.get('credentials'), managedRuntime, managedResourceContext, portableRuntime });
-  if (ksxc?.accounts) ctx.effect(() => () => ksxc.accounts.close(), 'agentkit-studio: KSXC account authorization');
+  if (ksxc?.accounts) ctx.effect(() => async () => {
+    ksxc.accounts.close();
+    await ksxc.modelAccess.close();
+  }, 'agentkit-studio: KSXC account authorization');
   const cloudExecutionModes = createCloudExecutionModes({ directory: studioStoreDir });
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
@@ -276,6 +279,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // optional child-process boundary lazy so Studio can still load on hosts
   // without a Codex binary and report CODEX_PROVIDER_UNAVAILABLE only when a
   // Codex Agent is selected.
+  const { createKsxcDesktopModelAdapter } = await import('./services/ksxc-dsh-adapter.mjs');
   const { createKsxcModelAdapter } = await import('../providers/ksxc-runtime.mjs');
   const { createCodexRuntime } = await import('../providers/codex-runtime.mjs');
   const { createCodexModelCatalog, createCodexModelAdapter, CODEX_PROVIDER } = await import('../providers/codex-models.mjs');
@@ -288,12 +292,35 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // The Native engine as its own process. Lazy like Codex: hosts without an
   // engine executable still load and report NATIVE_ENGINE_UNAVAILABLE on use.
   const { createNativeEngineRuntime, createHarnessServiceModelAdapter, routeHarnessCompaction, HARNESS_SERVICE_MODEL_PROVIDER } = await import('../providers/native-engine-runtime.mjs');
+  const { webSearchEndpoint } = await import('../web-search-endpoint.mjs');
+  const { webSearch } = await import('../providers/studio-web-transport.mjs');
+  const { starflowWebSearch } = await import('../providers/starflow-web-search.mjs');
   const { engineServiceWorkspaces, canonicalEngineWorkspace } = await import('../providers/engine-service-workspaces.mjs');
   const externalRoutes = engineServiceWorkspaces(runtimeEnv);
   const credentials = credentialsService;
   const routeMindActive = () => isRouteMindPluginActive(ctx.get('pluginInventory'));
+  const { mountRouteMindModels, ROUTEMIND_MODELS, routeMindGateway } = await import('./services/routemind-models.mjs');
+  const routeMindConfig = async () => {
+    if (!runtimeEnv.ROUTEMIND_GATEWAY_URL) {
+      const settings = await models.settings();
+      const saved = settings.modelProfiles?.find(profile => profile.enabled !== false
+        && /routemind/i.test(profile.connectionName || profile.provider)
+        && ROUTEMIND_MODELS.some(model => model.id === profile.modelName));
+      if (saved) {
+        const profile = await models.profile(saved.id).catch(() => null);
+        if (profile) return routeMindGateway({ ROUTEMIND_GATEWAY_URL: profile.baseUrl, ROUTEMIND_TOKEN: profile.apiKey });
+      }
+    }
+    return routeMindGateway(runtimeEnv);
+  };
   const models = await import('../model-service.mjs').then(({ createModelService }) =>
-    configurationPromise.then(configuration => createModelService({ configuration, credentials, routeMindActive })));
+    configurationPromise.then(configuration => createModelService({ configuration, credentials, routeMindActive,
+      routeMindGateway: routeMindConfig })));
+  if (!managedRuntime && !portableRuntime) {
+    const syncRouteMind = mountRouteMindModels(ctx, { active: routeMindActive, gateway: routeMindConfig, credentials });
+    const configuration = await configurationPromise;
+    ctx.effect(() => configuration.onChange(syncRouteMind), 'agentkit-studio: RouteMind gateway settings');
+  }
   const starHarness = !managedRuntime && !portableRuntime
     ? await import('./services/star-harness.mjs').then(async ({ createStarHarnessManager }) => createStarHarnessManager({
       root: join(studioStoreDir, 'star-harness'), env: runtimeEnv, externalRoutes,
@@ -376,7 +403,45 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     codexRuntime,
     ksxcRuntime: ksxc?.runtime,
     ksxcDesktopUser: KSXC_DESKTOP_USER,
+    ksxcModelAccess: ksxc?.modelAccess,
     nativeEngineRuntime,
+    hostWebSearch: async (agent, { provider, model }, workspaceModelProfile) => {
+      const settings = await models.settings();
+      const profile = workspaceModelProfile ?? await Promise.resolve().then(() => {
+        const selected = provider === HARNESS_SERVICE_MODEL_PROVIDER
+          ? starHarness?.summaryProfile(agent.session?.header?.cwd, model)
+          : (settings.modelProfiles || []).find(item => item.enabled !== false
+            && item.modelName === model && dshModelRoute(item) === provider);
+        return selected && models.profile(selected.id);
+      }).catch(() => null);
+      const nativeSearch = starflowWebSearch(profile);
+      let endpoint;
+      try { endpoint = webSearchEndpoint(settings.webSearchBaseUrl); } catch { /* A stale profile value must not prevent a turn. */ }
+      const web = agent.ctx?.get?.('web') ?? ctx.get('web');
+      let configuredSearch;
+      if (endpoint) {
+        configuredSearch = async (query, maxResults, signal) => {
+          const result = await webSearch({ fetch: hostFetch, providerConfig: { provider: 'http', baseUrl: endpoint },
+            query, maxResults, signal });
+          if (!result.ok) throw Object.assign(new Error('搜索 API 调用失败'), { code: result.error_type });
+          return { sources: result.results };
+        };
+      } else if (await Promise.resolve().then(() => web?.searchReady(provider)).catch(() => false)) {
+        configuredSearch = (query, maxResults, signal) => {
+          const owners = agent.ctx?.get?.('agents') ?? ctx.get('agents');
+          const search = () => web.search({ query, maxResults }, signal);
+          return owners ? owners.withInitiator(agent, search) : search();
+        };
+      }
+      if (!nativeSearch || !configuredSearch) return nativeSearch ?? configuredSearch;
+      return async (query, maxResults, signal) => {
+        try { return await nativeSearch(query, maxResults, signal); }
+        catch (error) {
+          if (signal?.aborted || !['starflow_search_rejected', 'starflow_search_not_performed'].includes(error?.code)) throw error;
+          return configuredSearch(query, maxResults, signal);
+        }
+      };
+    },
     // The permission picker (local, Studio cloud and Hosted UI) converges on the
     // Session preset; read it here so Codex's own sandbox follows the picker.
     permissionModeForSession: session => {
@@ -399,7 +464,25 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       const approval = agent.ctx?.get?.('approval') ?? ctx.get?.('approval');
       return requestNativeHostApproval(approval, agent, request);
     },
-    resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
+    resolveHarnessModel: async ({ provider, model }, effort, cwd) => {
+      const routeMind = await models.routeMindProfile(provider, model);
+      if (routeMind) return routeMind;
+      const settings = await models.settings();
+      const profile = provider === HARNESS_SERVICE_MODEL_PROVIDER
+        ? effort && starHarness?.summaryProfile(cwd, model)
+        : (settings.modelProfiles || []).find(item => item.enabled !== false && item.modelName === model && dshModelRoute(item) === provider);
+      if (!profile) return undefined;
+      const resolved = await models.profile(profile.id);
+      const wireEffort = resolved.reasoningEfforts?.[effort ?? resolved.defaultReasoningEffort];
+      return { ...resolved,
+        selectedReasoningEffort: ['low', 'medium', 'high', 'xhigh', 'max'].includes(wireEffort) ? wireEffort : undefined };
+    },
+    resolveCodexModel: async selection => {
+      const routeMind = await models.routeMindProfile(selection.provider, selection.model);
+      if (!routeMind) return resolveConfiguredCodexModel(selection, models);
+      return { model: routeMind.modelName, modelProvider: { baseUrl: routeMind.baseUrl, apiKey: routeMind.apiKey,
+        protocol: 'openai-completions', api: 'chat-completions' } };
+    },
     resolveModelMetadata: async (provider, model) => {
       const settings = await models.settings();
       // A route serves several models; pick the one the caller named.
@@ -437,9 +520,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       'agentkit-studio: DSH runtime provider',
     );
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CODEX_PROVIDER], createCodexModelAdapter({ catalog: codexModels, runtime: dshRuntimeAdapter })), 'agentkit-studio: Codex model directory');
-    if (ksxc) llmCtx.effect(() => llmCtx.llm.registerAdapter(['ksxc'], createKsxcModelAdapter({
-      adapter: dshRuntimeAdapter, runtime: ksxc.runtime, desktopUser: ksxc.accounts ? KSXC_DESKTOP_USER : undefined,
-    })), 'agentkit-studio: KSXC model route');
+    if (ksxc) llmCtx.effect(() => llmCtx.llm.registerAdapter(['ksxc'], ksxc.modelAccess
+      ? createKsxcDesktopModelAdapter({ LlmAdapter, modelAccess: ksxc.modelAccess, hostAnchor })
+      : createKsxcModelAdapter({ adapter: dshRuntimeAdapter, runtime: ksxc.runtime })), 'agentkit-studio: KSXC model route');
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CLOUD_PROVIDER], createDeploymentModelAdapter({ agents: async () => (await deployments()).agents, runtime: dshRuntimeAdapter })), 'agentkit-studio: frozen cloud models');
     const serviceModels = () => [
       ...nativeEngineRuntime.serviceModels,

@@ -1,10 +1,10 @@
 ---
-title: 安装、升级与绑定 Star Harness
-description: 在插件页安装并升级 Star Harness、绑定工作区与模型，然后在创建 Agent 时选中 `harness` 运行时。
+title: 安装、升级与绑定 StarOrigin Harness
+description: 在插件页安装并升级 StarOrigin Harness、绑定工作区与模型，然后在创建 Agent 时选中 `harness` 运行时。
 status: new
 ---
 
-**Star Harness 是三种运行时里唯一需要单独安装的那个。** 它由 ksadk-harness 的 npm 包提供，不随安装包一起就位；
+**StarOrigin Harness 是三种运行时里唯一需要单独安装的那个。** 它由 ksadk-harness 的 npm 包提供，不随安装包一起就位；
 先安装、启用并绑定一个工作区，创建 Agent 时才能选到 `harness`。
 
 <Callout type="info" title="前置条件">
@@ -14,7 +14,7 @@ status: new
   - 至少配置一个模型 profile，绑定工作区时要选它。
 </Callout>
 
-## 为什么 Star Harness 要单独装
+## 为什么 StarOrigin Harness 要单独装
 
 三种运行时的就绪方式不同：
 
@@ -22,9 +22,9 @@ status: new
 | --- | --- | --- |
 | DSH 原生（`dsh-native`） | 随 Studio 就绪 | 什么都不用做，新建默认就是它 |
 | Codex（`codex`） | 需要官方 Codex 插件 | 在插件页安装并启用官方插件 |
-| Star Harness（`harness`） | 需要**安装 npm 包 + 工作区绑定** | 安装、启用、绑定工作区（本页） |
+| StarOrigin Harness（`harness`） | 需要**安装 npm 包 + 工作区绑定** | 安装、启用、绑定工作区（本页） |
 
-Star Harness 多出来的「工作区」不是可选项：每个绑定的目录对应一份独立的运行状态，未绑定的目录会被明确拒绝，不会回落到别的项目。
+StarOrigin Harness 多出来的「工作区」不是可选项：每个绑定的目录对应一份独立的运行状态，未绑定的目录会被明确拒绝，不会回落到别的项目。
 这也是为什么它需要一次性的安装与绑定，而不是像 DSH 原生那样开箱可用。
 
 <Callout type="info" title="依赖是单向的">
@@ -38,7 +38,7 @@ Star Harness 多出来的「工作区」不是可选项：每个绑定的目录�
 <Step>
 ### 打开插件页
 
-**插件 → Star Harness**。这一行由 Studio 注册进 DSH 的插件页（`src/client/dsh/mount.mjs`），位于「内置插件配置」。
+**插件 → StarOrigin Harness**。这一行由 Studio 注册进 DSH 的插件页（`src/client/dsh/mount.mjs`），位于「内置插件配置」。
 
 页面顶部一行状态：
 
@@ -51,7 +51,7 @@ Star Harness 多出来的「工作区」不是可选项：每个绑定的目录�
 
 <Callout type="warn" title="停用之后选不到运行时">
   停用不会删除版本，也不会解除工作区绑定，但 `canCreate` 会变成假，
-  于是「运行目标」页里的 Star Harness 变成**未启用**，创建 Agent 的表单也不再提供它。重新启用即可恢复。
+  于是「运行目标」页里的 StarOrigin Harness 变成**未启用**，创建 Agent 的表单也不再提供它。重新启用即可恢复。
 </Callout>
 </Step>
 
@@ -77,9 +77,9 @@ Studio 在切换前校验发布签名、软件包及依赖的完整性，并启�
 <Step>
 ### 启用
 
-装好之后点 **启用**。启用要求至少有一个可用的工作区绑定——没有就得到 `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE`（「请先为该工作区绑定并启用 Star Harness。」）。
+装好之后点 **启用**。启用要求至少有一个可用的工作区绑定——没有就得到 `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE`（「请先为该工作区绑定并启用 StarOrigin Harness。」）。
 
-启用成功后的提示是「已启用，可在创建 Agent 时选择 Star Harness」。
+启用成功后的提示是「已启用，可在创建 Agent 时选择 StarOrigin Harness」。
 按钮变成 **停用**；停用会停掉所有工作区的 Harness 进程，但保留版本与绑定。
 </Step>
 
@@ -104,7 +104,7 @@ Studio 在切换前校验发布签名、软件包及依赖的完整性，并启�
 状态三选一：**运行中**、**未运行**、**目录已失效**（目录被删或改名了）。
 
 <Callout type="warn" title="目录不能重叠">
-  工作区不能与已有绑定重叠，也不能与 Star Harness 自己的状态目录重叠，否则得到 `STAR_HARNESS_WORKSPACE_CONFLICT`。
+  工作区不能与已有绑定重叠，也不能与 StarOrigin Harness 自己的状态目录重叠，否则得到 `STAR_HARNESS_WORKSPACE_CONFLICT`。
   嵌套目录（父目录与子目录同时绑定）同样会被拒绝——一个目录只有一个写入者。
 </Callout>
 </Step>
@@ -112,13 +112,13 @@ Studio 在切换前校验发布签名、软件包及依赖的完整性，并启�
 <Step>
 ### 在创建 Agent 时选中它
 
-回到 **智能体 → 更多创建方式 → 手动配置**，在「运行时」里选 **Star Harness**。
+回到 **智能体 → 更多创建方式 → 手动配置**，在「运行时」里选 **StarOrigin Harness**。
 
 可选的前提是 `canCreate` 为真，也就是**已安装 + 已启用 + 至少一个可用工作区**（`src/host/services/star-harness.mjs:174`）。
-三者缺一时按钮是禁用的，鼠标悬停会提示「在插件页安装并启用 Star Harness」。
+三者缺一时按钮是禁用的，鼠标悬停会提示「在插件页安装并启用 StarOrigin Harness」。
 
 <Callout type="info" title="运行时在创建后不可更改">
-  Star Harness 也一样。要换运行时只能新建一个 Agent；编辑已有的 Star Harness Agent 不受安装状态影响。
+  StarOrigin Harness 也一样。要换运行时只能新建一个 Agent；编辑已有的 StarOrigin Harness Agent 不受安装状态影响。
 </Callout>
 </Step>
 
@@ -143,8 +143,8 @@ Studio 在切换前校验发布签名、软件包及依赖的完整性，并启�
 
 1. 插件页状态行是 `已安装 <版本> · 已启用`。
 2. 工作区列表里至少一行显示 **运行中**，且版本号与状态行的版本一致。
-3. **运行目标**页里 Star Harness 那行是 **可选**，不再是「未启用」。
-4. 新建一个 Star Harness Agent 并对话，能拿到模型回复——说明引擎握手与模型凭证都通了。
+3. **运行目标**页里 StarOrigin Harness 那行是 **可选**，不再是「未启用」。
+4. 新建一个 StarOrigin Harness Agent 并对话，能拿到模型回复——说明引擎握手与模型凭证都通了。
 
 ## 常见错误
 
@@ -180,6 +180,6 @@ Studio 在切换前校验发布签名、软件包及依赖的完整性，并启�
     `harness` 的 owner、事件所有者与五项能力。
   </Card>
   <Card title="已知限制" href="/docs/help/known-limitations">
-    哪些部署形态不提供本机 Star Harness 管理。
+    哪些部署形态不提供本机 StarOrigin Harness 管理。
   </Card>
 </Cards>

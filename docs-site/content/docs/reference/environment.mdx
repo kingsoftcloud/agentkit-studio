@@ -1,19 +1,19 @@
 ---
 title: "环境变量参考"
-description: "Studio 读取的 156 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。"
+description: "Studio 读取的 158 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 三档口径
 
-Studio 从进程环境读取 156 个变量名：其中 10 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
+Studio 从进程环境读取 158 个变量名：其中 10 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
 
 | 档位 | 标识 | 条数 | 含义 |
 | --- | --- | --- | --- |
-| 可配置 | `configurable` | 57 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
+| 可配置 | `configurable` | 58 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
 | 平台注入 | `platform` | 89 | 由容器、托管运行时或桌面外壳注入，手工设置通常会被覆盖或不生效。 |
-| 禁止修改 | `forbidden` | 10 | Studio 会读取，但值必须由凭证服务或设置界面持有；不要写进 shell profile、`.env` 或 CI 变量。 |
+| 禁止修改 | `forbidden` | 11 | Studio 会读取，但值必须由凭证服务或设置界面持有；不要写进 shell profile、`.env` 或 CI 变量。 |
 
 <Callout type="warn" title="凭证只从设置界面写入">
 标为「禁止修改」的变量由凭证服务或设置界面持有。把它们写进 shell profile、`.env` 或 CI 变量会绕过 Studio 的凭证边界，并在日志中出现。
@@ -25,7 +25,7 @@ Studio 从进程环境读取 156 个变量名：其中 10 个是直接 `process.
 | --- | --- | --- |
 | `AGENTKIT` | 67 | Studio 自身的配置项。 |
 | `KSADK` | 32 | Skill、沙箱、记忆库与知识库的运行参数。 |
-| `OTHER` | 23 | 未归入命名空间的独立变量。 |
+| `OTHER` | 25 | 未归入命名空间的独立变量。 |
 | `AGENTENGINE` | 12 | AgentEngine 控制面注入的运行时身份与端点。 |
 | `OTEL` | 10 | OpenTelemetry 标准导出变量。 |
 | `E2B` | 4 | E2B 沙箱后端。 |
@@ -141,6 +141,8 @@ Studio 从进程环境读取 156 个变量名：其中 10 个是直接 `process.
 | `KSADK_SKILL_PROJECT_NAME` | 平台注入 | `src/providers/studio-skill-runtime-files.mjs` | — |
 | `KSADK_SKILL_ARTIFACT_PROJECT` | 平台注入 | `src/providers/studio-skill-runtime-files.mjs` | — |
 | `PATH` | 可配置 | `src/bundle-host.mjs` | — |
+| `ROUTEMIND_GATEWAY_URL` | 可配置 | `src/host/bootstrap.mjs` | — |
+| `ROUTEMIND_TOKEN` | 禁止修改 | `src/host/services/routemind-models.mjs` | — |
 | `STUDIO_DOWNLOAD_PROD_KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` | — |
 | `DOWNLOAD_PROD_KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` | — |
 | `CLOUD_MONITOR_OTLP_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` | — |
@@ -218,7 +220,7 @@ Studio 从进程环境读取 156 个变量名：其中 10 个是直接 `process.
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| 环境变量名 | `156` | 改名即破坏性变更 |
+| 环境变量名 | `158` | 改名即破坏性变更 |
 | 直读 | `10` | `process.env.X` 字面量 |
 | Host 转发 | `40` | `*_ENV_NAMES` 常量数组声明 |
 | 平台注入 | `89` | 手工设置会被覆盖 |

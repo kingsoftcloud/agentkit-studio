@@ -1,10 +1,10 @@
 ---
-title: Install, Upgrade, and Bind Star Harness
-description: Install and upgrade Star Harness on the plugin page, bind a workspace and model, then pick the `harness` runtime when creating an Agent.
+title: Install, Upgrade, and Bind StarOrigin Harness
+description: Install and upgrade StarOrigin Harness on the plugin page, bind a workspace and model, then pick the `harness` runtime when creating an Agent.
 status: new
 ---
 
-**Star Harness is the only one of the three runtimes you install separately.** It is delivered as npm packages from ksadk-harness and does not ship with the installer;
+**StarOrigin Harness is the only one of the three runtimes you install separately.** It is delivered as npm packages from ksadk-harness and does not ship with the installer;
 install it, enable it, and bind a workspace before the Agent form offers `harness`.
 
 <Callout type="info" title="Prerequisites">
@@ -14,7 +14,7 @@ install it, enable it, and bind a workspace before the Agent form offers `harnes
   - At least one model profile configured, because binding a workspace selects one.
 </Callout>
 
-## Why Star Harness needs its own install
+## Why StarOrigin Harness needs its own install
 
 The three runtimes become ready in three different ways:
 
@@ -22,7 +22,7 @@ The three runtimes become ready in three different ways:
 | --- | --- | --- |
 | DSH Native (`dsh-native`) | Ready with Studio | Nothing; it is the default for new agents |
 | Codex (`codex`) | Needs the official Codex plugin | Install and enable the official plugin on the plugin page |
-| Star Harness (`harness`) | Needs **the npm package installed plus a workspace binding** | Install, enable, and bind a workspace (this page) |
+| StarOrigin Harness (`harness`) | Needs **the npm package installed plus a workspace binding** | Install, enable, and bind a workspace (this page) |
 
 The extra "workspace" step is not optional: each bound directory gets its own isolated runtime state, and an unbound directory is refused outright rather than falling back to another project.
 That is why it needs a one-time install and binding instead of working out of the box like DSH Native.
@@ -38,7 +38,7 @@ That is why it needs a one-time install and binding instead of working out of th
 <Step>
 ### Open the plugin page
 
-Go to **Plugins → Star Harness**. Studio registers this row into the DSH plugin page (`src/client/dsh/mount.mjs`), under Built-in plugin configuration.
+Go to **Plugins → StarOrigin Harness**. Studio registers this row into the DSH plugin page (`src/client/dsh/mount.mjs`), under Built-in plugin configuration.
 
 The page's top line has four possible shapes:
 
@@ -51,7 +51,7 @@ The page's top line has four possible shapes:
 
 <Callout type="warn" title="Disabling hides the runtime">
   Disabling deletes neither the version nor the workspace bindings, but `canCreate` becomes false,
-  so Star Harness shows as **Not enabled** on the Run targets page and the Agent form stops offering it. Re-enable it to restore.
+  so StarOrigin Harness shows as **Not enabled** on the Run targets page and the Agent form stops offering it. Re-enable it to restore.
 </Callout>
 </Step>
 
@@ -77,9 +77,9 @@ Before switching, Studio verifies the release signature and the integrity of the
 <Step>
 ### Enable it
 
-Once installed, choose **Enable**. Enabling requires at least one usable workspace binding; without one you get `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` ("Bind and enable Star Harness for this workspace first.").
+Once installed, choose **Enable**. Enabling requires at least one usable workspace binding; without one you get `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` ("Bind and enable StarOrigin Harness for this workspace first.").
 
-A successful enable reports "Enabled; you can now select Star Harness when creating an Agent".
+A successful enable reports "Enabled; you can now select StarOrigin Harness when creating an Agent".
 The button then reads **Disable**; disabling stops every workspace's Harness process but keeps the version and the bindings.
 </Step>
 
@@ -104,7 +104,7 @@ A successful bind reports "Workspace bound." and the workspace appears in the li
 The state is one of three: **Running**, **Not running**, or **Directory is no longer valid** (deleted or renamed).
 
 <Callout type="warn" title="Directories must not overlap">
-  A workspace must not overlap an existing binding or Star Harness's own state directory, otherwise you get `STAR_HARNESS_WORKSPACE_CONFLICT`.
+  A workspace must not overlap an existing binding or StarOrigin Harness's own state directory, otherwise you get `STAR_HARNESS_WORKSPACE_CONFLICT`.
   Nested directories (binding both a parent and a child) are refused too — one directory has exactly one writer.
 </Callout>
 </Step>
@@ -112,13 +112,13 @@ The state is one of three: **Running**, **Not running**, or **Directory is no lo
 <Step>
 ### Select it when creating an Agent
 
-Go back to **Agents → More creation options → Manual configuration** and choose **Star Harness** under Runtime.
+Go back to **Agents → More creation options → Manual configuration** and choose **StarOrigin Harness** under Runtime.
 
 It is selectable only when `canCreate` is true — that is, **installed + enabled + at least one usable workspace** (`src/host/services/star-harness.mjs:174`).
-When any of the three is missing the button is disabled and hovering reports "Install and enable Star Harness on the plugin page".
+When any of the three is missing the button is disabled and hovering reports "Install and enable StarOrigin Harness on the plugin page".
 
 <Callout type="info" title="The runtime cannot change after creation">
-  The same rule applies to Star Harness. Create a new agent to switch runtimes; editing an existing Star Harness agent is unaffected by the install state.
+  The same rule applies to StarOrigin Harness. Create a new agent to switch runtimes; editing an existing StarOrigin Harness agent is unaffected by the install state.
 </Callout>
 </Step>
 
@@ -143,8 +143,8 @@ All four criteria hold at once:
 
 1. The plugin page status line reads `Installed <version> · Enabled`.
 2. At least one workspace row reads **Running**, with a version identical to the status line.
-3. Star Harness reads **Selectable** on the **Run targets** page instead of "Not enabled".
-4. Create a Star Harness agent and converse with it: the model answers, proving both the engine handshake and the model credential work.
+3. StarOrigin Harness reads **Selectable** on the **Run targets** page instead of "Not enabled".
+4. Create a StarOrigin Harness agent and converse with it: the model answers, proving both the engine handshake and the model credential work.
 
 ## Common errors
 
@@ -180,6 +180,6 @@ All four criteria hold at once:
     The owner, event owner, and five capabilities of `harness`.
   </Card>
   <Card title="Known limitations" href="/en/docs/help/known-limitations">
-    Which deployment shapes offer no local Star Harness management.
+    Which deployment shapes offer no local StarOrigin Harness management.
   </Card>
 </Cards>

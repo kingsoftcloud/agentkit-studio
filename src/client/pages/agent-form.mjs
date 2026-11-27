@@ -9,7 +9,7 @@ import { NATIVE_CAPABILITY_PRESETS, nativeCapabilitySummary } from '../state/nat
 import { createFormKit } from '../components/form-kit.mjs';
 
 const RUNTIME_DESCRIPTIONS = { 'dsh-native': '本地原生循环，按需使用工具与资源。', codex: '面向代码与工程任务的运行环境。', ksxc: '使用当前 WPS 企业账号授权的 KSXC 模型。', harness: '多角色协作与可配置的工具循环。' };
-const runtimeSetupHint = type => type === 'ksxc' ? '在 Studio 设置中安装并启用 KSXC' : '在插件页安装并启用 Star Harness';
+const runtimeSetupHint = type => type === 'ksxc' ? '在 Studio 设置中安装并启用 KSXC' : '在插件页安装并启用 StarOrigin Harness';
 const NATIVE_TOOL_HELP = 'Native 自动配备可用的文件、命令和网页工具，Agent 按需调用；写入与命令仍遵循会话审批，企业资源按授权使用。';
 const POLICY_HELP = '规则随 Agent 版本固定；会话权限和 Host 审批仍可进一步拒绝。';
 const RECALL_HELP = '本地按词项覆盖率检索，置信度非语义相关度；关闭后不再自动召回已有事实。';

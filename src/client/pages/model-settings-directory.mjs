@@ -1,8 +1,35 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
+import { dshModelRoute } from '../../model-route.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
+import { renderModelScoreBars } from './model-card-view.mjs';
+import { priceText } from '../../model-cards.mjs';
 import { profileKey } from './model-settings-profiles.mjs';
 import { catalogItems, createModelCatalogPicker, matchingModels } from './model-settings-catalog-picker.mjs';
+
+export function useModelSettingsCards({ useState, useEffect, hostRemote, window }) {
+  const [routeMindCards, setRouteMindCards] = useState(null);
+  useEffect(() => {
+    if (typeof hostRemote.modelCards !== 'function') return;
+    let revision = 0;
+    const refresh = () => {
+      const current = ++revision;
+      void hostRemote.modelCards().then(value => {
+        if (current === revision) setRouteMindCards(value?.enabled ? value : null);
+      }).catch(() => { if (current === revision) setRouteMindCards(null); });
+    };
+    refresh();
+    window.addEventListener('agentkit-studio:routemind-changed', refresh);
+    window.addEventListener('agentkit-studio:model-credential-changed', refresh);
+    return () => {
+      revision++;
+      window.removeEventListener('agentkit-studio:routemind-changed', refresh);
+      window.removeEventListener('agentkit-studio:model-credential-changed', refresh);
+    };
+  }, []);
+  return profile => routeMindCards?.cardsByProvider?.[dshModelRoute(profile)]?.[profile.modelName]
+    ?? (routeMindCards?.sharedScores?.[profile.modelName] ? { scores: routeMindCards.sharedScores[profile.modelName] } : null);
+}
 
 function connectionAddressLabel({ address }) {
   if (!address) return '未填写 API 地址';
@@ -30,7 +57,7 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
   const modelRows = createModelCatalogPicker({ h, useState, DisclosureRow, Tag, InfoIcon });
 
   function useModelSettingsDirectory({
-    status, saving, connections, profileCount, drafts, openModel, credentialConfigured,
+    status, saving, connections, profileCount, drafts, openModel, credentialConfigured, cardForProfile,
     fetchCatalog, checkProvider, probeEfforts, probeAll, stageModels, stageProvider, saveProvider, removeProvider,
   }) {
     const [query, setQuery] = useState('');
@@ -310,9 +337,14 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
       const budgets = resolveModelBudgets(profile, null);
       const cap = budgets.contextWindow >= 1000000 ? `${Math.round(budgets.contextWindow / 1000000)}M` : `${Math.round(budgets.contextWindow / 1000)}K`;
       const vision = catalog?.image || profile.input?.includes('image');
+      const card = cardForProfile?.(profile);
+      const price = priceText(card);
       return h('li', { key }, h('button', { type: 'button', className: 'ms-model-row', 'data-model-row': key, 'data-draft': dirty,
         onClick: () => openModel(key) },
-      h('span', { className: 'ms-model-name', title: name }, name),
+      h('span', { className: 'ms-model-name', title: name }, name,
+        card?.scores || price ? h('span', { className: 'ms-card-content', 'data-model-card': name },
+          renderModelScoreBars(h, card.scores),
+          price ? h(Tag, { tone: 'neutral' }, price) : null) : null),
       h('span', { className: 'ms-model-cap', 'data-model-cap': true, title: '上下文窗口' }, cap),
       vision ? h('span', { className: 'ms-model-vision', title: '支持图片输入' }, '视觉') : null,
       profile.enabled === false ? h('span', { className: 'ms-row-status' }, '已停用') : null,

@@ -165,7 +165,7 @@ export function createAppServerRuntime(options, { id, label, ErrorClass, command
     const providerArgs = modelProvider ? Object.entries({
       // Hosted Responses tools have no Chat Completions equivalent. Bound
       // MCP search tools remain available through Codex's dynamic tools.
-      ...(modelProvider.api === 'chat-completions' ? { web_search: 'disabled' } : {}),
+      ...((modelProvider.api === 'chat-completions' || modelProvider.hostedWebSearch === false) ? { web_search: 'disabled' } : {}),
       model_provider: providerId,
       [`model_providers.${providerId}.name`]: 'Studio configured model',
       [`model_providers.${providerId}.base_url`]: modelProvider.baseUrl,

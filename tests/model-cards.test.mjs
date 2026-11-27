@@ -141,6 +141,9 @@ test('chat selector label: name, price and measured scores; trigger stays name-o
   assert.match(option, /DeepSeek V4\.1 Flash/);
   assert.match(option, /¥2\/¥8/);
   assert.match(option, /data-studio-model-score-bars="true".*编程 60.*速度 80/);
+  const live = modelCard(flash, { live: { scores: { agentic: 95, speed: 87, cost: 72, cache: 62, stability: 91, intelligence: 80 } } });
+  const scoredOption = renderToStaticMarkup(modelLabel(createElement, Tag, live, { id: flash.id }, 'option'));
+  assert.match(scoredOption, /编程 95.*速度 87.*性价比 72.*缓存友好 62.*稳定性 91.*综合能力 80/);
   const trigger = renderToStaticMarkup(modelLabel(createElement, Tag, index.card(provider, flash.id), { id: flash.id, name: flash.id }, 'trigger'));
   assert.match(trigger, /DeepSeek V4\.1 Flash/);
   assert.doesNotMatch(trigger, /¥|model-score-bars/);

@@ -67,13 +67,13 @@ test('research template fills an actual research Prompt', () => {
   assert.match(form.prompt().props.value, /来源/);
 });
 
-test('runtime radios skip the unavailable Star Harness with arrow keys and cannot select it', () => {
+test('runtime radios skip the unavailable StarOrigin Harness with arrow keys and cannot select it', () => {
   const form = formHarness();
   const radios = form.render().filter(node => node.props.role === 'radio');
   const native = radios.find(node => node.props['data-runtime'] === 'dsh-native');
   const harness = radios.find(node => node.props['data-runtime'] === 'harness');
   assert.equal(harness.props.disabled, true);
-  assert.equal(harness.props.title, '在插件页安装并启用 Star Harness');
+  assert.equal(harness.props.title, '在插件页安装并启用 StarOrigin Harness');
   assert.match(JSON.stringify(harness.children), /未启用/);
   harness.props.onClick();
   assert.equal(form.render().find(node => node.props['data-runtime'] === 'dsh-native').props['aria-checked'], true);

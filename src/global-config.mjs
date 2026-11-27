@@ -10,7 +10,10 @@ import { modelReasoningConfig } from './model-reasoning.mjs';
 import { isCredentialRefName } from './credential-ref.mjs';
 import { dshModelRoute, HARNESS_SERVICE_MODEL_PROVIDER } from './model-route.mjs';
 
+import { webSearchEndpoint } from './web-search-endpoint.mjs';
+
 const FIELDS = {
+  webSearchBaseUrl: [],
   modelProvider: ['MODEL_PROVIDER'], modelName: ['OPENAI_MODEL_NAME', 'DEEPSEEK_MODEL_NAME'],
   modelBaseUrl: ['OPENAI_BASE_URL', 'OPENAI_API_BASE', 'DEEPSEEK_BASE_URL'],
   modelApiKey: ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY', 'MODEL_AGENT_API_KEY', 'DEEPSEEK_API_KEY'],
@@ -210,10 +213,15 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
       cloudAccountConfigured: Boolean(values.cloudAccessKey && values.cloudSecretKey),
       configurationSources: sources,
       configurationOwner: 'studio-node',
+      webSearchBaseUrl: values.webSearchBaseUrl || '',
     };
   }
   const listeners = new Set();
   function update(patch) {
+    if (record(patch) && Object.hasOwn(patch, 'webSearchBaseUrl')) {
+      try { patch = { ...patch, webSearchBaseUrl: webSearchEndpoint(patch.webSearchBaseUrl) }; }
+      catch { return Promise.reject(new ConfigurationError('搜索 API 地址需使用 HTTPS，或本机 HTTP，且不能包含凭据或查询参数。')); }
+    }
     if (!record(patch) || Object.keys(patch).some(key => !Object.hasOwn(FIELDS, key))) {
       return Promise.reject(new ConfigurationError('存在不支持的配置字段'));
     }

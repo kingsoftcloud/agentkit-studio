@@ -129,11 +129,10 @@ export function createKsxcRuntime({ commandFor, connectionFor, companyConfig, co
 // Retain the DSH base adapter methods, including its retry policy and
 // attachment support. The global managed directory never contains a caller's
 // models; selection sees only the authorized model scoped to the active run.
-export function createKsxcModelAdapter({ adapter, runtime, desktopUser }) {
+export function createKsxcModelAdapter({ adapter, runtime }) {
   return Object.assign(Object.create(Object.getPrototypeOf(adapter)), adapter, {
     providerInfo: () => ({ id: 'ksxc', name: 'KSXC' }),
     async listModels() {
-      if (desktopUser) return runtime.listModels({ userId: desktopUser });
       const model = runtime.verifiedModel();
       return model ? [model] : [];
     },

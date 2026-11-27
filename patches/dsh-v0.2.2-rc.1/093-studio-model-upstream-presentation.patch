@@ -1,0 +1,181 @@
+diff --git a/packages/api/session-controller/src/catalog.ts b/packages/api/session-controller/src/catalog.ts
+index 842f15429f8ed48042bff4724e8f250ea489cdb8..18ae4488538478def7287a0fe7234cd8f2d88d10 100644
+--- a/packages/api/session-controller/src/catalog.ts
++++ b/packages/api/session-controller/src/catalog.ts
+@@ -43,6 +43,7 @@ export async function buildModelCatalog(
+           id: model.id,
+           name: model.name,
+           ...(model.description === undefined ? {} : { description: model.description }),
++          ...(model.presentationProvider === undefined ? {} : { presentationProvider: model.presentationProvider }),
+           ...(reasoning === undefined ? {} : { reasoning }),
+           ...(model.badge === undefined ? {} : { badge: model.badge }),
+         }
+diff --git a/packages/api/session-controller/src/types.ts b/packages/api/session-controller/src/types.ts
+index 9c2c157abac97ec3470aecbc62ba077c622fc0b1..afa5d65d69288fce87d00d439edb847118a0a80d 100644
+--- a/packages/api/session-controller/src/types.ts
++++ b/packages/api/session-controller/src/types.ts
+@@ -111,6 +111,7 @@ export interface ModelCatalogModel {
+   readonly id: string
+   readonly name: string
+   readonly description?: string
++  readonly presentationProvider?: { readonly id: string; readonly name: string }
+   readonly reasoning?: ModelReasoning
+   /** Provider-authored label shown beside the name; display data only. */
+   readonly badge?: LlmModelBadge
+diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/packages/client/ui-model-selection/src/client/ModelSelect.tsx
+index ecc984ca7674b6bb5b2041f6ac2396021777fb87..cd72e94b73cd88cc16f637aaff80c0fa8cb62f5c 100644
+--- a/packages/client/ui-model-selection/src/client/ModelSelect.tsx
++++ b/packages/client/ui-model-selection/src/client/ModelSelect.tsx
+@@ -34,7 +34,7 @@ import {
+ } from 'react'
+ import { createPortal } from 'react-dom'
+ import clsx from 'clsx'
+-import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
++import type { ModelProviderGroup, ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
+ import {
+   IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCloseFillRegular,
+   IconDataOutlineRegular, IconWarningOutlineRegular, Input, isMobileDevice, rankByName, StateDot, Tag, Toast,
+@@ -54,6 +54,32 @@ interface EffortChoice {
+   label: string
+ }
+ 
++/** Keep the real provider on each row. The current alias wins its duplicate
++ * so reopening the menu preserves its selected route and capabilities. */
++export function presentationGroups(groups: readonly ModelProviderGroup[], selected: ModelSelection | null) {
++  const output = new Map<string, { provider: { id: string; name: string }
++    rows: Map<string, ModelProviderGroup['models'][number] & {
++      route: { id: string; name: string }
++    }> }>()
++  for (const group of groups) {
++    for (const model of group.models) {
++      const provider = model.presentationProvider ?? { id: group.id, name: group.name }
++      let display = output.get(provider.id)
++      if (display === undefined) {
++        display = { provider, rows: new Map() }
++        output.set(provider.id, display)
++      }
++      const previous = display.rows.get(model.id)
++      const current = selected?.provider === group.id && selected.model === model.id
++      const previousCurrent = selected?.provider === previous?.route.id && selected?.model === model.id
++      if (previous === undefined || current || !previousCurrent && previous.route.id !== provider.id && group.id === provider.id) {
++        display.rows.set(model.id, { ...model, route: { id: group.id, name: group.name } })
++      }
++    }
++  }
++  return [...output.values()].map(group => ({ id: group.provider.id, provider: group.provider, models: [...group.rows.values()] }))
++}
++
+ /** Unplaced portal card: hidden but laid out at a fixed origin so offsetWidth/offsetHeight are real (Menu primitive's measure pass). */
+ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
+ 
+@@ -123,11 +149,14 @@ export function ModelSelect(
+       } satisfies ModelSelection,
+     }))), [groups])
+   const showSearch = choices.length > 4
+-  const filteredGroups = useMemo(() => groups.map(group => ({
++  const displayGroups = useMemo(() => presentationGroups(
++    groups.map(group => ({ ...group, name: group.provider.name })), state.current,
++  ), [groups, state.current])
++  const filteredGroups = useMemo(() => displayGroups.map(group => ({
+     ...group, models: rankByName(group.models, showSearch ? query.trim() : ''),
+-  })).filter(group => group.models.length > 0), [groups, query, showSearch])
++  })).filter(group => group.models.length > 0), [displayGroups, query, showSearch])
+   const visibleModels = useMemo(() => filteredGroups.flatMap(group => group.models.map(model => ({
+-    provider: group.id, model: model.id,
++    provider: model.route.id, model: model.id,
+   }))), [filteredGroups])
+   const currentVisibleIndex = visibleModels.findIndex(model =>
+     model.provider === state.current?.provider && model.model === state.current.model)
+@@ -569,7 +598,7 @@ export function ModelSelect(
+                     <MenuGroup key={group.id} label={group.provider.name}>
+                       {group.models.map((model) => {
+                         const index = modelIndex++
+-                        const selected = state.current?.provider === group.id && state.current.model === model.id
++                        const selected = state.current?.provider === model.route.id && state.current.model === model.id
+                         return (
+                           <button
+                             ref={itemRef()}
+@@ -590,13 +619,13 @@ export function ModelSelect(
+                             key={model.id}
+                             title={model.name}
+                             disabled={busy}
+-                            onClick={() => { choose({ provider: group.id, model: model.id }) }}
++                            onClick={() => { choose({ provider: model.route.id, model: model.id }) }}
+                           >
+                             <span className={css.optionCopy}>
+-                              <span className={css.modelName}>{renderModelLabel(group.provider, model, 'option', selected)}</span>
++                              <span className={css.modelName}>{renderModelLabel(model.route, model, 'option', selected)}</span>
+                             </span>
+                             <span className={css.check}>
+-                              {pending?.provider === group.id && pending.model === model.id
++                              {pending?.provider === model.route.id && pending.model === model.id
+                                 ? <StateDot state="ongoing" />
+                                 : selected ? <IconCheckOutlineRegular /> : null}
+                             </span>
+diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
+index dbb5b247db75085a8fcff767cbaa9e6e6ff75503..d1455a42830f5d47796de20cce9bf46bb0b09c49 100644
+--- a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
++++ b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
+@@ -8,7 +8,7 @@ import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
+ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+ import type { ComponentProps } from 'react'
+ import type { ModelDirectoryState } from '../src/client/directory.ts'
+-import { ModelSelect } from '../src/client/ModelSelect.tsx'
++import { ModelSelect, presentationGroups } from '../src/client/ModelSelect.tsx'
+ import { en, zh } from '../src/client/locales.ts'
+ import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+ 
+@@ -1121,3 +1121,17 @@ it('restores the account model name after login without changing the saved route
+   expect(screen.getByRole('button', { name: /选择模型，当前/ }).textContent).toBe('DeepSeek FlashHigh')
+   expect(directory.getSnapshot().current).toEqual(selected)
+ })
++
++
++it('groups hosted aliases with their upstream without combining distinct providers', () => {
++  const model = { id: 'deepseek-flash', name: 'DeepSeek Flash' }
++  const groups = [
++    { id: 'starflow', name: '星流', models: [model] },
++    { id: 'official', name: 'DeepSeek', models: [model] },
++    { id: 'workspace', name: 'Harness', models: [{ ...model, presentationProvider: { id: 'starflow', name: '星流' } }] },
++  ]
++  const selected = presentationGroups(groups, { provider: 'workspace', model: model.id })
++  expect(selected.map(group => group.provider.name)).toEqual(['星流', 'DeepSeek'])
++  expect(selected.map(group => group.models.map(row => row.route.id))).toEqual([['workspace'], ['official']])
++  expect(presentationGroups(groups, null)[0]?.models[0]?.route.id).toBe('starflow')
++})
+diff --git a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+index 1f598c095bbd290b2e51399d3fdfb006c66f8ca2..d34e81b2c2adf440547d48baa65b228a28be4857 100644
+--- a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
++++ b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+@@ -12,7 +12,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+ import { createPortal } from 'react-dom'
+ import type { PluginInstallFailureKind, Registry } from '@deepseek-ai/dsh-api-remotes/client'
+ import {
+-  Button, DetailDocument, useDetailDocumentLabels, IconBranchOutlineMedium, IconCheckCircleFillRegular, IconChevronDownOutlineRegular, IconChevronLeftOutlineMedium,
++  Button, DetailDocument, useDetailDocumentLabels, IconBranchOutlineMedium, IconCheckCircleFillRegular,
++  IconChevronDownOutlineRegular, IconChevronLeftOutlineMedium,
+   IconChevronRightOutlineRegular, IconCloseOutlineMedium,
+   IconDownloadOutlineRegular, IconInfoOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
+   IconSparkleMedium, IconWarningOutlineRegular, Input, Menu, MenuItemButton, Modal, pointerModality,
+@@ -1867,7 +1868,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
+               configure={configure(openPkg)}
+               renderSlot={renderSlot}
+               inMore={backToMore}
+-              detail={(
++              detail={isBuiltInRouteMind(openPkg) && ledger.bundles.has(openPkg.name) ? null : (
+                 <BundleDetailSection name={openPkg.name} version={openPkg.version} fromNpm={openPkg.availability === 'missing'}
+                   language={language} details={bundleDetails} t={t}
+                   load={props.loadDetail} retry={props.retryDetail} image={props.detailImage} />
+diff --git a/packages/llm/llm/src/types.ts b/packages/llm/llm/src/types.ts
+index 8a48b89895db0ddb8908ec6359eb67af60fe0f54..6b091e292179597420ac7bd5fda37ac2896982d7 100644
+--- a/packages/llm/llm/src/types.ts
++++ b/packages/llm/llm/src/types.ts
+@@ -375,6 +375,8 @@ export interface LlmModelInfo {
+   name: string
+   /** Optional user-facing distinction from otherwise similar models. */
+   description?: string
++  /** Upstream grouping for hosted model aliases. This cannot change the request route. */
++  presentationProvider?: { id: string; name: string }
+   /** Accepted request modalities; absent means unknown, while an explicit omission is negative capability. */
+   inputModalities?: readonly ModelModality[]
+   /**
