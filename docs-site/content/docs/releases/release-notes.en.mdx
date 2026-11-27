@@ -9,6 +9,7 @@ description: "From v0.0.24 through v0.0.16, what each release changes in terms y
 
 | Version | Date | In one line | Breaking |
 | --- | --- | --- | --- |
+| [0.0.25](#v0025) | 2026-11-27 | Several models on one gateway stop colliding; the catalog refresh stops leaking a timer | No |
 | [0.0.24](#v0024) | 2026-11-26 | Actionable Agent overview, richer model setup, resumable interrupted tasks | No |
 | [0.0.16](#v0016) | 2026-11-16 | Image messages survive, per-workspace Harness, in-process Harness removed | ⚠️ Yes |
 | [0.0.15](#v0015) | 2026-11-16 | A standalone Harness service takes over execution; UI unified on the DSH design system | Yes |
@@ -16,6 +17,17 @@ description: "From v0.0.24 through v0.0.16, what each release changes in terms y
 | [0.0.13](#v0013-and-earlier) | — | Personal assistant runtime removed; Studio returns to being a generic DSH plugin | ⚠️ Yes |
 | [0.0.12](#v0013-and-earlier) | — | DSH baseline moves to `0.2.2-rc.1`; prompt prediction | Yes |
 | 0.0.11 and earlier | — | Desktop plugin alignment and cloud-instance tolerance | — |
+
+## v0.0.25
+
+### What you will notice
+
+- **Several models on one gateway now work together.** Binding two models of the same gateway used to fail the portable bundle with `PORTABLE_MODEL_ROUTE_COLLISION`; they now share one DSH route and both appear in the selector.
+- **Releasing after a long run is cleaner.** The model capability catalog refresh no longer keeps a timer alive past plugin disposal, so repeated start/stop cycles leave no dangling handle.
+
+### Upgrading
+
+There are no breaking changes. This release also aligns the macOS first-use verification script with the single-step dialog.
 
 ## v0.0.24
 

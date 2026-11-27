@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.25 - 2026-11-27
+
+### 修复
+- 同一网关的多个模型在 portable 运行包里被误报为 `PORTABLE_MODEL_ROUTE_COLLISION`：`portable-resources.mjs` 投影 profile 时丢弃了 `connectionId`，身份退化成 `profile.id`，与路由的 `provider|baseUrl` 口径不一致。现在 `connectionId` 随 `MODEL_RUNTIME_OPTION_KEYS` 一起进入运行包，同一网关的模型合并为一条 DSH 路由并在选择器里同时出现。
+- 模型能力目录的后台刷新在插件释放时不再泄漏定时器：每个在途请求的控制器与超时一起登记，`stop()` 同步清理句柄并中止请求，而不是让计时器活过 dispose。
+- macOS 首次配置验收脚本与单步对话框对齐：标题断言改为「连接你的模型」，去掉已内嵌的「开始设置」点击，保存后引导直接关闭，不再驱动已移除的 `cloud` 三步流程。
+
+### 文档
+- 更新配置参考中的插件版本号，补充 0.0.25 版本说明。
+
 ## 0.0.24 - 2026-11-26
 
 ### 新功能
