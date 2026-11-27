@@ -60,7 +60,7 @@ export function createRuntimeCatalogPage({
       status === 'ready' && items.length ? h('div', { className: 'studio-rows' }, items.map(item => {
         const codexUnavailable = item.runtimeType === 'codex' && !codexProviderReady;
         const unopened = item.runtimeType === 'harness' && !starHarnessReady || item.runtimeType === 'ksxc' && !ksxcReady;
-        return h('article', { key: item.runtimeType, className: 'studio-row studio-runtime-row', 'aria-disabled': unopened || undefined, title: unopened ? item.runtimeType === 'harness' ? '在插件页安装并启用 Star Harness' : item.description : undefined },
+        return h('article', { key: item.runtimeType, className: 'studio-row studio-runtime-row', 'aria-disabled': unopened || undefined, title: unopened ? item.runtimeType === 'harness' ? '在插件页安装并启用 StarOrigin Harness' : item.description : undefined },
         h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '⌁'),
         h('div', { className: 'studio-row-main' }, h('strong', { className: 'studio-row-title' }, RUNTIME_LABELS[item.runtimeType] || item.runtimeType, h('code', { className: 'studio-row-id' }, item.runtimeType)),
           h('div', { className: 'studio-row-meta', title: item.description }, codexUnavailable ? '请在插件中心安装并启用官方 @deepseek-ai/dsh-subagent-codex。' : item.description || '由 Host 提供的 Agent 执行目标。')),

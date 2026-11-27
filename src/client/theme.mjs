@@ -32,7 +32,7 @@ export const ALLOWED_RUNTIME_TYPES = STUDIO_RUNTIME_TYPES;
 
 export const RUNTIME_LABELS = {
   'dsh-native': 'DSH Native Harness',
-  harness: 'Star Harness',
+  harness: 'StarOrigin Harness',
   codex: 'Codex Agent',
   ksxc: 'KSXC',
   // Experimental: not in ALLOWED_RUNTIME_TYPES, so the Agent form does not offer it.

@@ -84,7 +84,7 @@ if (process.versions.electron) {
     const { createStarHarnessReleases } = await load('host/services/star-harness-release.mjs');
     const store = createStarHarnessReleases({ directory: join(root, 'releases'), packageManager });
     const version = requestedVersion ?? await store.latest();
-    assert.ok(starHarnessVersion(version), 'A published and signed Star Harness version is required');
+    assert.ok(starHarnessVersion(version), 'A published and signed StarOrigin Harness version is required');
     const proof = await fetchStarHarnessProof(version, { fetchImpl: fetch });
     const release = await verifyStarHarnessProof(version, proof, { cachePath });
     assert.equal(release.packages['@kingsoftcloud/agentkit-harness-node'].version, version);
@@ -99,7 +99,7 @@ if (process.versions.electron) {
     await assert.rejects(verifyStarHarnessProof(version, { ...proof, manifest: Buffer.from('{}').toString('base64') },
       { cachePath, offline: true }), /differs from the attested artifact/);
     await verifyApprovedCommand(load, root, await store.install(version), version);
-    console.log(`Electron ${process.versions.electron} validated the signed Star Harness ${version} release`);
+    console.log(`Electron ${process.versions.electron} validated the signed StarOrigin Harness ${version} release`);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -111,7 +111,7 @@ if (process.versions.electron) {
   const { stdout, stderr } = await promisify(execFile)(executable, [fileURLToPath(import.meta.url), archive, ...(requestedVersion === undefined ? [] : [requestedVersion])], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 240000,
   });
-  assert.match(stdout, /validated the signed Star Harness/);
+  assert.match(stdout, /validated the signed StarOrigin Harness/);
   process.stdout.write(stdout);
   process.stderr.write(stderr);
 }

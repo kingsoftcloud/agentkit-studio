@@ -121,10 +121,10 @@ async function setModel(modelName) {
 }
 
 async function pluginPage() {
-  const panel = page.getByRole('region', { name: 'Star Harness 管理' });
+  const panel = page.getByRole('region', { name: 'StarOrigin Harness 管理' });
   if (!await panel.isVisible()) {
     await page.getByRole('button', { name: /^(插件|Plugins)$/ }).first().click({ timeout: 30000 });
-    await page.getByText('Star Harness', { exact: true }).first().click({ timeout: 30000 });
+    await page.getByText('StarOrigin Harness', { exact: true }).first().click({ timeout: 30000 });
   }
   await expect(panel).toBeVisible({ timeout: 30000 });
   return panel;
@@ -165,7 +165,7 @@ async function install(version, action) {
 
 async function setHarnessEnabled(enabled) {
   await pluginPage();
-  const toggle = page.getByRole('switch', { name: '启用 Star Harness' }).first();
+  const toggle = page.getByRole('switch', { name: '启用 StarOrigin Harness' }).first();
   await expect(toggle).toHaveAttribute('aria-checked', String(!enabled));
   await Promise.all([page.waitForEvent('load', { timeout: 45000 }), toggle.click()]);
   await expect(page.getByRole('button', { name: /^(智能体|Agents)$/ }).first()).toBeVisible({ timeout });
@@ -215,7 +215,7 @@ async function createConversation() {
   const card = page.locator('[data-studio-agent-card]').filter({ hasText: 'Harness qualification Agent' });
   await card.hover({ timeout: 30000 });
   await card.getByRole('button', { name: '对话', exact: true }).click();
-  const choice = page.getByRole('combobox', { name: 'Star Harness 工作区' });
+  const choice = page.getByRole('combobox', { name: 'StarOrigin Harness 工作区' });
   const composer = page.locator('[contenteditable="true"]').first();
   await expect(choice.or(composer)).toBeVisible({ timeout: 40000 });
   if (await choice.isVisible()) {
@@ -294,7 +294,7 @@ try {
   // runner, and the components section is absent until the RPC resolves, so
   // every assertion here uses the same control timeout as the rest of the file.
   if (await panel.getAttribute('data-plugin-detail') !== null) {
-    await expect(panel.getByRole('heading', { name: 'Star Harness', exact: true })).toBeVisible({ timeout: pluginControlTimeout });
+    await expect(panel.getByRole('heading', { name: 'StarOrigin Harness', exact: true })).toBeVisible({ timeout: pluginControlTimeout });
     const image = panel.getByRole('img', { name: /金山云自研 Agent 运行框架/ });
     await expect(image).toBeVisible({ timeout: pluginControlTimeout });
     await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
@@ -304,7 +304,7 @@ try {
     // instead, so a runner that boots an English UI is not a false regression.
     await expect(panel.locator('[data-plugin-rows]')).toBeVisible({ timeout: pluginControlTimeout });
   } else {
-    await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible({ timeout: pluginControlTimeout });
+    await expect(panel.getByRole('heading', { name: '关于 StarOrigin Harness' })).toBeVisible({ timeout: pluginControlTimeout });
     await expect(panel.getByText(/执行多步任务|AgentKit 里的多步任务/).first()).toBeVisible({ timeout: pluginControlTimeout });
     await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible({ timeout: pluginControlTimeout });
   }
@@ -357,7 +357,7 @@ try {
   await expect.poll(() => proof.modelRequests.some(entry => entry.input === turns[3].input && entry.throughHarness),
     { timeout: 90000 }).toBe(true);
   await pluginPage();
-  const toggle = page.getByRole('switch', { name: '启用 Star Harness' }).first();
+  const toggle = page.getByRole('switch', { name: '启用 StarOrigin Harness' }).first();
   await expect(toggle).toBeDisabled();
   releaseRollback();
   await expect(toggle).toBeEnabled({ timeout: 30000 });
@@ -379,7 +379,7 @@ try {
   // is part of a ~500 MB artifact, so nobody should have to download it just
   // to read one screenshot or one locator.
   try {
-    const region = page?.getByRole('region', { name: /Star Harness/ });
+    const region = page?.getByRole('region', { name: /StarOrigin Harness/ });
     console.error(JSON.stringify({
       failedAt: String(error.message).split('\n')[0],
       pluginDetail: await region?.getAttribute('data-plugin-detail').catch(() => null),

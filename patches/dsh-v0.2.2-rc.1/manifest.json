@@ -3019,12 +3019,62 @@
       },
       "sequence": 61,
       "sha256": "486c31a33b204442cce332f840608ce45dbcef58a19c668bb5a1faa85332cb5d"
+    },
+    {
+      "id": "093",
+      "file": "093-studio-model-upstream-presentation.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "medium",
+      "maintainerRole": "Studio model directory maintainers",
+      "removeWhen": "The upstream native picker groups equivalent hosted entries by their upstream connection and supports a bundle overview.",
+      "contracts": [
+        "Group catalog aliases by their upstream connection without changing the actual provider on a selection.",
+        "Prefer a supplied RouteMind overview in the native bundle detail page."
+      ],
+      "affectedPackages": [
+        "packages/llm/llm",
+        "packages/api/session-controller",
+        "packages/client/ui-model-selection",
+        "packages/client/ui-plugin-manager"
+      ],
+      "affectedFiles": [
+        "packages/api/session-controller/src/catalog.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/client/ui-model-selection/src/client/ModelSelect.tsx",
+        "packages/client/ui-model-selection/tests/model-select.client.spec.tsx",
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx",
+        "packages/llm/llm/src/types.ts"
+      ],
+      "dependsOn": [
+        "010",
+        "038",
+        "079",
+        "091",
+        "092"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio integration for its hosted model aliases and product bundle."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-model-selection/tests/model-select.client.spec.tsx",
+          "packages/client/ui-plugin-manager/tests/components.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "product-profiles"
+        ]
+      },
+      "sequence": 62,
+      "sha256": "c7af61b5c8d2a1741db55b3a3b9a4852c1978c8e6e9000b6f4b57a311b5eaad2"
     }
   ],
-  "patchedTree": "e32887f574e19e8fbf11a45181661af51579f68c",
-  "patchedSourceSha256": "45ca34a1583e97a4891d4e5e22cfba40005dc922f1f3bd2b2ee34bea83476c6e",
+  "patchedTree": "b892e5b968104e7736eb82df9ed432c9a5f76cf4",
+  "patchedSourceSha256": "1ad142ab958ed1a0dae03c2ef6855e33a29e2d2e754b67f9421e29cc774a8b2b",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "f32a7186a8265ba626df663a135362b93c2584bffa85215eec0ad06bdf32944b"
+    "sha256": "8d81142e2ad261575d6f8c2625039be5c92c0acfa56ef7bb6ea4929568a87924"
   }
 }

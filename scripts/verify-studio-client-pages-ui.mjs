@@ -29,7 +29,7 @@ export async function verifyStudioClientPages(page) {
     await page.getByLabel('Agent ID', { exact: true }).fill(`ui-refactor-${suffix}`);
     await page.getByLabel('名称', { exact: true }).fill(name);
     // The runtime is a radiogroup now; DSH Native is the default authoring
-    // runtime, and Star Harness creation stays paused for new Agents.
+    // runtime, and StarOrigin Harness creation stays paused for new Agents.
     await page.getByRole('radio', { name: 'DSH Native Harness', exact: true }).click();
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic UI refactoring verification.');
     await page.getByRole('button', { name: '下一步', exact: true }).click();

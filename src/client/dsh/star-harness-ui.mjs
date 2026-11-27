@@ -9,7 +9,7 @@ export async function readStarHarnessUIDescriptor(fetchImpl = fetch) {
     credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(6000),
   });
   if (response.status === 404) return null;
-  if (!response.ok) throw Error('无法读取 Star Harness UI 发布信息。');
+  if (!response.ok) throw Error('无法读取 StarOrigin Harness UI 发布信息。');
   return response.json();
 }
 
@@ -32,11 +32,11 @@ export async function loadStarHarnessUI(descriptor, importModule = url => import
   const { version, sha256 } = descriptor;
   if (typeof version !== 'string' || !/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(version)
     || !validDigest(sha256))
-    throw Error('Star Harness UI 发布描述无效。');
+    throw Error('StarOrigin Harness UI 发布描述无效。');
   const module = await importModule(clientPath + '?sha256=' + sha256);
   if (module?.contract !== 'agentkit.studio-harness-ui/v1' || module.version !== version
     || typeof module.installTaskTimeline !== 'function' || typeof module.createNativeChildPanel !== 'function')
-    throw Error('Star Harness UI 与当前 Studio 不兼容。');
+    throw Error('StarOrigin Harness UI 与当前 Studio 不兼容。');
   return module;
 }
 

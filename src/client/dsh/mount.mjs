@@ -11,6 +11,7 @@ import { installNativeToolViews } from './native-tool-view.mjs';
 import { installTaskTimeline } from './task-timeline.mjs';
 import { installPromptPrediction } from './prompt-prediction.mjs';
 import { installModelLabel } from './model-label.mjs';
+import { routeMindOverview } from '../pages/routemind-detail.mjs';
 import { installKsxcVisibility } from './ksxc-visibility.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
@@ -56,11 +57,14 @@ export function mountStudio(ctx, app) {
     name: 'plugins.item', id: 'agentkit-codex-plugin-market', order: 90, label: 'Codex 插件',
   }, props => h(CodexPluginMarketItem, props)));
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
-    name: 'plugins.item', id: 'agentkit-star-harness', order: 91, label: 'Star Harness',
+    name: 'plugins.item', id: 'agentkit-star-harness', order: 91, label: 'StarOrigin Harness',
   }, props => h(StarHarnessItem, props)));
   ctx.slots.inject('plugins.item.detail', () => ctx.slots.register({
     name: 'plugins.item.detail', key: 'agentkit-star-harness',
   }, props => h(StarHarnessItem, { ...props, view: 'page' })));
+  ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+    name: 'plugins.bundle.config', key: 'routemind-studio',
+  }, () => routeMindOverview(h, BRAND)));
   ctx.effect(() => {
     const open = () => ctx.layout?.selectPanel?.('plugins');
     window.addEventListener('agentkit-studio:open-plugin-center', open);

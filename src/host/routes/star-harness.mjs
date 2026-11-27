@@ -2,7 +2,7 @@ export function createStarHarnessRoutes(manager) {
   return async (endpoint, payload, signal) => {
     if (!manager) {
       if (endpoint === 'star-harness/status') return { ok: true, value: { supported: false, canCreate: false } };
-      throw Object.assign(new Error('当前 Studio 部署不提供本机 Star Harness 管理。'), { code: 'STAR_HARNESS_UNSUPPORTED' });
+      throw Object.assign(new Error('当前 Studio 部署不提供本机 StarOrigin Harness 管理。'), { code: 'STAR_HARNESS_UNSUPPORTED' });
     }
     if (endpoint === 'star-harness/status') return { ok: true, value: await manager.status(payload ?? {}, signal) };
     if (endpoint === 'star-harness/install') await manager.install(payload?.version, signal);

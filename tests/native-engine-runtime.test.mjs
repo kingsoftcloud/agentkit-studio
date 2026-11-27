@@ -696,10 +696,11 @@ test('redelivering the same Studio turn resumes a Run paused by continuous provi
   assert.equal(readFileSync(join(f.cwd, 'checkpoint.txt'), 'utf8'), 'done');
 });
 
-async function serviceRuntime(t, f, { images = false, contextWindow } = {}) {
+async function serviceRuntime(t, f, { images = false, contextWindow, commandSandbox } = {}) {
   const createEngineService = await createTestService();
   const token = 'fixture-studio-service-approval-token';
   const service = createEngineService({ token, startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
+    ...(commandSandbox ? { commandSandbox } : {}),
     model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY', images, contextWindow },
     scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, env: { MODEL_KEY: 'fixture-key' } });
   t.after(() => service.close());
@@ -1254,4 +1255,38 @@ test('Studio-installed Star Harness routes registered workspaces to isolated wor
     } finally { renameSync(relocated, alpha.cwd); }
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
   } finally { await manager.close(); }
+});
+
+
+test('Harness uses Studio keyword search with the selected provider and continues the same Run', async t => {
+  const f = await setup(t, [toolCall('search', 'web_search', { query: 'AgentKit', max_results: 2 }), final('Searched.')]);
+  const runtime = await serviceRuntime(t, f), searches = [];
+  const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write', hostWebSearch: async (query, limit) => {
+    searches.push([query, limit]);
+    return { sources: [{ title: 'Source', url: 'https://example.com/test', snippet: 'AgentKit fixture' }] };
+  } }));
+  assert.deepEqual(searches, [['AgentKit', 2]]);
+  assert.ok(f.model.requests[0].tools.some(tool => tool.function.name === 'web_search'));
+  assert.match(JSON.stringify(f.model.requests[1].messages), /https:\/\/example\.com\/test/);
+  assert.equal(chunks.findLast(chunk => chunk.type === 'text')?.text, 'Searched.');
+});
+
+test('desktop workspace commands run confined and request approval for explicit escalation', {
+  skip: process.platform !== 'darwin' || !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER,
+}, async t => {
+  const f = await setup(t, [
+    toolCall('read', 'run_command', { command: 'ls' }),
+    toolCall('workspace', 'run_command', { command: 'printf local > inside.txt' }),
+    toolCall('escalate', 'run_command', { command: 'printf escalated > escalated.txt', sandbox_permissions: 'danger-full-access' }),
+    final('Done.'),
+  ]);
+  const runtime = await serviceRuntime(t, f, { commandSandbox: 'seatbelt-workspace/v1' }), approvals = [];
+  const events = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write', requestPolicyApproval: request => {
+    approvals.push(request.toolName); return 'declined';
+  } }));
+  assert.deepEqual(approvals, ['native/run_command']);
+  assert.equal(existsSync(join(f.cwd, 'inside.txt')), true, JSON.stringify(events.filter(chunk => chunk.event?.kind === 'tool.completed')));
+  assert.equal(readFileSync(join(f.cwd, 'inside.txt'), 'utf8'), 'local');
+  assert.equal(existsSync(join(f.cwd, 'escalated.txt')), false);
+  assert.equal(events.findLast(chunk => chunk.type === 'text')?.text, 'Done.');
 });

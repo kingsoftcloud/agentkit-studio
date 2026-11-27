@@ -61,13 +61,13 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
             return { value: item.workspace, label: title ? title + ' · ' + item.workspace : item.workspace };
           });
           if (!choices.length) {
-            const configure = await actions.confirm({ title: '选择 Star Harness 工作区',
-              detail: '请在 Studio 中添加或选择工作区，并在插件页启用 Star Harness。', confirmLabel: '打开插件页' });
+            const configure = await actions.confirm({ title: '选择 StarOrigin Harness 工作区',
+              detail: '请在 Studio 中添加或选择工作区，并在插件页启用 StarOrigin Harness。', confirmLabel: '打开插件页' });
             if (configure && active()) layout.selectPanel('plugins');
             return;
           }
-          const selected = await actions.confirm({ title: '选择 Star Harness 工作区',
-            detail: '新会话将在所选工作区运行。', choiceLabel: 'Star Harness 工作区',
+          const selected = await actions.confirm({ title: '选择 StarOrigin Harness 工作区',
+            detail: '新会话将在所选工作区运行。', choiceLabel: 'StarOrigin Harness 工作区',
             choicePlaceholder: '选择工作区', choices, confirmLabel: '开始对话' });
           if (!active() || !choices.some(choice => choice.value === selected)) return;
           cwd = selected;

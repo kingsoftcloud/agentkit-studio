@@ -535,7 +535,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, nativeEngineRuntime, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, nativeEngineRuntime, hostWebSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
     managedHarnessModel(cwd) { return nativeEngineRuntime?.managedModelSelection?.(cwd); },
@@ -603,6 +603,9 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           const selection = { provider: options.provider, model: options.studioSelectedModel || options.studioCodexModel || options.model };
           const serviceOwnsModel = runtime === 'native-engine' && (
             processRuntime?.requiresServiceWorkspace || (processRuntime?.usesServiceFor?.(cwd) ?? processRuntime?.usesService) === true);
+          const workspaceModelProfile = serviceOwnsModel
+            && processRuntime?.managesWorkspace?.(cwd) && resolveHarnessModel
+            ? await resolveHarnessModel(selection, options.reasoningEffort, cwd) : undefined;
           const selected = runtime === 'ksxc' ? { model: selection.model } : serviceOwnsModel ? {} : options.provider && options.provider !== CODEX_PROVIDER
             ? await (typeof resolveCodexModel === 'function' ? resolveCodexModel(selection) : Promise.reject(Object.assign(new Error('此模型提供商未配置 Codex 接口，请在模型设置中检查配置。'), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' })))
             : { model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? selection.model : undefined) };
@@ -710,6 +713,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
                 ? { sandbox: permissionModeForSession(toolAgent.session) } : {}),
               ...selected,
               ...(serviceOwnsModel && selection.provider === HARNESS_SERVICE_MODEL_PROVIDER ? { expectedServiceModel: selection.model } : {}),
+              ...(workspaceModelProfile ? { workspaceModelProfile } : {}),
               ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]
                 ? { reasoningEffort: studioCodexReasoningWire(options.reasoningEffort) }
                 : {}),
@@ -725,6 +729,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               systemPrompt: resources.systemPrompt || '',
               dynamicTools,
               toolHandler,
+              ...(runtime === 'native-engine' && toolAgent && hostWebSearch
+                ? { hostWebSearch: await hostWebSearch(toolAgent, selection, workspaceModelProfile) } : {}),
               ...(runtime === 'native-engine' && resources.nativeHostToolHandler
                 ? { nativeHostToolHandler: resources.nativeHostToolHandler } : {}),
               ...(runtime === 'native-engine' && resources.nativeHostReceiptHandler

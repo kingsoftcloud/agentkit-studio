@@ -253,7 +253,7 @@ const advance = (harness, tree) => {
   next.props.onClick();
   return harness.render();
 };
-// New local authoring defaults to DSH Native and disables Star Harness.
+// New local authoring defaults to DSH Native and disables StarOrigin Harness.
 // Harness-specific tests opt in with
 // `allowHarnessRuntime: true` and select it explicitly here.
 const switchToHarness = (harness, tree) => {
@@ -264,14 +264,14 @@ const switchToHarness = (harness, tree) => {
   return harness.render();
 };
 
-test('form: new local authoring defaults to DSH Native and enables Star Harness only when the Host reports readiness', async () => {
+test('form: new local authoring defaults to DSH Native and enables StarOrigin Harness only when the Host reports readiness', async () => {
   const hidden = formHarness({ onBack: () => {}, onCreated: () => {} });
   let tree = hidden.render(); await hidden.flush(); tree = hidden.render();
   const runtimeSelect = findBy(tree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'dsh-native');
   assert.equal(runtimeSelect.props['aria-checked'], true);
   const unavailable = findBy(tree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness');
   assert.equal(unavailable.props.disabled, true);
-  assert.equal(unavailable.props.title, '在插件页安装并启用 Star Harness');
+  assert.equal(unavailable.props.title, '在插件页安装并启用 StarOrigin Harness');
   assert.match(JSON.stringify(unavailable.children), /未启用/);
   const installed = formHarness({}, { starHarnessStatus: async () => ({ canCreate: true }) });
   installed.render();
@@ -279,7 +279,7 @@ test('form: new local authoring defaults to DSH Native and enables Star Harness 
   assert.equal(findBy(installed.render(), node => node.props['data-runtime'] === 'harness').props.disabled, false);
   const enabled = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} });
   let enabledTree = enabled.render(); await enabled.flush(); enabledTree = enabled.render();
-  assert.equal(findBy(enabledTree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness').props.disabled, false, 'explicit opt-in restores the Star Harness option');
+  assert.equal(findBy(enabledTree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness').props.disabled, false, 'explicit opt-in restores the StarOrigin Harness option');
   const editing = formHarness({ initialAgent: { metadata: { id: 'harness-agent', name: 'Harness', revision: 1 }, source: 'local', spec: { runtime: { type: 'harness' }, bindings: { modelProfileId: 'model-1', plugins: [] } } }, onBack: () => {}, onCreated: () => {} });
   let editTree = editing.render(); await editing.flush(); editTree = editing.render();
   const editSelect = findBy(editTree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness');

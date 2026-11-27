@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
         let harnessUIError = false;
         const active = await loadActiveStarHarnessUI().catch(error => {
           harnessUIError = true;
-          console.warn('[agentkit-studio] Star Harness UI could not start:', error.message);
+          console.warn('[agentkit-studio] StarOrigin Harness UI could not start:', error.message);
           return null;
         });
         mountStudio(ctx, createStudioApp({ ...runtime, harnessUI: active?.module, harnessUIDescriptor: active?.descriptor, harnessUIError }));
