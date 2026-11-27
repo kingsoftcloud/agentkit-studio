@@ -51,7 +51,7 @@ description: "199 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:197` | `sessionId` 不能为空 |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | 等构建进入可用状态再下载 |
 | `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:74` | `runtime.type` 不是 `STUDIO_RUNTIME_TYPES` 里的值时 |
-| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:39` | 补全 `agentId` / `sessionId` / `runId` / `buildId` |
+| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:40` | 补全 `agentId` / `sessionId` / `runId` / `buildId` |
 | `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:76` | 缩小请求体，或改用分片上传 |
 | `INVALID_QUERY` | `src/agent-catalog.mjs:9` | 检查查询串的类型与枚举值 |
 | `CREDENTIAL_VALUE_MISSING` | `src/host/routes/credentials.mjs:7` | 填写该凭证引用的值 |
@@ -96,7 +96,7 @@ description: "199 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `DEPLOYMENT` | 2 | 部署中断与恢复。 | `src/deployment-rollouts.mjs:223` |
 | `EVALUATION` | 2 | 评测目标与执行。 | `src/host/routes/evaluations.mjs:8` |
 | `REQUEST` | 2 | 请求体与取消。 | `src/model-proxy-handler.mjs:76` |
-| `RUN` | 2 | 运行标识。 | `src/providers/dsh-runtime.mjs:39` |
+| `RUN` | 2 | 运行标识。 | `src/providers/dsh-runtime.mjs:40` |
 | `STAR` | 2 | 本机 Star Harness 的安装、版本与工作区绑定。 | `src/host/routes/http.mjs:65` |
 | `A2A` | 1 | Agent-to-Agent 控制面。 | `src/providers/native-a2a-tool-activity.mjs:175` |
 | `BOUND` | 1 | 资源绑定解析。 | `src/providers/codex-resource-context.mjs:144` |
