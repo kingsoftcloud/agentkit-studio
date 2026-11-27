@@ -1,6 +1,6 @@
 ---
 title: Release notes
-description: "From v0.0.16 backwards, what each release changes in terms you can observe — organised by \"what you will notice\", not by commit log."
+description: "From v0.0.24 through v0.0.16, what each release changes in terms you can observe — organised by \"what you will notice\", not by commit log."
 ---
 
 **Read only the part you care about.** Every entry is phrased as "what you will notice"; implementation details stay in code.
@@ -9,12 +9,28 @@ description: "From v0.0.16 backwards, what each release changes in terms you can
 
 | Version | Date | In one line | Breaking |
 | --- | --- | --- | --- |
+| [0.0.24](#v0024) | 2026-11-26 | Actionable Agent overview, richer model setup, resumable interrupted tasks | No |
 | [0.0.16](#v0016) | 2026-11-16 | Image messages survive, per-workspace Harness, in-process Harness removed | ⚠️ Yes |
 | [0.0.15](#v0015) | 2026-11-16 | A standalone Harness service takes over execution; UI unified on the DSH design system | Yes |
 | [0.0.14](#v0014) | 2026-11-10 | The plugin market becomes discovery; desktop updates stop advancing one version at a time | No |
 | [0.0.13](#v0013-and-earlier) | — | Personal assistant runtime removed; Studio returns to being a generic DSH plugin | ⚠️ Yes |
 | [0.0.12](#v0013-and-earlier) | — | DSH baseline moves to `0.2.2-rc.1`; prompt prediction | Yes |
 | 0.0.11 and earlier | — | Desktop plugin alignment and cloud-instance tolerance | — |
+
+## v0.0.24
+
+### What you will notice
+
+- **The overview supports continuing work.** Existing users see recent Agents, 24-hour activity, upcoming automation and workspace health, with one-click conversation navigation. Zero-Agent users see creation paths and a three-step guide instead of empty metrics.
+- **First-time model setup is clearer.** Missing credentials or an unusable model now lead to explicit guidance. The model catalog adds context windows, vision support, reasoning levels and provider names, while budget saving and catalog probes are more reliable.
+- **Model selection is richer.** RouteMind can provide model ratings, radar charts and relative prices; the Star Harness detail page retains signed versions, upgrades and rollback.
+- **Interrupted tasks can resume.** An explicit resume instruction restores the original Star Harness Run and event cursor without repeating completed tool calls. TokenUsage remains available in native automation and Runtime Responses.
+- **Unreachable KSXC no longer misleads.** Internal runtime entries disappear while the gateway is unreachable and return after recovery; existing KSXC Agents remain editable with their model bindings intact.
+- **Cloud instances no longer stall on YAML formatting.** ManagedRuntime compares parsed declarations. Genuine drift now moves to `ACTION_REQUIRED` for repair instead of leaving the instance stuck at provisioning.
+
+### Upgrading
+
+There are no breaking changes. This release also updates the overview, DSH Native, configuration reference and release documentation in both languages.
 
 ## v0.0.16
 

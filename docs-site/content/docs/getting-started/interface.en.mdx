@@ -35,14 +35,16 @@ Panels are defined in `src/client/theme.mjs:19-24`; their order is the left navi
 
 ### Overview
 
-It answers "can I start working right now":
+It answers "can I start working right now". Existing users see an actionable workspace; new users with zero Agents see only creation entries and a three-step guide, without empty statistics or activity lists.
 
 | Block | What you can do | Source |
 | --- | --- | --- |
-| Credential banner | When no model credential is configured: "Configure a model credential to start chatting", with a jump to settings | `src/client/pages/overview.mjs:44` |
-| Create Agent | Three entries: **Conversational** (build the config with the AI), **Manual** (choose runtime and capabilities), **From template** (reuse an expert template) | `overview.mjs:45-49` |
-| Workspace | Four stat cards: Agents, Runtimes, Resources, Deliveries; **Agents / Resources / Deliveries** navigate on click | `overview.mjs:50-53` |
-| Start checks | A collapsible block that runs three checks and reports `confirmed` / `missing` / `unknown` | `overview.mjs:54` |
+| Model and credential banner | Explains whether a credential or a usable model is missing, with a jump to model settings | `src/client/pages/overview.mjs` |
+| Create Agent | Three entries: **Conversational** (build the config with the AI), **Manual** (choose runtime and capabilities), **From template** (reuse an expert template); collapses into a compact action bar once Agents exist | `overview.mjs` |
+| Workspace metrics | Agents, available runtimes, 24-hour runs and completion rate; an empty sample says "No data" instead of claiming 0% | `overview.mjs` |
+| Recent Agents | Up to five recent Agents, each with a working conversation action | `overview.mjs` |
+| Recent runs and automation | Reviews 24-hour activity and upcoming local automation tasks | `overview.mjs` |
+| Workspace status and start checks | Checks Host, model readiness and runtime targets; the expandable checks report `confirmed` / `missing` / `unknown` | `overview.mjs`, `start-checks.mjs` |
 
 Start checks are always the same three: **Host connection**, **model credential**, **runtime target catalog** (`src/client/state/start-checks.mjs:22-26`). Each has an 8-second timeout, and a timeout is reported as `unknown` rather than a failure.
 

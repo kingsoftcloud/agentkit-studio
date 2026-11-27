@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, readdir
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createDshNodeSkillWorkflowTools } from '../src/providers/dsh-node-skill-workflow-tools.mjs';
 import { DSH_SKILL_E2B_RUNTIME } from '../src/providers/native-skill-e2b-runtime.mjs';
 import { createDshE2BSandboxOwner, DSH_E2B_SANDBOX_OWNER } from '@kingsoftcloud/agentkit-harness-node/native/e2b-sandbox-owner';
@@ -21,12 +21,30 @@ async function until(predicate) {
   const deadline = performance.now() + 15000;
   while (!predicate()) { assert.ok(performance.now() < deadline, 'expected E2B process boundary'); await new Promise(resolve => setTimeout(resolve, 15)); }
 }
+function readIfPresent(read) {
+  try { return read(); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+function runtimeKeys(directory) {
+  return (readIfPresent(() => readdirSync(directory)) ?? []).filter(key => /^[a-f0-9]{64}$/u.test(key));
+}
 function runtimeRecords(root) {
-  return existsSync(root) ? readdirSync(root, { recursive: true })
-    .filter(path => /^skill-workflows\/[a-f0-9]{64}\/runtime\/[a-f0-9]{64}\/record\.json$/u.test(path.split(sep).join('/'))).flatMap(path => {
-    const file = join(root, path), record = JSON.parse(readFileSync(file, 'utf8'));
-    return record.contract === DSH_SKILL_E2B_RUNTIME ? [{ file, record }] : [];
-  }) : [];
+  const workflows = join(root, 'skill-workflows'), records = [];
+  // The command supervisor renames its staging directories concurrently.
+  // Runtime records have known paths above that subtree.
+  for (const workflow of runtimeKeys(workflows)) {
+    const runtimes = join(workflows, workflow, 'runtime');
+    for (const key of runtimeKeys(runtimes)) {
+      const file = join(runtimes, key, 'record.json');
+      const data = readIfPresent(() => readFileSync(file, 'utf8'));
+      if (data === undefined) continue;
+      const record = JSON.parse(data);
+      if (record.contract === DSH_SKILL_E2B_RUNTIME) records.push({ file, record });
+    }
+  }
+  return records;
 }
 function setup(t, { script, peer: peerOptions = {}, timeoutSeconds = 15, ...extra } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-skill-e2b-'))), workspaceRoot = join(root, 'workspace'), pkg = join(root, 'skill');

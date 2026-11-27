@@ -1,3 +1,12 @@
+export function textOf(message) {
+  if (!message || typeof message !== 'object') return '';
+  const content = message.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.filter(part => part?.type === 'text' || part?.kind === 'text')
+    .map(part => String(part.text || part.value || '')).join('');
+}
+
 /** User tasks include reminders delivered by the official cloud scheduler. */
 export function isDshUserInput(message) {
   return message?.role === 'user' && (!message.source || ['user', 'schedule'].includes(message.source.kind));

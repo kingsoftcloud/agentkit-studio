@@ -50,5 +50,17 @@ export function buildCapabilityCatalog(api) {
     }
     if (Object.keys(group.models).length) catalog[providerId] = group;
   }
-  return catalog;
+  // models.dev serves `api.json` in whatever order its generator happened to
+  // emit, and that order changes between fetches. Sort by provider id and by
+  // model id so the compacted catalog is a pure function of the data: the CI
+  // freshness gate compares bytes, and an unordered emit made it flap red
+  // whenever upstream republished the same content in a different order.
+  const ordered = {};
+  for (const providerId of Object.keys(catalog).sort()) {
+    const group = catalog[providerId];
+    const models = {};
+    for (const id of Object.keys(group.models).sort()) models[id] = group.models[id];
+    ordered[providerId] = { ...group, models };
+  }
+  return ordered;
 }

@@ -47,20 +47,47 @@ export function publicDeployment(record) {
     ...(rollout ? { rollout: { id: rollout.id, kind: rollout.kind, status: rollout.status,
       buildId: rollout.plan.buildId, revision: rollout.plan.revision, startedAt: rollout.startedAt } } : {}) };
 }
-export function ksxcDeploymentReceipt(detail, plan) {
-  const deployment = detail.Deployment || {};
-  const runtime = deployment.RuntimeConfig || detail.RuntimeConfig || {};
-  const manifest = (deployment.ManagedRuntimeConfig || detail.ManagedRuntimeConfig)?.Manifest;
-  if (runtime.Name !== 'ksxc' || runtime.Version !== plan.runtimeVersion || runtime.ManifestFormat !== DSH_MANIFEST_FORMAT
-    || (runtime.ImageDigest || deployment.ArtifactPath) !== plan.image.image
-    || typeof manifest !== 'string' || runtime.ManifestSha256 !== sha256(manifest)) return null;
-  const options = { runtimeName: 'ksxc', runtimeVersion: plan.runtimeVersion };
+export function managedDeclaration(detail) {
+  const deployment = detail?.Deployment || {};
+  return { deployment, runtime: deployment.RuntimeConfig || detail?.RuntimeConfig || {},
+    manifest: (deployment.ManagedRuntimeConfig || detail?.ManagedRuntimeConfig)?.Manifest };
+}
+
+/**
+ * Whether the cloud Agent still carries the declaration this receipt froze.
+ *
+ * Server canonicalizes the declaration with its own YAML emitter (PyYAML
+ * `safe_dump`) before hashing it, so `ManifestSha256` is never byte-compatible
+ * with the Studio serialization: a multi-line system prompt alone is dumped as a
+ * block literal by Studio and as a quoted folded scalar by the platform. Provenance
+ * therefore compares the parsed declarations, and only uses the platform digest to
+ * prove that the echoed bytes are the ones it hashed. Comparing the two digests
+ * directly reports `DEPLOYMENT_PROVENANCE_MISMATCH` for every Agent whose prompt
+ * spans more than one line.
+ */
+export function managedRuntimeReceipt(detail, plan) {
+  const { deployment, runtime, manifest } = managedDeclaration(detail);
+  if (runtime.Name !== plan.runtime || runtime.Version !== plan.runtimeVersion
+    || (runtime.ImageDigest || deployment.ArtifactPath) !== plan.image.image) return null;
+  const receipt = { manifestSha256: runtime.ManifestSha256, runtimeVersion: runtime.Version };
+  if (typeof manifest !== 'string') {
+    // Platform builds that do not echo the declaration can only be matched by the
+    // digest they froze; without one there is nothing left to compare.
+    return !runtime.ManifestSha256 || runtime.ManifestSha256 === plan.managedManifestSha256 ? receipt : null;
+  }
+  if (runtime.ManifestSha256 !== sha256(manifest)) return null;
+  const options = { runtimeName: plan.runtime, runtimeVersion: plan.runtimeVersion };
   try {
-    if (isDeepStrictEqual(parseManagedRuntimeManifest(manifest, options), parseManagedRuntimeManifest(plan.managedManifest, options))) {
-      return { manifestSha256: runtime.ManifestSha256, runtimeVersion: runtime.Version };
-    }
+    if (isDeepStrictEqual(parseManagedRuntimeManifest(manifest, options), parseManagedRuntimeManifest(plan.managedManifest, options))) return receipt;
   } catch { /* The platform receipt must contain the same declaration. */ }
   return null;
+}
+
+/** KSXC additionally seals the declaration format; other managed runtimes do not. */
+export function ksxcDeploymentReceipt(detail, plan) {
+  const { runtime, manifest } = managedDeclaration(detail);
+  if (runtime.ManifestFormat !== DSH_MANIFEST_FORMAT || typeof manifest !== 'string') return null;
+  return managedRuntimeReceipt(detail, plan);
 }
 
 // KSXC chat uses the signed RunAgent Action. Server's observed deployment
@@ -84,7 +111,7 @@ export function verifyDeploymentRemote(detail, record) {
       || runtime.Version && runtime.Version !== record.plan.runtimeVersion
       || artifact.SHA256 && artifact.SHA256 !== record.plan.bundleSha256
       || (record.plan.runtime === 'ksxc' ? !ksxcDeploymentReceipt(detail, record.plan)
-        : record.plan.managedManifestSha256 && runtime.ManifestSha256 && runtime.ManifestSha256 !== record.plan.managedManifestSha256)) {
+        : !managedRuntimeReceipt(detail, record.plan))) {
       throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '云端 ManagedRuntime Agent 与冻结部署记录不一致，已停止管理操作');
     }
     return;
@@ -95,16 +122,20 @@ export function verifyDeploymentRemote(detail, record) {
     throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '云端 Agent 与冻结部署记录不一致，已停止管理操作');
   }
 }
-export async function inspectDeploymentVersion({ fetchImpl = fetch, endpoint, token, plan, versionId }) {
+export async function inspectDeploymentVersion({ fetchImpl = fetch, endpoint, token, plan, versionId, manifestSha256 }) {
   const response = await fetchImpl(`${endpoint}/v1/agentkit/runtime`, { headers: { Authorization: `Bearer ${token}` },
     redirect: 'error', signal: AbortSignal.timeout(10000) });
   if (!response.ok) { await response.body?.cancel(); return null; }
   const body = await response.json();
   if (body.format === 'agentengine.managed-runtime/v1') {
     const agentMatches = body.agentId === plan.agentId || body.agentId === plan.cloudAgentId;
+    // The Pod hashes the platform-canonical declaration it mounted, so only the
+    // platform digest from GetAgent identifies the frozen declaration here; the
+    // Studio serialization digest is a different value for the same declaration.
+    const expected = manifestSha256 || plan.managedManifestSha256;
     return body.status === 'ready' && agentMatches
       && body.versionId === plan.runtimeVersion
-      && (!plan.managedManifestSha256 || body.manifestSha256 === plan.managedManifestSha256) ? body : null;
+      && (!expected || body.manifestSha256 === expected) ? body : null;
   }
   return body.format === 'agentkit.runtime-identity/v1' && body.status === 'ready' && body.agentId === plan.agentId
     && body.buildId === plan.buildId && body.bundleSha256 === plan.bundleSha256 && body.deploymentVersion === versionId ? body : null;
