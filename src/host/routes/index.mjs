@@ -37,7 +37,7 @@ export function createStudioRoutes(ctx, services) {
     agents: createAgentRoutes(deps),
     skills: createSkillRoutes(deps),
     plugins: createPluginRoutes(deps),
-    ksxc: createKsxcRoute(deps.ksxc),
+    ksxc: createKsxcRoute(deps.ksxc, () => ctx.emit('llm/models-updated', 'ksxc')),
     'star-harness': createStarHarnessRoutes(deps.starHarness),
     sessions: createSessionRoutes(deps),
     schedules: createScheduleRoutes(deps),

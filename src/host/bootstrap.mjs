@@ -193,7 +193,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ksxcStoreDir: managedRuntime ? join(runtimeEnv.AGENTKIT_USER_HOME || runtimeEnv.AGENTKIT_HOME || homedir(), '.agentkit', 'studio') : studioStoreDir,
     env: runtimeEnv,
     credentials: ctx.get('credentials'), managedRuntime, managedResourceContext, portableRuntime });
-  if (ksxc?.accounts) ctx.effect(() => () => ksxc.accounts.close(), 'agentkit-studio: KSXC account authorization');
+  if (ksxc?.accounts) ctx.effect(() => async () => {
+    ksxc.accounts.close();
+    await ksxc.modelAccess.close();
+  }, 'agentkit-studio: KSXC account authorization');
   const cloudExecutionModes = createCloudExecutionModes({ directory: studioStoreDir });
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
@@ -276,6 +279,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // optional child-process boundary lazy so Studio can still load on hosts
   // without a Codex binary and report CODEX_PROVIDER_UNAVAILABLE only when a
   // Codex Agent is selected.
+  const { createKsxcDesktopModelAdapter } = await import('./services/ksxc-dsh-adapter.mjs');
   const { createKsxcModelAdapter } = await import('../providers/ksxc-runtime.mjs');
   const { createCodexRuntime } = await import('../providers/codex-runtime.mjs');
   const { createCodexModelCatalog, createCodexModelAdapter, CODEX_PROVIDER } = await import('../providers/codex-models.mjs');
@@ -399,6 +403,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     codexRuntime,
     ksxcRuntime: ksxc?.runtime,
     ksxcDesktopUser: KSXC_DESKTOP_USER,
+    ksxcModelAccess: ksxc?.modelAccess,
     nativeEngineRuntime,
     hostWebSearch: async (agent, { provider, model }, workspaceModelProfile) => {
       const settings = await models.settings();
@@ -515,9 +520,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       'agentkit-studio: DSH runtime provider',
     );
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CODEX_PROVIDER], createCodexModelAdapter({ catalog: codexModels, runtime: dshRuntimeAdapter })), 'agentkit-studio: Codex model directory');
-    if (ksxc) llmCtx.effect(() => llmCtx.llm.registerAdapter(['ksxc'], createKsxcModelAdapter({
-      adapter: dshRuntimeAdapter, runtime: ksxc.runtime, desktopUser: ksxc.accounts ? KSXC_DESKTOP_USER : undefined,
-    })), 'agentkit-studio: KSXC model route');
+    if (ksxc) llmCtx.effect(() => llmCtx.llm.registerAdapter(['ksxc'], ksxc.modelAccess
+      ? createKsxcDesktopModelAdapter({ LlmAdapter, modelAccess: ksxc.modelAccess, hostAnchor })
+      : createKsxcModelAdapter({ adapter: dshRuntimeAdapter, runtime: ksxc.runtime })), 'agentkit-studio: KSXC model route');
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CLOUD_PROVIDER], createDeploymentModelAdapter({ agents: async () => (await deployments()).agents, runtime: dshRuntimeAdapter })), 'agentkit-studio: frozen cloud models');
     const serviceModels = () => [
       ...nativeEngineRuntime.serviceModels,

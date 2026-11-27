@@ -111,6 +111,7 @@ export function routeDshRuntime(options, next, owner, requestOrigin) {
   // running Host supplies DSH's object-identity marker; copied options or a
   // caller-authored `purpose`/metadata field cannot grant execution authority.
   if (!route || (requestOrigin && !requestOrigin(options))) return next();
+  if (options.provider === 'ksxc' && route.local && route.runtime === 'dsh-native' && !route.buildId) return next();
   return streamDshRuntime(options, route, owner);
 }
 function isUserInput(message, includeTeamMessages = false) {
@@ -535,7 +536,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, nativeEngineRuntime, hostWebSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, ksxcModelAccess, nativeEngineRuntime, hostWebSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
     managedHarnessModel(cwd) { return nativeEngineRuntime?.managedModelSelection?.(cwd); },
@@ -556,9 +557,13 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const mode = routed ? (routed.local ? 'local' : 'cloud') : separator > 0 ? model.slice(0, separator) : 'cloud';
       const agentId = routed?.agentId || (separator > 0 ? model.slice(separator + 1) : model);
       const runtime = routed?.runtime || options.studioRuntime;
-      if (mode === 'local' && (options.provider === 'ksxc' || runtime === 'ksxc')
-        && (!routed || runtime !== 'ksxc' || options.provider !== 'ksxc')) {
+      const ksxcModel = options.provider === 'ksxc';
+      if (mode === 'local' && runtime === 'ksxc' && (!routed || !ksxcModel)) {
         throw Object.assign(new Error('请绑定 KSXC Agent，并从当前企业账号的模型目录选择模型。'), { code: 'KSXC_AGENT_MODEL_REQUIRED' });
+      }
+      const ksxcGateway = ksxcModel && runtime !== 'ksxc';
+      if (ksxcGateway && (mode !== 'local' || !ksxcModelAccess || !['codex', 'native-engine'].includes(runtime))) {
+        throw Object.assign(new Error('当前运行时无法使用 Studio 桌面的 KSXC 企业模型。'), { code: 'KSXC_HOST_UNAVAILABLE' });
       }
       if (mode === 'local' && runtime === 'harness') throw Object.assign(new Error('Native Harness requires the whole-turn execution port.'), { code: 'STUDIO_NATIVE_TURN_REQUIRED' });
       const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
@@ -603,12 +608,18 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           const selection = { provider: options.provider, model: options.studioSelectedModel || options.studioCodexModel || options.model };
           const serviceOwnsModel = runtime === 'native-engine' && (
             processRuntime?.requiresServiceWorkspace || (processRuntime?.usesServiceFor?.(cwd) ?? processRuntime?.usesService) === true);
-          const workspaceModelProfile = serviceOwnsModel
-            && processRuntime?.managesWorkspace?.(cwd) && resolveHarnessModel
-            ? await resolveHarnessModel(selection, options.reasoningEffort, cwd) : undefined;
-          const selected = runtime === 'ksxc' ? { model: selection.model } : serviceOwnsModel ? {} : options.provider && options.provider !== CODEX_PROVIDER
-            ? await (typeof resolveCodexModel === 'function' ? resolveCodexModel(selection) : Promise.reject(Object.assign(new Error('此模型提供商未配置 Codex 接口，请在模型设置中检查配置。'), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' })))
-            : { model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? selection.model : undefined) };
+          const workspaceManaged = serviceOwnsModel && processRuntime?.managesWorkspace?.(cwd);
+          if (ksxcGateway && serviceOwnsModel && !workspaceManaged) {
+            throw Object.assign(new Error('外部 Harness 使用自己的模型配置，请切换到 Studio 管理的 StarOrigin Harness。'), { code: 'KSXC_HOST_UNAVAILABLE' });
+          }
+          const ksxcProfile = ksxcGateway ? await ksxcModelAccess.profile(selection.model, options.signal) : undefined;
+          const workspaceModelProfile = workspaceManaged
+            ? ksxcProfile ?? await resolveHarnessModel?.(selection, options.reasoningEffort, cwd) : undefined;
+          const selected = runtime === 'ksxc' ? { model: selection.model } : serviceOwnsModel ? {}
+            : ksxcProfile ? { model: selection.model, modelProvider: { ...ksxcProfile, hostedWebSearch: false } }
+            : options.provider && options.provider !== CODEX_PROVIDER
+              ? await (typeof resolveCodexModel === 'function' ? resolveCodexModel(selection) : Promise.reject(Object.assign(new Error('此模型提供商未配置 Codex 接口，请在模型设置中检查配置。'), { code: 'CODEX_MODEL_PROVIDER_UNAVAILABLE' })))
+              : { model: options.studioCodexModel || (options.provider === CODEX_PROVIDER ? selection.model : undefined) };
           if (runtime === 'native-engine' && !serviceOwnsModel && !selected.modelProvider?.baseUrl)
             throw Object.assign(new Error('Native 引擎需要一个已配置接口地址的模型，请在 Agent 上绑定网关模型。'), { code: 'NATIVE_ENGINE_MODEL_UNAVAILABLE' });
           if (runtime === 'native-engine' && (!processRuntime || typeof processRuntime.stream !== 'function'))

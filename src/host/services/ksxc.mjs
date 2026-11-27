@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KsxcRuntimeError, readKsxcCompanyConfig } from '../../providers/ksxc-command.mjs';
 import { assertKsxcCatalogModel, createKsxcRuntime, createManagedKsxcCommand } from '../../providers/ksxc-runtime.mjs';
+import { createKsxcModelAccess } from './ksxc-model-access.mjs';
 import { createKsxcAccounts } from './ksxc-accounts.mjs';
 import { createKsxcGatewayStatus } from './ksxc-gateway.mjs';
 import { createKsxcReleases } from './ksxc-releases.mjs';
@@ -47,6 +48,8 @@ export async function createKsxcHost({ storeDir, ksxcStoreDir = storeDir, env, c
     root: join(ksxcStoreDir, 'ksxc'), lock: env.AGENTKIT_KSXC_RELEASES_PATH, companyConfigPath,
   }) : undefined;
   const accounts = desktop ? createKsxcAccounts({ credentials, companyConfig, gateway }) : undefined;
+  const modelAccess = accounts && createKsxcModelAccess({ companyConfig,
+    connection: () => accounts.connection({ userId: KSXC_DESKTOP_USER }) });
   const gatewayStatus = desktop ? createKsxcGatewayStatus({ companyConfig, fetchImpl: gatewayFetchImpl }) : undefined;
   const command = managed ? createManagedKsxcCommand(env) : undefined;
   if (managed) await command.validate();
@@ -58,7 +61,7 @@ export async function createKsxcHost({ storeDir, ksxcStoreDir = storeDir, env, c
     companyConfig, companyConfigPath, stateRoot: join(ksxcStoreDir, 'ksxc', 'runtime'), env,
   });
   return {
-    runtime, releases, accounts, managedConnection, gatewayStatus,
+    runtime, releases, accounts, managedConnection, gatewayStatus, modelAccess,
     async desktopModels(signal) {
       const entries = await runtime.listModels({ userId: KSXC_DESKTOP_USER, signal });
       return {

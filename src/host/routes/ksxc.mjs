@@ -1,6 +1,6 @@
 import { KSXC_DESKTOP_USER } from '../services/ksxc.mjs';
 
-export function createKsxcRoute(ksxc) {
+export function createKsxcRoute(ksxc, modelsChanged) {
   return async (endpoint, payload, signal) => {
     const user = { userId: KSXC_DESKTOP_USER };
     const { releases, accounts, gatewayStatus } = ksxc || {};
@@ -37,6 +37,11 @@ export function createKsxcRoute(ksxc) {
       'ksxc/disconnect': () => accounts.disconnect(user),
       'ksxc/models': () => ksxc.desktopModels(signal),
     };
-    return { ok: true, value: await operations[endpoint]() };
+    const value = await operations[endpoint]();
+    if (endpoint === 'ksxc/disconnect' || (endpoint === 'ksxc/login-result' && value.status === 'connected')) {
+      ksxc.modelAccess?.invalidate();
+      modelsChanged?.();
+    }
+    return { ok: true, value };
   };
 }
