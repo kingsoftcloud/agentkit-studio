@@ -15,9 +15,12 @@ test('KSXC desktop catalog and Responses attach the grant only at the configured
   const modelAccess = createKsxcModelAccess({ companyConfig, connection: async () => connection,
     fetchImpl: async (url, options) => {
       calls.push({ url: String(url), options });
+      if (options.headers['ksyun-code-type'] !== 'ksxc-cli') {
+        return Response.json({ status: 403, error: { code: 'ClientForbidden' } }, { status: 403 });
+      }
       if (new URL(url).pathname === '/cli/models') {
         return Response.json({ code: 200, data: [
-          { model: 'team/fixture', displayName: 'Fixture Model' }, { model: 'hidden', hidden: true },
+          { model: 'team/fixture', displayName: 'Fixture Model', maxTokens: 512000 }, { model: 'hidden', hidden: true },
         ] });
       }
       return new Response(upstream, { headers: { 'Content-Type': 'text/event-stream' } });
@@ -27,10 +30,11 @@ test('KSXC desktop catalog and Responses attach the grant only at the configured
   assert.equal(calls.length, 0);
   connection = { accountId: 'first', token: randomUUID() };
   const firstToken = connection.token;
-  assert.deepEqual(await modelAccess.list(), [{ id: 'team/fixture', name: 'Fixture Model', provider: 'ksxc' }]);
+  assert.deepEqual(await modelAccess.list(), [{ id: 'team/fixture', name: 'Fixture Model', provider: 'ksxc', contextWindow: 512000 }]);
   await assert.rejects(modelAccess.profile('hidden'), { code: 'KSXC_MODEL_FORBIDDEN' });
   const profile = await modelAccess.profile('team/fixture');
   assert.equal(profile.protocol, 'openai-responses');
+  assert.equal(profile.contextWindow, 512000);
   assert.ok(!JSON.stringify(profile).includes(firstToken));
   const input = [{ type: 'function_call', name: 'read_file', call_id: 'read-1', arguments: '{}' },
     { type: 'function_call_output', call_id: 'read-1', output: 'read-result' }];
@@ -45,7 +49,7 @@ test('KSXC desktop catalog and Responses attach the grant only at the configured
   assert.equal(response.status, 200);
   assert.equal(await response.text(), upstream);
   const [catalog, inference] = calls;
-  assert.equal(catalog.url, 'https://models.example/cli/models');
+  assert.equal(catalog.url, 'https://models.example/cli/models?client=ksxc-cli&company_id=fixture-company');
   assert.equal(inference.url, 'https://models.example/v1/responses');
   for (const { options } of calls) {
     assert.equal(options.redirect, 'error');

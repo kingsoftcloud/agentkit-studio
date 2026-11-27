@@ -40,6 +40,19 @@ export function requestHeaders(headers) {
     .map(([name, value]) => [name, value.trim()]));
 }
 
+/** Headers shared by all models exposed through one DSH provider route. */
+export function dshConnectionHeaders(profiles) {
+  const normalized = profile => requestHeaders(profile?.headers);
+  const signature = headers => JSON.stringify(Object.entries(headers)
+    .map(([name, value]) => [name.toLowerCase(), value]).sort());
+  const headers = normalized(profiles[0]);
+  const first = signature(headers);
+  if (profiles.some(profile => signature(normalized(profile)) !== first)) {
+    throw new Error('同一模型连接的请求头必须一致，请统一请求头或拆分连接。');
+  }
+  return Object.keys(headers).length ? { headers } : {};
+}
+
 /** Headers that can carry the model credential without the API-key field. */
 export function hasConfiguredAuthentication(headers) {
   return Object.keys(requestHeaders(headers)).some(name => /^(?:authorization|x-api-key|api-key|x-api-key-token)$/i.test(name));

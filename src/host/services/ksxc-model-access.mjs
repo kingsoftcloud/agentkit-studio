@@ -11,6 +11,7 @@ const denied = () => failure('KSXC_MODEL_FORBIDDEN', '请从当前 KSXC 企业�
 const unavailable = () => failure('KSXC_CATALOG_UNAVAILABLE', '暂时无法读取 KSXC 企业模型目录。', 502);
 const digest = values => createHash('sha256').update(JSON.stringify(values)).digest('hex');
 const protocol = 'openai-responses';
+const clientType = 'ksxc-cli';
 const catalogTtlMs = 15_000;
 
 /** Desktop-only access to the same enterprise model API used by the KSXC CLI. */
@@ -18,13 +19,16 @@ export function createKsxcModelAccess({ companyConfig, connection, fetchImpl = h
   const baseUrl = normalizeModelEndpoint(companyConfig.baseUrl);
   let cached, proxy;
   let generation = randomUUID();
-  const headers = () => ({ 'X-KSC-COMPANY-CODE': companyConfig.code, 'X-KSC-REQUEST-ID': randomUUID() });
+  const directory = new URL('/cli/models', baseUrl);
+  directory.search = new URLSearchParams({ client: clientType, company_id: companyConfig.code });
+  const headers = () => ({ 'ksyun-code-type': clientType, 'X-KSC-COMPANY-CODE': companyConfig.code,
+    'X-KSC-REQUEST-ID': randomUUID() });
   const accountKey = account => digest([generation, account.accountId, account.token]);
   const routeId = (model, key) => Buffer.from(model).toString('base64url') + '.' + digest([model, key]);
   async function readModels(account) {
     let response, data;
     try {
-      response = await fetchImpl(new URL('/cli/models', baseUrl), {
+      response = await fetchImpl(directory, {
         headers: { ...headers(), Authorization: 'Bearer ' + account.token },
         redirect: 'error', signal: AbortSignal.timeout(5_000),
       });
@@ -34,7 +38,12 @@ export function createKsxcModelAccess({ companyConfig, connection, fetchImpl = h
       throw failure('KSXC_CONNECTION_EXPIRED', 'KSXC 企业连接已失效，请重新授权。', 401);
     if (response.status === 403 || data?.code === 403) throw denied();
     if (!response.ok || data?.code !== 200 || !Array.isArray(data.data)) throw unavailable();
-    return ksxcCatalogModels(data.data).filter(model => /^[^\s\x00-\x1f\x7f]{1,512}$/.test(model.id));
+    const windows = new Map(data.data.filter(entry => Number.isSafeInteger(entry?.maxTokens) && entry.maxTokens > 0)
+      .map(entry => [entry.model, entry.maxTokens]));
+    return ksxcCatalogModels(data.data).filter(model => /^[^\s\x00-\x1f\x7f]{1,512}$/.test(model.id)).map(model => {
+      const contextWindow = windows.get(model.id);
+      return contextWindow ? { ...model, contextWindow } : model;
+    });
   }
 
   async function catalog(signal) {
@@ -85,8 +94,9 @@ export function createKsxcModelAccess({ companyConfig, connection, fetchImpl = h
       }).catch(error => { proxy = undefined; throw error; });
       const transport = await proxy;
       const idForGrant = routeId(id, result.key);
-      return { id: 'ksxc:' + id, protocol, modelName: id, label: result.models.find(model => model.id === id).name,
-        baseUrl: transport.modelUrl(idForGrant), apiKey: transport.apiKey };
+      const { name: label, contextWindow } = result.models.find(model => model.id === id);
+      return { id: 'ksxc:' + id, protocol, modelName: id, label,
+        ...(contextWindow ? { contextWindow } : {}), baseUrl: transport.modelUrl(idForGrant), apiKey: transport.apiKey };
     },
     async close() { await (await proxy)?.close(); },
   };

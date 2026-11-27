@@ -4,7 +4,7 @@ import { dshModelSelection } from './agent-preset-admission.mjs';
 import { portableError } from './portable-resources.mjs';
 import { admitModelCapabilities } from './model-capabilities.mjs';
 import { studioReasoning, providerDisplayName } from './model-reasoning.mjs';
-import { providerWireApi } from './model-profile-contract.mjs';
+import { dshConnectionHeaders, providerWireApi } from './model-profile-contract.mjs';
 
 const OPERATING_MAX_OUTPUT_TOKENS = 8192;
 
@@ -55,7 +55,7 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
         input: facts.input, ...(memberReasoning ? { reasoningEfforts: memberReasoning.efforts } : {}) });
     }
     const value = { displayName: providerDisplayName(profile), api: wire, apiKeyEnv: profile.credentialName,
-      baseURL: profile.baseUrl,
+      baseURL: profile.baseUrl, ...dshConnectionHeaders(members),
       // Kspmas validates message roles and answers
       // `400 Invalid request: role 'developer' is not allowed`. pi-ai sends the
       // system prompt as `developer` to every reasoning model on a route it
