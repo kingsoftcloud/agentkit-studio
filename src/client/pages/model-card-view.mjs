@@ -11,15 +11,15 @@ const ABILITY_LABELS = { tools: '工具调用', reasoning: '推理', vision: '�
 const ABILITY_HINTS = { tools: '可在 Agent 中调用工具', reasoning: '目录声明了可调的推理档位', vision: '接受图片输入', video: '接受视频输入' };
 
 /** The same non-interactive score bars fit the DSH model menu and catalog. */
-export function renderModelScoreBars(h, scores) {
-  const values = [['agentic', '编程', '编程 Agent'], ['speed', '速度', '速度']]
-    .filter(([key]) => Number.isFinite(scores?.values?.[key]));
+export function renderModelScoreBars(h, scores, dimensions = SCORE_DIMENSIONS.slice(0, 2)) {
+  const values = dimensions.filter(([key]) => Number.isFinite(scores?.values?.[key]));
   if (!values.length) return null;
   return h('span', { 'data-studio-model-score-bars': true, title: scores.source,
     style: { display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 8px',
       color: 'var(--dsw-alias-label-secondary)', fontSize: '11px', fontVariantNumeric: 'tabular-nums' } },
-  values.map(([key, label, accessibleLabel]) => {
+  values.map(([key, accessibleLabel]) => {
     const value = scores.values[key];
+    const label = key === 'agentic' ? '编程' : accessibleLabel;
     return h('span', { key, role: 'img', 'aria-label': `${accessibleLabel} ${Math.round(value)}`,
       style: { display: 'inline-flex', gap: '4px', alignItems: 'center', whiteSpace: 'nowrap' } },
     h('span', { 'aria-hidden': true }, `${label} ${Math.round(value)}`),

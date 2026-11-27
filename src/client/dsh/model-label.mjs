@@ -1,5 +1,5 @@
 /** Display-only annotations inside DSH's native model-selection controls. */
-import { modelDisplayName, modelScores, priceText } from '../../model-cards.mjs';
+import { modelDisplayName, modelScores, priceText, SCORE_DIMENSIONS } from '../../model-cards.mjs';
 import { HARNESS_SERVICE_MODEL_PROVIDER } from '../../model-route.mjs';
 import { renderModelScoreBars } from '../pages/model-card-view.mjs';
 
@@ -72,7 +72,7 @@ export function modelLabel(h, Tag, card, model, placement) {
   const badgeText = typeof text === 'string' ? text : text?.['zh-CN'] || text?.zh || text?.en;
   const badge = badgeText ? h(Tag, { tone: model.badge.tone }, badgeText) : null;
   const price = placement === 'trigger' ? '' : priceText(card);
-  const bars = placement === 'trigger' ? null : renderModelScoreBars(h, card?.scores);
+  const bars = placement === 'trigger' ? null : renderModelScoreBars(h, card?.scores, SCORE_DIMENSIONS);
   const nameRow = h('span', { style: { display: 'inline-flex', minWidth: 0, alignItems: 'center', gap: '6px' } },
     placement === 'trigger' ? badge : null,
     h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, name),
