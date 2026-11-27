@@ -52,19 +52,30 @@ try {
  const guide=page.locator('.agentkit-credential-onboarding-content');
  await expect(guide).toBeVisible({timeout:120000});
  await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
- await guide.getByRole('button',{name:/^(开始设置|去配置模型凭证)$/}).click();
- await expect(guide).toBeHidden({timeout:30000});
- // Configure through the installed product's settings. A Studio config file
+ const quickstart=guide.locator('[data-onboarding-mode=model]');
+ const inlineModelSetup=await quickstart.isVisible();
+ if(inlineModelSetup) {
+  await quickstart.locator('summary',{hasText:'连接'}).first().click();
+ } else {
+  await guide.getByRole('button',{name:/^(开始设置|去配置模型凭证)$/}).click();
+  await expect(guide).toBeHidden({timeout:30000});
+ }
+ // Configure through the installed product's model form. A Studio config file
  // alone does not register the native DSH provider/model preference namespace.
- const models=page.locator('[data-studio-model-settings]');
- await expect(models.getByRole('button',{name:'保存配置',exact:true})).toBeEnabled({timeout:90000});
+ const models=inlineModelSetup ? quickstart : page.locator('[data-studio-model-settings]');
+ const save=models.getByRole('button',{name:inlineModelSetup ? '保存并继续' : '保存配置',exact:true});
+ await expect(save).toBeEnabled({timeout:90000});
  await models.getByRole('combobox',{name:/^提供商/}).first().selectOption('custom');
  await models.getByLabel('模型名称',{exact:true}).first().fill('upgrade-proof');
  await models.getByLabel('API 地址',{exact:true}).first().fill(`http://127.0.0.1:${server.address().port}/v1`);
  await models.getByLabel(/^API Key/).first().fill('qualification-local-only');
- await models.getByRole('button',{name:'保存配置',exact:true}).click();
- await expect(models).toContainText('已保存多个模型配置',{timeout:90000});
- await page.keyboard.press('Escape');
+ await save.click();
+ if(inlineModelSetup) {
+  await expect(guide).toBeHidden({timeout:90000});
+ } else {
+  await expect(models).toContainText('已保存多个模型配置',{timeout:90000});
+  await page.keyboard.press('Escape');
+ }
  await expect(models).toBeHidden({timeout:30000});
  // The global New session action opens an inert workspace picker. Create a
  // retained Session using the default workspace's own new-session action.
