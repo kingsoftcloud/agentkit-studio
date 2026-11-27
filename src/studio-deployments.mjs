@@ -12,8 +12,8 @@ import { mcpDeploymentCredentialName, portableError, sha256 } from './portable-r
 import { resolveMcpConnection } from './local-resource-adapters.mjs';
 import { managedRuntimeModelConfig } from './managed-runtime-model.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
-import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, probeDeploymentVersion, deploymentVersionId,
-  managedDeclaration, readyKsxcDeployment, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
+import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, verifyDeploymentIdentity,
+  probeDeploymentVersion, deploymentVersionId, managedDeclaration, readyKsxcDeployment, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymentStorage } from './deployment-storage.mjs';
 import { validManagedMcpCredential, validateManagedResources } from './managed-resource-contract.mjs';
@@ -265,13 +265,22 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     if (credentialScope(values) !== record.plan.credentialScope) throw portableError('DEPLOYMENT_ACCOUNT_CHANGED', '当前云端凭证或环境与部署记录不同，请切回原配置后管理');
     return record;
   }
-  async function detail(record) {
+  async function detail(record, { repair = false } = {}) {
     if (!cloudId(record.cloudAgentId)) throw portableError('DEPLOYMENT_CREATE_UNCONFIRMED', '创建结果尚未确认，请先核对云端记录');
     const result = (await client.forAgent(record.cloudAgentId).get({ IncludeApiKey: true })).data;
     try { verifyDeploymentRemote(result, currentDeployment(record)); }
     catch (error) {
-      if (!pendingRollout(record)) throw error;
-      verifyDeploymentRemote(result, { ...record, plan: record.rollout.plan });
+      if (pendingRollout(record)) { verifyDeploymentRemote(result, { ...record, plan: record.rollout.plan }); return result; }
+      // The update preview and its rollout are the only paths that may write a
+      // drifted declaration back onto the cloud Agent. Without this branch a
+      // receipt parked in ACTION_REQUIRED answers "用所选版本修复" with the very
+      // mismatch it exists to repair, so the deployment stays unmanageable until
+      // the operator deletes it. Identity is still proven against the cloud Agent.
+      if (repair && record.state === 'ACTION_REQUIRED' && error?.code === 'DEPLOYMENT_PROVENANCE_MISMATCH') {
+        verifyDeploymentIdentity(result, record);
+        return result;
+      }
+      throw error;
     }
     return result;
   }

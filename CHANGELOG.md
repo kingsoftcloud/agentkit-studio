@@ -3,9 +3,14 @@
 ## 0.0.25 - 2026-11-27
 
 ### 修复
+- 托管 Agent（`dsh-native` / `harness` / `codex`）的原地更新不再报 `DEPLOYMENT_UPDATE_SCOPE_CHANGED`：更新预览会沿用回执自己的 `DeploymentType`，不再回落到容器计划，`bucket` 与 `storageEndpoint` 也不再凭空出现；「内容未变」对托管部署比较运行声明，改过的提示词不会再被误判成「已在运行」。
+- 云端声明漂移的回执不再死锁：预览先把它落到 `ACTION_REQUIRED`，之后「用所选版本修复」会以平台观测版本为并发保护，把冻结声明真正写回云端；作用域错误只点名字段，不再回显账号桶名与存储地址。
 - 同一网关的多个模型在 portable 运行包里被误报为 `PORTABLE_MODEL_ROUTE_COLLISION`：`portable-resources.mjs` 投影 profile 时丢弃了 `connectionId`，身份退化成 `profile.id`，与路由的 `provider|baseUrl` 口径不一致。现在 `connectionId` 随 `MODEL_RUNTIME_OPTION_KEYS` 一起进入运行包，同一网关的模型合并为一条 DSH 路由并在选择器里同时出现。
 - 模型能力目录的后台刷新在插件释放时不再泄漏定时器：每个在途请求的控制器与超时一起登记，`stop()` 同步清理句柄并中止请求，而不是让计时器活过 dispose。
 - macOS 首次配置验收脚本与单步对话框对齐：标题断言改为「连接你的模型」，去掉已内嵌的「开始设置」点击，保存后引导直接关闭，不再驱动已移除的 `cloud` 三步流程。
+
+### 工程
+- 模型能力目录的新鲜度检查退出 PR 闸门：它实时拉取 models.dev，会按上游发布节奏自己变红，误伤与目录无关的改动。改由 `model-catalog.yml` 每日定时刷新并单独开 PR，`--if-stale` 保证上游没变时不产生空提交。
 
 ### 文档
 - 更新配置参考中的插件版本号，补充 0.0.25 版本说明。
