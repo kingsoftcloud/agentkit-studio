@@ -1,12 +1,10 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 
 export const ROUTEMIND_PROVIDER = 'routemind-auto';
-export const ROUTEMIND_MODELS = Object.freeze([
-  { id: 'auto', name: 'Auto' },
-  { id: 'auto-cost', name: 'Auto · 价格优先' },
-  { id: 'auto-balance', name: 'Auto · 均衡' },
-  { id: 'auto-quality', name: 'Auto · 质量优先' },
-]);
+export const ROUTEMIND_MODEL = 'auto';
+const savedAliases = ['auto-cost', 'auto-balance', 'auto-quality'];
+const models = [ROUTEMIND_MODEL, ...savedAliases];
+export function isRouteMindModel(id) { return models.includes(id); }
 
 const namespace = 'llm-pi-ai';
 const credential = 'AGENTKIT_ROUTEMIND_GATEWAY_TOKEN';
@@ -43,9 +41,10 @@ export function mountRouteMindModels(ctx, { active, gateway, credentials }) {
       if (key && (await credentials.resolve(credential))?.value !== key) await credentials.set(credential, key);
       const value = { displayName: 'RouteMind', api: 'openai-completions', baseURL: configured.baseUrl,
         apiKeyEnv: credential, compat: { supportsDeveloperRole: false, supportsStore: false },
-        models: ROUTEMIND_MODELS.map(model => ({ ...model, input: ['text'] })) };
+        models: models.map(id => ({ id, name: 'Auto', input: ['text'] })) };
       const current = previous?.baseURL === value.baseURL && previous?.apiKeyEnv === credential
-        && previous?.models?.map(model => model.id).join(',') === value.models.map(model => model.id).join(',');
+        && previous?.models?.map(model => [model.id, model.name].join(':')).join(',')
+          === value.models.map(model => [model.id, model.name].join(':')).join(',');
       if (key && !current) await settings.mutate(namespace, [{ op: 'set', path, value }], entry.revision);
       else if (!key && previous) await settings.mutate(namespace, [{ op: 'unset', path }], entry.revision);
     }).catch(error => { ctx.logger?.warn('RouteMind model registration failed (%s)', error?.name || 'Error'); });

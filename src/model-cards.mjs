@@ -158,7 +158,7 @@ export function formatTokens(value) {
  * Live RouteMind data replaces this when a gateway is configured.
  */
 export const SCORE_SNAPSHOT = Object.freeze({
-  source: 'Studio + Star Harness 参考样本（5 道编程题，每题单次运行。速度和性价比按做对的题计算）',
+  source: 'Studio + StarOrigin Harness 参考样本（5 道编程题，每题单次运行。速度和性价比按做对的题计算）',
   measuredAt: '2026-11-25',
   models: Object.freeze({
     'mimo-v2.6-pro': Object.freeze({ agentic: 100.0, speed: 40.0, cost: 80.0, cache: 20.0, stability: null, intelligence: null }),
@@ -171,10 +171,10 @@ export const SCORE_SNAPSHOT = Object.freeze({
 });
 
 const DIMENSIONS = [
-  ['agentic', '编程 Agent'],
-  ['speed', '速度'],
-  ['cost', '性价比'],
-  ['cache', '缓存友好'],
+  ['agentic', '任务完成率'],
+  ['speed', '执行速度'],
+  ['cost', '成本效率'],
+  ['cache', '缓存命中'],
   ['stability', '稳定性'],
   ['intelligence', '综合能力'],
 ];

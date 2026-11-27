@@ -20,6 +20,7 @@ import { gatewayHistory, isDshUserInput, isDshAgentNotice, textOf } from './dsh-
 import { nativeSessionRunOptions } from './dsh-native-run.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
+import { createStarflowSearchTool } from './starflow-web-search.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 const ROUTE = 'agentkit-studio';
@@ -536,7 +537,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, ksxcModelAccess, nativeEngineRuntime, hostWebSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, ksxcModelAccess, nativeEngineRuntime, hostWebSearch, resolveStarflowSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
     managedHarnessModel(cwd) { return nativeEngineRuntime?.managedModelSelection?.(cwd); },
@@ -700,17 +701,17 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               }),
             })
             : undefined;
-          const baseDynamicTools = resources.dynamicTools || [];
-          const baseToolHandler = resources.toolHandler;
-          const dynamicTools = userQuestionTool
-            ? [...baseDynamicTools, userQuestionTool.spec] : baseDynamicTools;
-          const toolHandler = userQuestionTool
-            ? async call => {
-              const outcome = await userQuestionTool.handler(call);
-              if (outcome !== undefined) return outcome;
-              return baseToolHandler(call);
-            }
-            : baseToolHandler;
+          const starflowSearch = runtime === 'codex'
+            ? await resolveStarflowSearch?.(selection, selected.modelProvider
+              && { ...selected.modelProvider, modelName: selection.model }, toolAgent)
+            : undefined;
+          const searchTool = createStarflowSearchTool(starflowSearch);
+          const dynamicTools = [...(resources.dynamicTools || []),
+            ...(userQuestionTool ? [userQuestionTool.spec] : []), ...(searchTool ? [searchTool.spec] : [])];
+          const toolHandler = userQuestionTool || searchTool
+            ? async call => (await userQuestionTool?.handler(call)) ?? (await searchTool?.handler(call))
+              ?? resources.toolHandler?.(call)
+            : resources.toolHandler;
           try {
             yield* codexFrames(processRuntime, {
               turnId: String(options.turnId || options.runId || ''),
@@ -723,6 +724,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               ...(typeof permissionModeForSession === 'function' && toolAgent?.session
                 ? { sandbox: permissionModeForSession(toolAgent.session) } : {}),
               ...selected,
+              ...(searchTool && selected.modelProvider
+                ? { modelProvider: { ...selected.modelProvider, hostedWebSearch: false } } : {}),
               ...(serviceOwnsModel && selection.provider === HARNESS_SERVICE_MODEL_PROVIDER ? { expectedServiceModel: selection.model } : {}),
               ...(workspaceModelProfile ? { workspaceModelProfile } : {}),
               ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]

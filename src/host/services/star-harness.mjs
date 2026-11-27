@@ -2,8 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { dshModelRoute } from '../../model-route.mjs';
-import { providerDisplayName, studioReasoning } from '../../model-reasoning.mjs';
+import { modelPresentationProvider, studioReasoning } from '../../model-reasoning.mjs';
 import { canonicalEngineWorkspace, HARNESS_SERVICE_MODEL_PROVIDER } from '../../providers/engine-service-workspaces.mjs';
 import { modelInput } from '../../model-input.mjs';
 import { createStarHarnessReleases, inspectStarHarness, probeStarHarness, startStarHarness, starHarnessError, starHarnessVersion } from './star-harness-release.mjs';
@@ -204,9 +203,9 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       const bindings = activeBindings().filter(binding => binding.model === model);
       const origins = bindings.map(binding => configuredProfile(binding.profileId));
       const origin = origins[0];
-      const presentationProvider = (origin?.baseUrl || origin?.connectionId)
-        && origins.every(profile => (profile?.baseUrl || profile?.connectionId) && dshModelRoute(profile) === dshModelRoute(origin))
-        ? { id: dshModelRoute(origin), name: providerDisplayName(origin) } : null;
+      const upstream = modelPresentationProvider(origin);
+      const presentationProvider = upstream && origins.every(profile => modelPresentationProvider(profile)?.id === upstream.id)
+        ? upstream : undefined;
       const declared = presentationProvider && studioReasoning(origin);
       const reasoning = declared && origins.every(profile => JSON.stringify(studioReasoning(profile)) === JSON.stringify(declared))
         ? { efforts: Object.keys(declared.efforts).map(id => ({ id, name: id[0].toUpperCase() + id.slice(1) })),
