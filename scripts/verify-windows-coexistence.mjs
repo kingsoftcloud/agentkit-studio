@@ -6,11 +6,16 @@ import { finished } from 'node:stream/promises';
 import asar from '@electron/asar';
 
 export async function verifyWindowsCoexistence(executablePath, environment, root, evidence) {
+  // The log is the only artifact a red run can afford to read: the evidence
+  // bundle ships inside a ~500 MB artifact. Trace every phase so a hanging or
+  // rejected step names itself instead of surfacing as a bare DOMException.
+  const step = name => console.error(`[coexistence] ${name}`);
   const fixture = join(root, 'official-dsh-fixture');
   const source = join(root, 'fixture-source');
   const marker = join(root, 'foreign-second-instance.txt');
   await mkdir(join(fixture, 'resources'), { recursive: true });
   await mkdir(source, { recursive: true });
+  step('copy-electron-engine');
   // Borrow only Electron's signed engine, not the product runtime or plugins.
   for (const entry of await readdir(dirname(executablePath), { withFileTypes: true })) {
     if (entry.isFile() || entry.name === 'locales') await cp(join(dirname(executablePath), entry.name), join(fixture, entry.name), { recursive: true });
@@ -35,17 +40,24 @@ app.whenReady().then(() => {
   await mkdir(legacyProfile, { recursive: true });
   const legacyPatch = '# existing official DSH plugin configuration\n[]\n';
   await writeFile(join(legacyProfile, 'cordis.patch.yml'), legacyPatch);
+  step('launch-official-dsh-fixture');
   const foreign = await electron.launch({ executablePath: join(fixture, executablePath.split(/[\\/]/).at(-1)), env: environment, timeout: 120000 });
   let studio;
   try {
+    step('wait-official-dsh-fixture-window');
     const foreignPage = await foreign.firstWindow();
     await expect(foreignPage.getByRole('heading')).toHaveText('Official DSH identity fixture');
+    step('launch-studio-alongside-fixture');
     studio = await electron.launch({ executablePath, env: environment, timeout: 120000 });
+    step('wait-studio-window');
     const page = await studio.firstWindow({ timeout: 120000 });
+    step('assert-studio-overview');
     await expect(page.getByRole('button', { name: '总览', exact: true })).toBeVisible({ timeout: 120000 });
     const later=page.locator('.agentkit-credential-onboarding-content').getByRole('button',{name:'稍后设置',exact:true});
     if(await later.isVisible()) await later.click();
+    step('assert-studio-agents');
     await expect(page.getByRole('button', { name: /^(智能体|Agents)$/ })).toBeVisible();
+    step('compare-electron-identities');
     const identity = await studio.evaluate(({ app }) => ({ name: app.name, version: app.getVersion(), userData: app.getPath('userData') }));
     const foreignIdentity = await foreign.evaluate(({ app }) => ({ name: app.name, userData: app.getPath('userData') }));
     if (identity.userData === foreignIdentity.userData) throw new Error('Studio still shares official DSH Electron state');

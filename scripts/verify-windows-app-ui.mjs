@@ -14,6 +14,12 @@ import { verifyOfficialDshCoexistence } from './verify-windows-official-dsh.mjs'
 import { verifyStudioOnboarding } from './verify-studio-onboarding-ui.mjs';
 
 if (process.platform !== 'win32') throw new Error('Windows app UI acceptance requires Windows');
+// A floating rejection here used to surface as a bare DOMException long after
+// the step that caused it, with no way to tell which phase hung. Name it.
+process.on('unhandledRejection', reason => {
+  console.error('[installed-app-ui] unhandled rejection:', reason);
+  process.exit(1);
+});
 const executablePath=process.env.STUDIO_INSTALLED_APP;
 const expectedVersion=process.env.BUILD_VERSION;
 if (!executablePath || !expectedVersion) throw new Error('Installed app and build version are required');
@@ -53,9 +59,12 @@ try {
   console.log('Actually installed Windows App rendered and reported the expected build version.');
 } finally {await app.close();}
 
+console.error('[installed-app-ui] verify DSH coexistence');
 await verifyWindowsCoexistence(executablePath, { ...environment, DSH_HOME: join(root, 'shared-dsh'), AGENTKIT_HOME: join(root, 'shared-agentkit'), DSH_TELEMETRY_DISABLED: '1' }, root, evidence);
 
+console.error('[installed-app-ui] verify installer UI');
 await promisify(execFile)('powershell.exe', ['-NoProfile', '-File', fileURLToPath(new URL('./verify-windows-installer-ui.ps1', import.meta.url)), '-Installer', process.env.STUDIO_SIGNED_INSTALLER, '-Evidence', evidence], { timeout: 900000, maxBuffer: 1024 * 1024 });
 
+console.error('[installed-app-ui] verify official DSH coexistence');
 const visibleInstall=JSON.parse(await readFile(join(evidence,'windows-installer-ui.json'),'utf8'));
 await verifyOfficialDshCoexistence(visibleInstall.installedPath, environment, root, evidence);
