@@ -46,14 +46,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install test Chromium
         timeout-minutes: 12
-        run: |
-          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/studio-native-browsers"
-          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
-          if [[ "${{ steps.playwright-browsers.outputs.cache-hit }}" == "true" ]]; then
-            pnpm exec playwright install-deps chromium
-          else
-            pnpm exec playwright install --with-deps chromium
-          fi
+        run: bash ci/install-playwright-chromium.sh "${{ steps.playwright-browsers.outputs.cache-hit }}"
       - run: pnpm build:harness
       - run: |
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
@@ -254,14 +247,7 @@ jobs:
             playwright-${{ runner.os }}-
       - name: Install Chromium for the frozen Host proof
         timeout-minutes: 12
-        run: |
-          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/studio-native-browsers"
-          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
-          if [[ "${{ steps.patched-playwright-browsers.outputs.cache-hit }}" == "true" ]]; then
-            pnpm exec playwright install-deps chromium
-          else
-            pnpm exec playwright install --with-deps chromium
-          fi
+        run: bash ci/install-playwright-chromium.sh "${{ steps.patched-playwright-browsers.outputs.cache-hit }}"
       - name: Install the accepted Studio plugin in an isolated profile
         shell: bash
         run: |
