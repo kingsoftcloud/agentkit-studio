@@ -28,8 +28,8 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     // shipped by dsh-client-ui-settings-account and wraps both its welcome and
     // credit/recharge steps, so this keeps the publication flags honest.
     await expect(page.locator('[data-desktop-onboarding]')).toHaveCount(0);
-    await expect(guide.getByRole('heading',{name:'让第一个 Agent 跑起来'})).toBeVisible({timeout:60000});
-    await guide.getByRole('button',{name:'开始设置',exact:true}).click();
+    // 首次启动是单步表单：引导直接内嵌「连接模型」，不再有单独的欢迎步骤。
+    await expect(guide.getByRole('heading',{name:'连接你的模型',exact:true})).toBeVisible({timeout:60000});
     const model=guide.locator('[data-onboarding-mode=model]');
     await expect(model).toBeVisible();
     const save=model.getByRole('button',{name:'保存并继续',exact:true});
@@ -103,25 +103,13 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     await expect(select).toHaveValue('onboarding-proof');
     await save.click();
 
-    // Saving advances to the optional cloud step.
-    const cloud=guide.locator('[data-onboarding-mode=cloud]');
-    await expect(cloud).toBeVisible({timeout:90000});
-    await expect(model).toHaveCount(0);
-    await expect(guide.getByRole('heading',{name:'云端配置，可以跳过'})).toBeVisible();
-    await expect(cloud.getByLabel('Access Key',{exact:true})).toBeVisible();
-    await expect(cloud.getByLabel('Secret Key',{exact:true})).toBeVisible();
-    await cloud.getByText('高级云端设置',{exact:true}).click();
-    for(const label of ['Account ID','区域','控制面地址','对象存储桶']) {
-      await expect(cloud.getByLabel(label,{exact:true})).toBeVisible();
-    }
-    await page.screenshot({path:screenshotPath.replace(/\.png$/,'-cloud.png'),fullPage:true});
-    await guide.getByRole('button',{name:'跳过，开始对话',exact:true}).click();
-    await expect(guide).toBeHidden();
+    // 保存即完成：单步表单关闭引导，不再有独立的云端步骤。
+    await expect(guide).toBeHidden({timeout:90000});
     if(!requests.includes('/v1/models')) throw new Error('Configured endpoint did not reach the actual model directory');
     return {officialWelcomeAbsent:true,officialRechargeAbsent:true,fullscreenModelSetupVerified:true,
       modelProviderSelected:true,endpointCompletionVerified:true,apiKeyRequirementVerified:true,
       apiKeyVisibilityVerified:true,requiredValidationVerified:true,modelCatalogReadVerified:true,
-      modelSelectionVerified:true,manualModelNameVerified:true,cloudAdvancedSettingsVerified:true,
-      cloudSetupSkipped:true,modelDirectoryReached:true};
+      modelSelectionVerified:true,manualModelNameVerified:true,quickstartGuideClosed:true,
+      modelDirectoryReached:true};
   } finally { server.closeAllConnections(); await new Promise(done=>server.close(done)); }
 }
