@@ -171,6 +171,25 @@ export function studioReasoning(profile = {}) {
   return { efforts, defaultEffort: efforts[wanted] ? wanted : fallback };
 }
 
+/**
+ * The route-level `reasoning` a DSH route may carry. DSH applies it to every
+ * model the route serves, so it is the first profile's default only when every
+ * sibling declares that level too; a sibling that does not would fail with
+ * `UNSUPPORTED_REASONING_EFFORT` before the request leaves DSH.
+ */
+export function routeReasoningDefault(profiles) {
+  const reasoning = studioReasoning(profiles[0]);
+  if (!reasoning) return undefined;
+  const shared = profiles.every(profile => Object.hasOwn(studioReasoning(profile)?.efforts || {}, reasoning.defaultEffort));
+  return shared ? reasoning.defaultEffort : undefined;
+}
+
+/** Whether the Host takes a per-model `defaultReasoningEffort`: its `llm-pi-ai` schema lists the key on a model entry. */
+export function hostSupportsModelDefaults(namespace) {
+  return Object.values(namespace?.schema?.refs || {})
+    .some(schema => Object.hasOwn(schema?.dict || {}, 'defaultReasoningEffort'));
+}
+
 /** Persist the declared subset and default while keeping wire names in the provider table. */
 export function modelReasoningConfig(profile) {
   const fields = Array.isArray(profile.reasoningLevels) ? { reasoningLevels: reasoningLevelsFor(profile) } : {};

@@ -207,6 +207,32 @@ test('a stock host gets no route default on a shared route', async () => {
     [['deepseek-v4.1-flash-1017', false], ['other-model', false], ['plain-model', false]]);
 });
 
+test('a single-model route carries its default at both levels on a host with model defaults', async () => {
+  const { bridge, providers } = bridgeContext([{ id: reasoner.modelName }], { modelDefaults: true });
+  await bridge.applyProfiles({ profiles: [reasoner] });
+
+  const route = Object.values(providers)[0];
+  assert.equal(route.reasoning, 'high');
+  assert.equal(route.models[0].defaultReasoningEffort, 'high');
+});
+
+test('a shared route keeps the route default when every model declares the level', async () => {
+  // Both models support `high`; the second merely prefers `low`.
+  const other = { ...reasoner, id: 'other', modelName: 'other-model', defaultReasoningEffort: 'low' };
+  const bundled = bridgeContext([{ id: reasoner.modelName }, { id: other.modelName }], { modelDefaults: true });
+  await bundled.bridge.applyProfiles({ profiles: [reasoner, other] });
+  // The route default is valid for every model, and each model's own default wins over it.
+  assert.equal(Object.values(bundled.providers)[0].reasoning, 'high');
+  assert.deepEqual(Object.values(bundled.providers)[0].models.map(model => [model.id, model.defaultReasoningEffort]).sort(),
+    [['deepseek-v4.1-flash-1017', 'high'], ['other-model', 'low']]);
+
+  // A stock Host has only the route default, which must survive here.
+  const stock = bridgeContext([{ id: reasoner.modelName }, { id: other.modelName }]);
+  await stock.bridge.applyProfiles({ profiles: [reasoner, other] });
+  assert.equal(Object.values(stock.providers)[0].reasoning, 'high');
+  assert.equal(Object.values(stock.providers)[0].models.some(model => Object.hasOwn(model, 'defaultReasoningEffort')), false);
+});
+
 test('a Responses route never sets the chat-only store compat', async () => {
   const { bridge, providers } = bridgeContext([{ id: 'deepseek-v4.1-flash-1017', name: 'DeepSeek', input: ['text'] }]);
   await bridge.applyProfiles({ profiles: [{ ...reasoner, protocol: 'openai-responses' }] });

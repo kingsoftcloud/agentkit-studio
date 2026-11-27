@@ -50,8 +50,9 @@ test('two models of one gateway share a route and keep both in the selector', as
   // connection, so a projection that dropped it made two models of one gateway
   // look like two different gateways and failed the bundle with
   // PORTABLE_MODEL_ROUTE_COLLISION.
+  const schema = { refs: { 1: { dict: { reasoningEfforts: '2', defaultReasoningEffort: '3' } } } };
   const providers = {};
-  const settings = { describe: () => [{ ns: 'llm-pi-ai', revision: 1, value: { providers } }],
+  const settings = { describe: () => [{ ns: 'llm-pi-ai', revision: 1, schema, value: { providers } }],
     mutate: async (ns, ops) => { for (const op of ops) providers[op.path[1]] = op.value; } };
   const gateway = 'https://shared.example/v1';
   const profiles = [
@@ -67,7 +68,25 @@ test('two models of one gateway share a route and keep both in the selector', as
   assert.equal(providers[routes[0]].reasoning, undefined);
   assert.deepEqual(providers[routes[0]].models[0].reasoningEfforts,
     { low: 'low', high: 'high' });
+  // The first model keeps its own default instead of losing it with the route one.
+  assert.equal(providers[routes[0]].models[0].defaultReasoningEffort, 'high');
   assert.equal(Object.hasOwn(providers[routes[0]].models[1], 'reasoningEfforts'), false);
+  assert.equal(Object.hasOwn(providers[routes[0]].models[1], 'defaultReasoningEffort'), false);
+});
+
+test('a host without model defaults writes none and keeps a route default every model declares', async () => {
+  const providers = {};
+  const settings = { describe: () => [{ ns: 'llm-pi-ai', revision: 1, value: { providers } }],
+    mutate: async (ns, ops) => { for (const op of ops) providers[op.path[1]] = op.value; } };
+  const gateway = 'https://shared.example/v1';
+  const profiles = [
+    { id: 'first-model', connectionId: 'shared-gw', provider: 'openai-compatible', modelName: 'first', baseUrl: gateway, credentialName: 'KEY', reasoningEfforts: true, defaultReasoningEffort: 'high' },
+    { id: 'second-model', connectionId: 'shared-gw', provider: 'openai-compatible', modelName: 'second', baseUrl: gateway, credentialName: 'KEY', reasoningEfforts: true },
+  ];
+  await syncPortableModelProfiles({ settings, profiles });
+  const route = providers[Object.keys(providers)[0]];
+  assert.equal(route.reasoning, 'high');
+  assert.equal(route.models.some(model => Object.hasOwn(model, 'defaultReasoningEffort')), false);
 });
 
 test('the portable projection forwards connectionId', async () => {

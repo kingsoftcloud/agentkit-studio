@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { dshModelSelection } from './agent-preset-admission.mjs';
 import { portableError } from './portable-resources.mjs';
 import { admitModelCapabilities } from './model-capabilities.mjs';
-import { studioReasoning, providerDisplayName } from './model-reasoning.mjs';
+import { hostSupportsModelDefaults, providerDisplayName, routeReasoningDefault, studioReasoning } from './model-reasoning.mjs';
 import { dshConnectionHeaders, providerWireApi } from './model-profile-contract.mjs';
 
 const OPERATING_MAX_OUTPUT_TOKENS = 8192;
@@ -43,12 +43,8 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
   }
   for (const [route, { members }] of routes) {
     const profile = members[0];
-    // A route default reaches every model on the route, including a sibling
-    // that never declared that reasoning level. Keep it only when the route
-    // serves one model.
-    const dedicated = members.length === 1;
-    const reasoning = studioReasoning(profile);
     const wire = providerWireApi(profile);
+    const supportsModelDefaults = hostSupportsModelDefaults(namespace);
     const models = [];
     for (const member of members) {
       const facts = await profileCapabilities(member, resolveCapabilities);
@@ -56,8 +52,10 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
       models.push({ id: member.modelName, name: member.modelName,
         contextWindow: facts.contextWindow,
         maxTokens: member.maxOutputTokens ?? Math.min(facts.maxOutputTokens, OPERATING_MAX_OUTPUT_TOKENS),
-        input: facts.input, ...(memberReasoning ? { reasoningEfforts: memberReasoning.efforts } : {}) });
+        input: facts.input, ...(memberReasoning ? { reasoningEfforts: memberReasoning.efforts } : {}),
+        ...(memberReasoning && supportsModelDefaults ? { defaultReasoningEffort: memberReasoning.defaultEffort } : {}) });
     }
+    const reasoning = routeReasoningDefault(members);
     const value = { displayName: providerDisplayName(profile), api: wire, apiKeyEnv: profile.credentialName,
       baseURL: profile.baseUrl, ...dshConnectionHeaders(members),
       // Kspmas validates message roles and answers
@@ -75,7 +73,7 @@ export async function syncPortableModelProfiles({ settings, profiles, capabiliti
       // sets it while no model speaks that protocol, which is what a profile
       // declaring `protocol: openai-responses` would otherwise hit.
       compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
-      ...(reasoning && dedicated ? { reasoning: reasoning.defaultEffort } : {}), models };
+      ...(reasoning ? { reasoning } : {}), models };
     if (!isDeepStrictEqual(namespace.value?.providers?.[route], value)) operations.push({ op: 'set', path: ['providers', route], value });
   }
   if (operations.length) await settings.mutate('llm-pi-ai', operations, namespace.revision);
