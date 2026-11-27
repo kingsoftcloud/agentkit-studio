@@ -36,7 +36,8 @@ async function archiveFor(directory, version, executableName = 'codex', platform
   await writeFile(join(payload, 'codex-package.json'), '{}');
   const archive = join(directory, `ksxc-${platform}-${version}.tar.gz`);
   // COPYFILE_DISABLE keeps macOS from adding AppleDouble entries to the fixture.
-  await run('/usr/bin/tar', ['-czf', archive, '-C', payload, 'bin', 'codex-package.json'], { env: { PATH: '/usr/bin:/bin', COPYFILE_DISABLE: '1' } });
+  await run('tar', ['-czf', archive, '-C', payload, 'bin', 'codex-package.json'],
+    { env: { PATH: process.env.PATH, COPYFILE_DISABLE: '1' } });
   const bytes = await readFile(archive);
   return { version, archive, bytes, digest: sha256(bytes), executable: sha256(fakePayload(version)) };
 }
