@@ -235,10 +235,12 @@ jobs:
         timeout-minutes: 8
         run: |
           set -euo pipefail
-          # A flaky runner mirror used to consume the whole job budget here.
-          sudo apt-get update -o Acquire::Retries=5 \
+          # musl-tools is supplied by Ubuntu. Other runner repositories cannot
+          # provide this dependency and need not be reachable for this job.
+          ubuntu_sources=(-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
+          sudo apt-get "${ubuntu_sources[@]}" update -o Acquire::Retries=5 \
             -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
-          sudo apt-get install -y --no-install-recommends musl-tools
+          sudo apt-get "${ubuntu_sources[@]}" install -y --no-install-recommends musl-tools
       - name: Build and test the patched DSH host
         timeout-minutes: 15
         run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
