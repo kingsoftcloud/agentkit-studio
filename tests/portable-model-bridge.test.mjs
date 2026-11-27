@@ -44,3 +44,28 @@ test('an unreachable catalog keeps the historical admitted defaults', async () =
  assert.equal(providers['agentkit-studio-openai-compatible-https-gateway-example-v1'].models[0].contextWindow,128000);
  assert.equal(providers['agentkit-studio-openai-compatible-https-gateway-example-v1'].models[0].maxTokens,8192);
 });
+
+test('two models of one gateway share a route and keep both in the selector', async () => {
+  // The portable projection must carry `connectionId`: the route is keyed by
+  // connection, so a projection that dropped it made two models of one gateway
+  // look like two different gateways and failed the bundle with
+  // PORTABLE_MODEL_ROUTE_COLLISION.
+  const providers = {};
+  const settings = { describe: () => [{ ns: 'llm-pi-ai', revision: 1, value: { providers } }],
+    mutate: async (ns, ops) => { for (const op of ops) providers[op.path[1]] = op.value; } };
+  const gateway = 'https://shared.example/v1';
+  const profiles = [
+    { id: 'first-model', connectionId: 'shared-gw', provider: 'openai-compatible', modelName: 'first', baseUrl: gateway, credentialName: 'KEY' },
+    { id: 'second-model', connectionId: 'shared-gw', provider: 'openai-compatible', modelName: 'second', baseUrl: gateway, credentialName: 'KEY' },
+  ];
+  await syncPortableModelProfiles({ settings, profiles });
+  const routes = Object.keys(providers);
+  assert.equal(routes.length, 1, `expected one route, got ${routes.join(',')}`);
+  assert.deepEqual(providers[routes[0]].models.map(model => model.id), ['first', 'second']);
+});
+
+test('the portable projection forwards connectionId', async () => {
+  const { modelRuntimeOptions } = await import('../src/model-profile-contract.mjs');
+  assert.deepEqual(modelRuntimeOptions({ connectionId: 'shared-gw', protocol: 'openai-responses' }),
+    { connectionId: 'shared-gw', protocol: 'openai-responses' });
+});

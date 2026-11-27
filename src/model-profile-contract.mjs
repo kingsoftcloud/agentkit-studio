@@ -1,5 +1,9 @@
 /** Shared model-profile fields across authoring and runtime projections. */
-export const MODEL_RUNTIME_OPTION_KEYS = Object.freeze(['protocol', 'contextWindow', 'maxOutputTokens', 'requestTimeoutMs', 'parameters', 'headers']);
+// `connectionId` travels with the bundle because the DSH route is keyed by
+// connection: `portable-model-bridge` groups profiles onto one route by
+// comparing this identity, and a projection that dropped it made two models of
+// one gateway look like two different gateways (PORTABLE_MODEL_ROUTE_COLLISION).
+export const MODEL_RUNTIME_OPTION_KEYS = Object.freeze(['connectionId', 'protocol', 'contextWindow', 'maxOutputTokens', 'requestTimeoutMs', 'parameters', 'headers']);
 
 /*
  * Custom request headers are user data that reaches the wire (the gateway
