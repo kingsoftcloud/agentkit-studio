@@ -4,7 +4,7 @@ import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { STUDIO_REASONING_LEVELS, studioReasoning } from './model-reasoning.mjs';
 import { catalogReasoningMetadata } from './model-catalog-reasoning.mjs';
 import { modelCard } from './model-cards.mjs';
-import { ROUTEMIND_MODELS, ROUTEMIND_PROVIDER } from './host/services/routemind-models.mjs';
+import { isRouteMindModel, ROUTEMIND_PROVIDER } from './host/services/routemind-models.mjs';
 import { dshModelRoute, HARNESS_SERVICE_MODEL_PROVIDER } from './model-route.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from './model-capabilities.mjs';
@@ -143,7 +143,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     } catch { return new Map(); }
   }
   async function routeMindProfile(provider, modelName) {
-    if (provider !== ROUTEMIND_PROVIDER || !ROUTEMIND_MODELS.some(model => model.id === modelName)) return null;
+    if (provider !== ROUTEMIND_PROVIDER || !isRouteMindModel(modelName)) return null;
     if (!await routeMindActive()) throw Object.assign(new Error('请先启用 RouteMind 智能路由'), { code: 'ROUTEMIND_DISABLED' });
     const gateway = await routeMindGateway();
     if (!gateway || !gateway.apiKey && !gateway.local)

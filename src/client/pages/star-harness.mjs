@@ -41,8 +41,6 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch, Button, 
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
     const [bannerUrl, setBannerUrl] = useState('');
-    const [searchUrl, setSearchUrl] = useState(null);
-    const [searchSaving, setSearchSaving] = useState(false);
     const pending = useRef(false);
 
     useEffect(() => {
@@ -76,13 +74,6 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch, Button, 
         lifetime.abort();
         window.removeEventListener(STAR_HARNESS_CHANGED, refresh);
       };
-    }, [view]);
-
-    useEffect(() => {
-      if (view !== 'page' || typeof hostRemote.settings !== 'function') return;
-      let active = true;
-      void hostRemote.settings().then(value => { if (active) setSearchUrl(value.webSearchBaseUrl || ''); }).catch(() => {});
-      return () => { active = false; };
     }, [view]);
 
     useEffect(() => {
@@ -200,26 +191,6 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch, Button, 
     const list = { listStyle: 'none', padding: 0, margin: 0 };
     const supported = status && status.supported !== false;
 
-    const searchSettings = searchUrl === null ? null : h('form', {
-      style: { ...section, marginBlockEnd: '12px' },
-      onSubmit: async event => {
-        event.preventDefault();
-        if (searchSaving) return;
-        setSearchSaving(true);
-        setError('');
-        try {
-          const saved = await hostRemote.updateSettings({ webSearchBaseUrl: searchUrl });
-          setSearchUrl(saved.webSearchBaseUrl || '');
-          setMessage('搜索配置已保存。');
-        } catch (reason) { setError(reason.message || '搜索配置保存失败。'); }
-        finally { setSearchSaving(false); }
-      },
-    }, h('label', { style: stack }, h('strong', null, '搜索 API 地址'),
-      h('input', { style: { padding: '8px', border: '1px solid ' + BRAND.border, borderRadius: '8px', color: BRAND.ink, background: BRAND.canvas },
-        value: searchUrl, onChange: event => setSearchUrl(event.target.value), placeholder: 'https://search.example.com/search' })),
-    h('p', { style: muted }, '可填写支持匿名调用的 HTTP 搜索 API。留空时使用 Studio 已有的搜索服务，或复用星流模型凭据。'),
-    h('div', null, h('button', { type: 'submit', style: buttonStyle('outline'), disabled: searchSaving }, '保存搜索配置')));
-
     if (useNativeDetail) {
       const action = (label, onClick, inactive = disabled, variant = 'outline', icon) => h(Button, {
         variant, size: 'sm', onClick, disabled: inactive, icon,
@@ -257,7 +228,7 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch, Button, 
           latest ? action((installed ? '升级到 ' : '安装 ') + latest, () => install(latest), disabled,
             'primary', RefreshIcon ? h(RefreshIcon, { size: 13 }) : undefined) : null,
           repair && installed ? action('修复当前版本', () => install(installed)) : null, toggle),
-        notice: h('div', { style: { display: 'contents' } }, searchSettings,
+        notice: h('div', { style: { display: 'contents' } },
           !status && !busy && !error ? h('p', { role: 'status', style: muted }, '正在读取 StarOrigin Harness 状态…') : null,
           busy || message ? h('p', { role: 'status', style: muted }, busy || message) : null,
           !busy && status?.busy ? h('p', { role: 'status', style: muted }, '任务运行中，结束后可以更改版本。') : null,
@@ -295,7 +266,6 @@ export function createStarHarnessPage({ ui, hostRemote, window, Switch, Button, 
       h('section', { style: { ...stack, padding: '16px 20px', background: BRAND.canvas, borderRadius: '14px' } },
         h('h3', { style: title }, '关于 StarOrigin Harness'),
         h(MarkdownText, { text: overview })),
-      searchSettings,
       supported ? h('section', { style: section },
         h('div', { style: aside }, h('h3', { style: title }, '包含的组件'),
           h('span', { style: muted }, '3 个组件 · 随版本一起更新')),

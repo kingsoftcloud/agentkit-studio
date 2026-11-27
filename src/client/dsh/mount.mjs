@@ -22,7 +22,7 @@ export function mountStudio(ctx, app) {
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote }, ui.installHarnessTimeline);
   installPromptPrediction(ctx, { React, h, window });
-  installModelLabel(ctx, { React, Tag: ui.Tag, hostRemote, window });
+  installModelLabel(ctx, { React, ReactDOM: ui.ReactDOM, Tag: ui.Tag, hostRemote, window });
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
@@ -64,7 +64,7 @@ export function mountStudio(ctx, app) {
   }, props => h(StarHarnessItem, { ...props, view: 'page' })));
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
     name: 'plugins.bundle.config', key: 'routemind-studio',
-  }, () => routeMindOverview(h, BRAND)));
+  }, () => routeMindOverview(h, BRAND, window.document)));
   ctx.effect(() => {
     const open = () => ctx.layout?.selectPanel?.('plugins');
     window.addEventListener('agentkit-studio:open-plugin-center', open);

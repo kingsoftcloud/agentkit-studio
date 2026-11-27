@@ -79,14 +79,14 @@ function sessionToolPolicy(policy, sandbox) {
 export function createHarnessServiceModelAdapter(AdapterBase, models, describeModel, canResolveSavedSelection) {
   const catalog = () => new Set(typeof models === 'function' ? models() : typeof models === 'string' ? [models] : models);
   return new class extends AdapterBase {
-    providerInfo(provider) { return { id: provider, name: 'Harness' }; }
+    providerInfo(provider) { return { id: provider, name: '来源未标明' }; }
     async listModels(provider) { return Promise.all([...catalog()].map(model => this.resolveModel(provider, model))); }
     async resolveModel(provider, model) {
       if (!catalog().has(model)) {
         // Managed sessions written by old Studio releases can contain a stale
         // display name. The runtime always selects a worker by workspace.
         if (canResolveSavedSelection?.() && text(model) && model.length <= 256)
-          return { provider, id: model, name: 'Harness', modalities: ['text'] };
+          return { provider, id: model, name: model, modalities: ['text'] };
         throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
       }
       const capabilities = await describeModel?.(model);

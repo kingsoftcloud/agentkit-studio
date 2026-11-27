@@ -536,7 +536,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, ksxcModelAccess, nativeEngineRuntime, hostWebSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, ksxcModelAccess, nativeEngineRuntime, hostWebSearch, resolveStarflowSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
     managedHarnessModel(cwd) { return nativeEngineRuntime?.managedModelSelection?.(cwd); },
@@ -700,17 +700,29 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               }),
             })
             : undefined;
-          const baseDynamicTools = resources.dynamicTools || [];
-          const baseToolHandler = resources.toolHandler;
-          const dynamicTools = userQuestionTool
-            ? [...baseDynamicTools, userQuestionTool.spec] : baseDynamicTools;
-          const toolHandler = userQuestionTool
+          const starflowSearch = runtime === 'codex'
+            ? await resolveStarflowSearch?.(selection, selected.modelProvider
+              && { ...selected.modelProvider, modelName: selection.model }, toolAgent)
+            : undefined;
+          const searchTool = starflowSearch ? {
+            type: 'function', name: 'studio_web_search',
+            description: 'Search the web for current information and cite the returned sources.',
+            inputSchema: { type: 'object', properties: { query: { type: 'string' } },
+              required: ['query'], additionalProperties: false },
+          } : undefined;
+          const dynamicTools = [...(resources.dynamicTools || []),
+            ...(userQuestionTool ? [userQuestionTool.spec] : []), ...(searchTool ? [searchTool] : [])];
+          const toolHandler = userQuestionTool || searchTool
             ? async call => {
-              const outcome = await userQuestionTool.handler(call);
+              const outcome = await userQuestionTool?.handler(call);
               if (outcome !== undefined) return outcome;
-              return baseToolHandler(call);
+              if (searchTool?.name === call.name) {
+                const result = await starflowSearch(call.arguments?.query, 5, call.signal);
+                return JSON.stringify(result);
+              }
+              return resources.toolHandler?.(call);
             }
-            : baseToolHandler;
+            : resources.toolHandler;
           try {
             yield* codexFrames(processRuntime, {
               turnId: String(options.turnId || options.runId || ''),
@@ -723,6 +735,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               ...(typeof permissionModeForSession === 'function' && toolAgent?.session
                 ? { sandbox: permissionModeForSession(toolAgent.session) } : {}),
               ...selected,
+              ...(searchTool && selected.modelProvider
+                ? { modelProvider: { ...selected.modelProvider, hostedWebSearch: false } } : {}),
               ...(serviceOwnsModel && selection.provider === HARNESS_SERVICE_MODEL_PROVIDER ? { expectedServiceModel: selection.model } : {}),
               ...(workspaceModelProfile ? { workspaceModelProfile } : {}),
               ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]

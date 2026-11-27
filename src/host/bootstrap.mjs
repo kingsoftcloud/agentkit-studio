@@ -294,18 +294,18 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { createNativeEngineRuntime, createHarnessServiceModelAdapter, routeHarnessCompaction, HARNESS_SERVICE_MODEL_PROVIDER } = await import('../providers/native-engine-runtime.mjs');
   const { webSearchEndpoint } = await import('../web-search-endpoint.mjs');
   const { webSearch } = await import('../providers/studio-web-transport.mjs');
-  const { starflowWebSearch } = await import('../providers/starflow-web-search.mjs');
+  const { isStarflowSearchEndpoint, resolveStarflowWebSearch } = await import('../providers/starflow-web-search.mjs');
   const { engineServiceWorkspaces, canonicalEngineWorkspace } = await import('../providers/engine-service-workspaces.mjs');
   const externalRoutes = engineServiceWorkspaces(runtimeEnv);
   const credentials = credentialsService;
   const routeMindActive = () => isRouteMindPluginActive(ctx.get('pluginInventory'));
-  const { mountRouteMindModels, ROUTEMIND_MODELS, routeMindGateway } = await import('./services/routemind-models.mjs');
+  const { mountRouteMindModels, isRouteMindModel, routeMindGateway } = await import('./services/routemind-models.mjs');
   const routeMindConfig = async () => {
     if (!runtimeEnv.ROUTEMIND_GATEWAY_URL) {
       const settings = await models.settings();
       const saved = settings.modelProfiles?.find(profile => profile.enabled !== false
         && /routemind/i.test(profile.connectionName || profile.provider)
-        && ROUTEMIND_MODELS.some(model => model.id === profile.modelName));
+        && isRouteMindModel(profile.modelName));
       if (saved) {
         const profile = await models.profile(saved.id).catch(() => null);
         if (profile) return routeMindGateway({ ROUTEMIND_GATEWAY_URL: profile.baseUrl, ROUTEMIND_TOKEN: profile.apiKey });
@@ -329,8 +329,31 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       modelProfiles: (await models.settings()).modelProfiles,
       workspaceRegistry: () => ctx.get('workspaceRegistry'),
     })) : undefined;
-  const { registerStarHarnessClientRoute, registerStarHarnessIntroductionRoute } = await import('./routes/star-harness-client.mjs');
+  const searchStarflow = (selection, profile, agent) => resolveStarflowWebSearch(models, selection, {
+    profile, harnessProfile: model => starHarness?.summaryProfile(agent?.session?.header?.cwd, model),
+    dshProfile: async ({ provider, model }) => {
+      const namespace = ctx.get('settings')?.describe({ redactSecrets: true }).find(item => item.ns === 'llm-pi-ai');
+      const providers = namespace?.value?.providers || {};
+      const route = Object.hasOwn(providers, provider) && providers[provider];
+      if (!isStarflowSearchEndpoint(route?.baseURL)
+        || route.models?.length && !route.models.some(item => item.id === model)) return;
+      return { baseUrl: route.baseURL, modelName: model, headers: route.headers,
+        apiKey: route.apiKeyEnv ? (await credentials.resolve(route.apiKeyEnv))?.value : '' };
+    },
+  });
+  ctx.inject(['web'], webCtx => {
+    if (typeof webCtx.web.registerModelSearch !== 'function') return;
+    webCtx.effect(() => webCtx.web.registerModelSearch(async selection => {
+      const search = await searchStarflow(selection);
+      if (search) return async ({ query, maxResults }, signal) => {
+        const { sources, content } = await search(query, maxResults ?? 5, signal);
+        return { sources, content, truncated: false };
+      };
+    }), 'agentkit-studio: 星流 model-backed search');
+  });
+  const { registerRouteMindIntroductionRoute, registerStarHarnessClientRoute, registerStarHarnessIntroductionRoute } = await import('./routes/star-harness-client.mjs');
   registerStarHarnessIntroductionRoute(ctx);
+  registerRouteMindIntroductionRoute(ctx);
   if (starHarness) {
     ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
     const configuration = await configurationPromise;
@@ -405,16 +428,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ksxcDesktopUser: KSXC_DESKTOP_USER,
     ksxcModelAccess: ksxc?.modelAccess,
     nativeEngineRuntime,
-    hostWebSearch: async (agent, { provider, model }, workspaceModelProfile) => {
+    resolveStarflowSearch: searchStarflow,
+    hostWebSearch: async (agent, selection, workspaceModelProfile) => {
       const settings = await models.settings();
-      const profile = workspaceModelProfile ?? await Promise.resolve().then(() => {
-        const selected = provider === HARNESS_SERVICE_MODEL_PROVIDER
-          ? starHarness?.summaryProfile(agent.session?.header?.cwd, model)
-          : (settings.modelProfiles || []).find(item => item.enabled !== false
-            && item.modelName === model && dshModelRoute(item) === provider);
-        return selected && models.profile(selected.id);
-      }).catch(() => null);
-      const nativeSearch = starflowWebSearch(profile);
+      const nativeSearch = await searchStarflow(selection, workspaceModelProfile, agent);
+      const { provider } = selection;
       let endpoint;
       try { endpoint = webSearchEndpoint(settings.webSearchBaseUrl); } catch { /* A stale profile value must not prevent a turn. */ }
       const web = agent.ctx?.get?.('web') ?? ctx.get('web');

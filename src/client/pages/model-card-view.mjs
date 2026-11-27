@@ -19,7 +19,7 @@ export function renderModelScoreBars(h, scores, dimensions = SCORE_DIMENSIONS.sl
       color: 'var(--dsw-alias-label-secondary)', fontSize: '11px', fontVariantNumeric: 'tabular-nums' } },
   values.map(([key, accessibleLabel]) => {
     const value = scores.values[key];
-    const label = key === 'agentic' ? '编程' : accessibleLabel;
+    const label = accessibleLabel;
     return h('span', { key, role: 'img', 'aria-label': `${accessibleLabel} ${Math.round(value)}`,
       style: { display: 'inline-flex', gap: '4px', alignItems: 'center', whiteSpace: 'nowrap' } },
     h('span', { 'aria-hidden': true }, `${label} ${Math.round(value)}`),
@@ -87,6 +87,18 @@ function section(h, title, ...children) {
 
 function row(h, label, value) {
   return h('div', { className: 'ms-card-row', key: label }, h('dt', null, label), h('dd', { className: 'ms-card-value' }, value));
+}
+
+/** Compact, read-only model metadata for the conversation picker. */
+export function renderModelPreview(h, Tag, card) {
+  const price = priceText(card);
+  return h('div', { className: 'ms-card-body' },
+    card.abilities?.length ? h('div', { className: 'ms-card-summary' },
+      card.abilities.map(ability => h(Tag, { key: ability, tone: 'neutral' }, ABILITY_LABELS[ability]))) : null,
+    card.contextWindow ? h('p', { className: 'ms-card-note' }, `上下文 ${formatTokens(card.contextWindow)} tokens`) : null,
+    card.scores ? h('div', null, renderRadar(h, card.scores.values),
+      h('p', { className: 'ms-card-note' }, card.scores.live ? 'RouteMind 网关评分' : 'Studio 任务样本相对评分')) : null,
+    price ? h('p', { className: 'ms-card-note' }, `${price} · 每百万 tokens 输入 / 输出`) : null);
 }
 
 /** Content for the DSH disclosure in a catalog row. */

@@ -6,8 +6,7 @@ import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDepl
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { verifyDeploymentStorage } from './deployment-storage.mjs';
-import { dshModelRoute } from './model-route.mjs';
-import { providerDisplayName } from './model-reasoning.mjs';
+import { modelPresentationProvider } from './model-reasoning.mjs';
 import { frozenModels } from './frozen-models.mjs';
 import { isStudioRuntimeType } from './runtime-contract.mjs';
 import { DSH_MANIFEST_FORMAT } from './managed-runtime-manifest.mjs';
@@ -68,7 +67,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
       modelOrigins = Object.fromEntries(models.flatMap(model => {
         const origin = manifest.resources.profiles.find(item => item.id === model.profileId);
         return origin?.connectionId || origin?.baseUrl
-          ? [[model.id, { id: dshModelRoute(origin), name: providerDisplayName(origin) }]] : [];
+          ? [[model.id, modelPresentationProvider(origin)]] : [];
       }));
       profile = models.find(item => item.default) || models[0];
     } else {

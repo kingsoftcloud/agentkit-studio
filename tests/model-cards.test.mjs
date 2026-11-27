@@ -7,7 +7,7 @@ import { HARNESS_SERVICE_MODEL_PROVIDER } from '../src/model-route.mjs';
 import { createProductClient } from '../src/remote/control-client.mjs';
 import { createModelRoutes } from '../src/host/routes/models.mjs';
 import { createModelCatalogPicker, referenceCard } from '../src/client/pages/model-settings-catalog-picker.mjs';
-import { renderModelCardDetails, renderRadar } from '../src/client/pages/model-card-view.mjs';
+import { renderModelCardDetails, renderModelPreview, renderRadar } from '../src/client/pages/model-card-view.mjs';
 
 // Entries in the shape Xingliu's /v1/models returns them.
 const flash = { id: 'deepseek-v4.1-flash', context_length: '1024k', max_completion_tokens: '384k',
@@ -116,18 +116,18 @@ test('catalog rows render bars, price and multiplier; details render a labelled 
     onPick() {}, manualIds: new Set(), probing: false, reportFor: () => null }));
   assert.match(html, /¥6\.5\/¥27/);
   assert.match(html, /3\.27x/);
-  assert.match(html, /aria-label="编程 Agent 20"/);  // measured in the built-in snapshot
+  assert.match(html, /aria-label="任务完成率 20"/);  // measured in the built-in snapshot
   const unmeasuredRow = html.slice(html.indexOf('aria-label="glm-5.3-flash"'));
   assert.doesNotMatch(unmeasuredRow.slice(0, unmeasuredRow.indexOf('</label>')), /data-studio-model-score-bars/);
   assert.match(html, /模型详情/);
   assert.match(html, /向量 \/ 重排/);
   assert.match(renderToStaticMarkup(renderModelCardDetails(createElement, modelCard(unmeasured))), /暂无评分数据/);
   const radar = renderToStaticMarkup(renderRadar(createElement, { agentic: 95, speed: 45, cost: 53, cache: null, stability: 60, intelligence: 38 }));
-  assert.match(radar, /aria-label="编程 Agent 95，速度 45，性价比 53，缓存友好 暂无数据，稳定性 60，综合能力 38"/);
+  assert.match(radar, /aria-label="任务完成率 95，执行速度 45，成本效率 53，缓存命中 暂无数据，稳定性 60，综合能力 38"/);
   assert.doesNotMatch(radar, /<polygon[^>]+ms-card-radar-shape/);
 });
 
-test('chat selector label: name, price and measured scores; trigger stays name-only', async () => {
+test('chat selector keeps options compact and supplies a separate accessible model preview', async () => {
   const { createModelCardIndex, modelLabel } = await import('../src/client/dsh/model-label.mjs');
   let loads = 0;
   const provider = 'agentkit-studio-fixture';
@@ -139,25 +139,27 @@ test('chat selector label: name, price and measured scores; trigger stays name-o
   assert.equal(loads, 1);
   const option = renderToStaticMarkup(modelLabel(createElement, Tag, index.card(provider, flash.id), { id: flash.id, name: flash.id }, 'option'));
   assert.match(option, /DeepSeek V4\.1 Flash/);
-  assert.match(option, /¥2\/¥8/);
-  assert.match(option, /data-studio-model-score-bars="true".*编程 60.*速度 80/);
-  const live = modelCard(flash, { live: { scores: { agentic: 95, speed: 87, cost: 72, cache: 62, stability: 91, intelligence: 80 } } });
-  const scoredOption = renderToStaticMarkup(modelLabel(createElement, Tag, live, { id: flash.id }, 'option'));
-  assert.match(scoredOption, /编程 95.*速度 87.*性价比 72.*缓存友好 62.*稳定性 91.*综合能力 80/);
+  assert.doesNotMatch(option, /¥2|model-score-bars/);
+  const live = modelCard(flash, { reasoningLevels: ['high'],
+    live: { scores: { agentic: 95, speed: 87, cost: 72, cache: 62, stability: 91, intelligence: 80 } } });
+  const preview = renderToStaticMarkup(renderModelPreview(createElement, Tag, live));
+  assert.match(preview, /aria-label="任务完成率 95，执行速度 87，成本效率 72，缓存命中 62，稳定性 91，综合能力 80"/);
+  assert.match(preview, /¥2\/¥8.*每百万 tokens/);
+  assert.match(preview, /推理/);
   const trigger = renderToStaticMarkup(modelLabel(createElement, Tag, index.card(provider, flash.id), { id: flash.id, name: flash.id }, 'trigger'));
   assert.match(trigger, /DeepSeek V4\.1 Flash/);
   assert.doesNotMatch(trigger, /¥|model-score-bars/);
-  assert.equal(index.card('codex', flash.id).pricing, undefined);
-  assert.equal(index.card(HARNESS_SERVICE_MODEL_PROVIDER, flash.id).pricing, undefined);
+  assert.equal(index.card('codex', flash.id).pricing, null);
+  assert.equal(index.card(HARNESS_SERVICE_MODEL_PROVIDER, flash.id).pricing, null);
   const other = renderToStaticMarkup(modelLabel(createElement, Tag, index.card('codex', 'kimi-k2.7-code'), { id: 'kimi-k2.7-code' }, 'option'));
-  assert.match(other, /Kimi K2\.7 Code/); assert.match(other, /编程 20/); assert.doesNotMatch(other, /¥/);
+  assert.match(other, /Kimi K2\.7 Code/); assert.doesNotMatch(other, /任务完成率 20/); assert.doesNotMatch(other, /¥/);
   const unknown = renderToStaticMarkup(modelLabel(createElement, Tag, index.card('codex', 'gpt-5.4'), { id: 'gpt-5.4', name: 'GPT-5.4' }, 'option'));
   assert.doesNotMatch(unknown, /编程|¥/);
 });
 
 test('radar and price comparisons omit invalid values instead of rendering them', () => {
   const radar = renderToStaticMarkup(renderRadar(createElement, { agentic: NaN, speed: 150, cost: -25 }));
-  assert.match(radar, /编程 Agent 暂无数据，速度 100，性价比 0/);
+  assert.match(radar, /任务完成率 暂无数据，执行速度 100，成本效率 0/);
   assert.doesNotMatch(radar, /NaN|Infinity/);
   const price = (input, output) => ({ pricing: { currency: 'USD', input, output } });
   assert.equal(priceMultiplier(price(1, 1), price(0, 0)), null);

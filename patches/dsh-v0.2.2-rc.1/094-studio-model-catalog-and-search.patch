@@ -1,0 +1,289 @@
+diff --git a/packages/api/session-controller/src/catalog.ts b/packages/api/session-controller/src/catalog.ts
+index 18ae4488538478def7287a0fe7234cd8f2d88d10..ca0147b75a412d6dc637017d7cb0c0ee175aca84 100644
+--- a/packages/api/session-controller/src/catalog.ts
++++ b/packages/api/session-controller/src/catalog.ts
+@@ -24,7 +24,9 @@ export async function buildModelCatalog(
+   const providers = ctx.llm.listProviders()
+   const catalog = await Promise.all(providers.map(async (provider) => {
+     try {
+-      const models = await ctx.llm.listModels(provider.id)
++      const models = (await ctx.llm.listModels(provider.id)).filter(model =>
++        !['auto-cost', 'auto-balance', 'auto-quality'].includes(model.id)
++        || provider.id !== 'routemind-auto' && !/^RouteMind(?:\s|$)/i.test(provider.name))
+       const entries = await Promise.all(models.map(async (model) => {
+         const resolved = await ctx.llm.resolveModelInfo(provider.id, model.id)
+         const reasoning: ModelReasoning | undefined = resolved.reasoning === undefined
+@@ -39,11 +41,14 @@ export async function buildModelCatalog(
+               ? {}
+               : { defaultEffort: resolved.reasoning.defaultEffort }),
+           }
++        const inputModalities = resolved.inputModalities ?? model.inputModalities
+         return {
+           id: model.id,
+           name: model.name,
+           ...(model.description === undefined ? {} : { description: model.description }),
+           ...(model.presentationProvider === undefined ? {} : { presentationProvider: model.presentationProvider }),
++          ...(inputModalities === undefined ? {} : { inputModalities }),
++          ...(resolved.context === undefined ? {} : { contextWindow: resolved.context.contextWindow }),
+           ...(reasoning === undefined ? {} : { reasoning }),
+           ...(model.badge === undefined ? {} : { badge: model.badge }),
+         }
+diff --git a/packages/api/session-controller/src/types.ts b/packages/api/session-controller/src/types.ts
+index afa5d65d69288fce87d00d439edb847118a0a80d..02675264f0bab9c8564ef63e44b6da0f27425069 100644
+--- a/packages/api/session-controller/src/types.ts
++++ b/packages/api/session-controller/src/types.ts
+@@ -112,6 +112,8 @@ export interface ModelCatalogModel {
+   readonly name: string
+   readonly description?: string
+   readonly presentationProvider?: { readonly id: string; readonly name: string }
++  readonly inputModalities?: readonly string[]
++  readonly contextWindow?: number
+   readonly reasoning?: ModelReasoning
+   /** Provider-authored label shown beside the name; display data only. */
+   readonly badge?: LlmModelBadge
+diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/packages/client/ui-model-selection/src/client/ModelSelect.tsx
+index cd72e94b73cd88cc16f637aaff80c0fa8cb62f5c..cf451c8be988243b28ee9ea30fe75ff9590126ce 100644
+--- a/packages/client/ui-model-selection/src/client/ModelSelect.tsx
++++ b/packages/client/ui-model-selection/src/client/ModelSelect.tsx
+@@ -60,10 +60,18 @@ export function presentationGroups(groups: readonly ModelProviderGroup[], select
+   const output = new Map<string, { provider: { id: string; name: string }
+     rows: Map<string, ModelProviderGroup['models'][number] & {
+       route: { id: string; name: string }
++      direct: boolean
+     }> }>()
++  const hasOfficialDeepSeek = groups.some(group => group.id === 'deepseek-official'
++    || group.models.some(model => model.presentationProvider?.id === 'deepseek-official'))
+   for (const group of groups) {
+     for (const model of group.models) {
+-      const provider = model.presentationProvider ?? { id: group.id, name: group.name }
++      const provider = model.presentationProvider ?? (
++        (group.id === 'deepseek-official' || group.id === 'deepseek-account' && hasOfficialDeepSeek) ? { id: 'deepseek-official', name: 'DeepSeek 官方' }
++          : group.id === 'agentkit-studio-harness-service' || group.id === 'agentkit-studio-cloud'
++            ? { id: 'unknown-upstream', name: '来源未标明' }
++            : { id: group.id, name: group.name }
++      )
+       let display = output.get(provider.id)
+       if (display === undefined) {
+         display = { provider, rows: new Map() }
+@@ -72,8 +80,11 @@ export function presentationGroups(groups: readonly ModelProviderGroup[], select
+       const previous = display.rows.get(model.id)
+       const current = selected?.provider === group.id && selected.model === model.id
+       const previousCurrent = selected?.provider === previous?.route.id && selected?.model === model.id
+-      if (previous === undefined || current || !previousCurrent && previous.route.id !== provider.id && group.id === provider.id) {
+-        display.rows.set(model.id, { ...model, route: { id: group.id, name: group.name } })
++      const direct = model.presentationProvider === undefined || group.id === provider.id
++        || group.id.startsWith('agentkit-studio-') && group.id !== 'agentkit-studio-harness-service'
++          && group.id !== 'agentkit-studio-cloud'
++      if (previous === undefined || current || !previousCurrent && direct && !previous.direct) {
++        display.rows.set(model.id, { ...model, route: { id: group.id, name: group.name }, direct })
+       }
+     }
+   }
+@@ -164,7 +175,9 @@ export function ModelSelect(
+   const selectedIndex = state.current === null
+     ? -1
+     : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
+-  const currentChoice = choices[selectedIndex]
++  const currentChoice = choices[selectedIndex] ?? (state.current?.provider === 'routemind-auto'
++    ? choices.find(choice => choice.selection.provider === 'routemind-auto' && choice.selection.model === 'auto')
++    : undefined)
+   const reasoning = currentChoice?.model.reasoning
+   const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
+   const effortLabel = currentChoice === undefined
+diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
+index d1455a42830f5d47796de20cce9bf46bb0b09c49..661f54c7a1fe62852625bf6f8f81c771ed33281d 100644
+--- a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
++++ b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
+@@ -1135,3 +1135,21 @@ it('groups hosted aliases with their upstream without combining distinct provide
+   expect(selected.map(group => group.models.map(row => row.route.id))).toEqual([['workspace'], ['official']])
+   expect(presentationGroups(groups, null)[0]?.models[0]?.route.id).toBe('starflow')
+ })
++
++
++it('keeps one choice per supplier and preserves an already-selected runtime route', () => {
++  const model = { id: 'deepseek-flash', name: 'DeepSeek Flash' }
++  const starflow = { ...model, presentationProvider: { id: 'starflow', name: '星流' } }
++  const groups = [
++    { id: 'agentkit-studio-harness-service', name: 'Harness', models: [starflow] },
++    { id: 'agentkit-studio-ksyun-key', name: '金山云模型服务', models: [starflow] },
++    { id: 'deepseek-official', name: 'DeepSeek', models: [model] },
++    { id: 'deepseek-account', name: 'DeepSeek account', models: [model] },
++  ]
++  const next = presentationGroups(groups, null)
++  expect(next.map(group => group.provider.name)).toEqual(['星流', 'DeepSeek 官方'])
++  expect(next.map(group => group.models.map(row => row.route.id)))
++    .toEqual([['agentkit-studio-ksyun-key'], ['deepseek-official']])
++  expect(presentationGroups(groups, { provider: 'agentkit-studio-harness-service', model: model.id })[0]?.models[0]?.route.id)
++    .toBe('agentkit-studio-harness-service')
++})
+diff --git a/packages/llm/llm-pi-ai/src/adapter.ts b/packages/llm/llm-pi-ai/src/adapter.ts
+index bdd0fa9c3f3223c5464d80269319848a42dabb82..786523f7d7a909fe30aeddee5fbaeeb72690470f 100644
+--- a/packages/llm/llm-pi-ai/src/adapter.ts
++++ b/packages/llm/llm-pi-ai/src/adapter.ts
+@@ -345,12 +345,18 @@ export class PiAiAdapter extends LlmAdapter {
+         if (error instanceof LlmError && error.code === 'MISSING_CREDENTIAL') return []
+         throw error
+       }
+-      return snapshot.models.getModels(provider).map(model => ({
+-        provider,
+-        id: model.id,
+-        name: model.name,
+-        inputModalities: [...model.input],
+-      }))
++      return snapshot.models.getModels(provider).map(model => {
++        const hostname = URL.canParse(model.baseUrl) ? new URL(model.baseUrl).hostname : ''
++        const upstream = hostname === 'kspmas.ksyun.com' ? { id: 'starflow', name: '星流' }
++          : hostname === 'api.deepseek.com' ? { id: 'deepseek-official', name: 'DeepSeek 官方' } : undefined
++        return {
++          provider,
++          id: model.id,
++          name: model.name,
++          inputModalities: [...model.input],
++          ...upstream === undefined ? {} : { presentationProvider: upstream },
++        }
++      })
+     })
+   }
+ 
+diff --git a/packages/web/tool-web/src/search.ts b/packages/web/tool-web/src/search.ts
+index 2ed64e18182410106f4ebfba0070337bef9bc4fe..6d53a4ffc5f54578cf29a9d4d8e95e2230d03bfb 100644
+--- a/packages/web/tool-web/src/search.ts
++++ b/packages/web/tool-web/src/search.ts
+@@ -266,9 +266,10 @@ async function runSearchQueries(
+   queries: string[],
+   maxResults: number,
+   signal: AbortSignal,
++  model?: { provider: string; model: string },
+ ): Promise<WebSearchResult> {
+   if (queries.length === 1) {
+-    return ctx.web.search({ query: queries[0] as string, maxResults }, signal)
++    return ctx.web.search({ query: queries[0] as string, maxResults }, signal, model)
+   }
+   const controller = new AbortController()
+   const batchSignal = AbortSignal.any([signal, controller.signal])
+@@ -276,7 +277,7 @@ async function runSearchQueries(
+   const results: WebSearchResult[] = []
+   const searches = queries.map(async (query, index) => {
+     try {
+-      results[index] = await ctx.web.search({ query, maxResults }, batchSignal)
++      results[index] = await ctx.web.search({ query, maxResults }, batchSignal, model)
+     } catch (error) {
+       if (firstFailure === undefined) firstFailure = { error }
+       controller.abort(error)
+@@ -402,7 +403,7 @@ export function applyWebSearchTool(
+     isConcurrencySafe: () => true,
+     async execute(args, exec) {
+       const queries = parseSearchArgs(args, maxQueries)
+-      const result = await runSearchQueries(ctx, queries, maxResults, exec.signal)
++      const result = await runSearchQueries(ctx, queries, maxResults, exec.signal, exec.agent?.session?.requestContext?.())
+       return {
+         ...result.content !== undefined ? { content: result.content } : {},
+         sources: result.sources.map(source => modelSource(source, summaryMaxChars)),
+@@ -411,5 +412,5 @@ export function applyWebSearchTool(
+     },
+     presentCall: presentSearchCall,
+     presentResult: (args, result) => presentSearchResult(args, result),
+-  }), { when: ({ modelSelection }) => ctx.web.searchReady(modelSelection.provider) })
++  }), { when: ({ modelSelection }) => ctx.web.searchReady(modelSelection.provider, modelSelection.model) })
+ }
+diff --git a/packages/web/web/src/index.ts b/packages/web/web/src/index.ts
+index 2dfe5b3ca83b77ad5e11862fca9349a54838b421..26cec2242b929fe7f2c5976151f1bc9e53e288e2 100644
+--- a/packages/web/web/src/index.ts
++++ b/packages/web/web/src/index.ts
+@@ -38,6 +38,17 @@ declare module '@deepseek-ai/cordis' {
+   }
+ }
+ 
++/** Exact model route that admitted a model-backed search. */
++export interface WebSearchModel {
++  readonly provider: string
++  readonly model: string
++}
++
++type ModelSearch = (
++  request: WebSearchRequest, signal?: AbortSignal,
++) => Promise<WebSearchResult>
++type ResolveModelSearch = (model: WebSearchModel) => Promise<ModelSearch | undefined>
++
+ /** Selection inputs for execution-time provider resolution. */
+ interface Selection<P> {
+   /** The configured provider id for this capability, if any. */
+@@ -84,6 +95,7 @@ export class WebRuntime extends Service {
+     fetchProvider: z.string().volatile(),
+   })
+ 
++  private readonly modelSearch = new Set<ResolveModelSearch>()
+   private searchProviders = new Map<string, WebSearchProvider>()
+   private fetchProviders = new Map<string, WebFetchProvider>()
+   private readonly searchProviderEnv: string | undefined
+@@ -106,6 +118,15 @@ export class WebRuntime extends Service {
+     return this.registerProvider(this.searchProviders, provider)
+   }
+ 
++  /** Register an effect-scoped search for requests backed by a specific model. */
++  registerModelSearch(resolve: ResolveModelSearch): () => void {
++    if (this.modelSearch.size !== 0) {
++      throw new WebError('a model search resolver is already registered', 'WEB_DUPLICATE_PROVIDER')
++    }
++    this.modelSearch.add(resolve)
++    return () => { this.modelSearch.delete(resolve) }
++  }
++
+   /**
+    * Register a fetch provider. Throws {@link WebError} `WEB_DUPLICATE_PROVIDER`
+    * if its id is already registered for fetch. Returns a disposer; disposed
+@@ -139,8 +160,12 @@ export class WebRuntime extends Service {
+    * @param signal - optional cancellation signal forwarded to the provider.
+    * @returns the provider's results, capped to `request.maxResults`.
+    */
+-  async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
+-    const result = await this.selectSearchProvider().search(request, signal)
++  async search(request: WebSearchRequest, signal?: AbortSignal, model?: WebSearchModel): Promise<WebSearchResult> {
++    const search = model === undefined ? undefined : await this.modelSearch.values().next().value?.(model)
++    signal?.throwIfAborted()
++    const result = search === undefined
++      ? await this.selectSearchProvider().search(request, signal)
++      : await search(request, signal)
+     return capSources(result, request.maxResults)
+   }
+ 
+@@ -152,7 +177,9 @@ export class WebRuntime extends Service {
+    * @param llmProvider - the provider route id of the model request, when known.
+    * @returns false only when the selected provider reports that it cannot authenticate.
+    */
+-  async searchReady(llmProvider?: string): Promise<boolean> {
++  async searchReady(llmProvider?: string, model?: string): Promise<boolean> {
++    if (llmProvider !== undefined && model !== undefined
++      && await this.modelSearch.values().next().value?.({ provider: llmProvider, model }) !== undefined) return true
+     return await selectedProviderReady(() => this.selectSearchProvider(), llmProvider)
+   }
+ 
+diff --git a/packages/web/web/tests/web.spec.ts b/packages/web/web/tests/web.spec.ts
+index 694df9b85f05c41f735df59d84d10fa2fff0db43..a994c714b7d0c46a58bba09bad82c1dd5461bc6b 100644
+--- a/packages/web/web/tests/web.spec.ts
++++ b/packages/web/web/tests/web.spec.ts
+@@ -76,6 +76,24 @@ describe('WebRuntime registration', () => {
+ })
+ 
+ describe('WebRuntime execution resolution', () => {
++  it('adopts model search for the exact model in the new session and keeps the configured provider for other models', async () => {
++    const { web } = await mountWeb()
++    web.registerSearchProvider({
++      ...makeSearchProvider('default', available, () => Promise.resolve(searchResult('default'))),
++      ready: () => Promise.resolve(false),
++    })
++    const dispose = web.registerModelSearch(async ({ provider, model }) =>
++      provider === 'starflow' && model === 'flash' ? async ({ query }) => searchResult(query) : undefined)
++    await expect(web.searchReady('starflow', 'flash')).resolves.toBe(true)
++    await expect(web.searchReady('other', 'flash')).resolves.toBe(false)
++    await expect(web.search({ query: 'route lookup' }, undefined, { provider: 'starflow', model: 'flash' }))
++      .resolves.toMatchObject({ content: 'route lookup' })
++    await expect(web.search({ query: 'other lookup' }, undefined, { provider: 'other', model: 'flash' }))
++      .resolves.toMatchObject({ content: 'default' })
++    dispose()
++    await expect(web.searchReady('starflow', 'flash')).resolves.toBe(false)
++  })
++
+   it('throws WEB_PROVIDER_UNAVAILABLE when nothing is registered', async () => {
+     const { web } = await mountWeb()
+     await expect(web.search({ query: 'q' })).rejects.toThrow(expect.objectContaining({ code: 'WEB_PROVIDER_UNAVAILABLE' }))

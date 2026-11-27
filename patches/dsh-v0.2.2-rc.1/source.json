@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "969e26b1e0970a1e66f3bcddb0f0c984cf27b2b8",
+  "headCommit": "02b6e9e4129ba9b93025c68d56cadfe725c4779a",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "b892e5b968104e7736eb82df9ed432c9a5f76cf4",
-  "sourceSha256": "1ad142ab958ed1a0dae03c2ef6855e33a29e2d2e754b67f9421e29cc774a8b2b",
+  "tree": "545e4bf7c3c7eae518d8da26a193321275cc1ce8",
+  "sourceSha256": "11e2a107a1f9ddd35a0bc09ed6abe1f11317a677588c2050f6538b07e3a79c22",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "d66538a5979df6210d28f6d502dcf4b4103126477489a1b1115ab31c4aabf0f0"
+    "sha256": "27b5950d27f37b0c940cb91710d8f0b1055a50a76eeb960159383c1759725b47"
   },
   "commits": [
     {
@@ -382,6 +382,12 @@
       "file": "093-studio-model-upstream-presentation.patch",
       "commit": "969e26b1e0970a1e66f3bcddb0f0c984cf27b2b8",
       "sha256": "c7af61b5c8d2a1741db55b3a3b9a4852c1978c8e6e9000b6f4b57a311b5eaad2"
+    },
+    {
+      "id": "094",
+      "file": "094-studio-model-catalog-and-search.patch",
+      "commit": "02b6e9e4129ba9b93025c68d56cadfe725c4779a",
+      "sha256": "eb1976244c1ab32641566105601217cc5a644c73ea5830a9906121e02126ec21"
     }
   ]
 }

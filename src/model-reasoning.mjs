@@ -1,3 +1,5 @@
+import { dshModelRoute } from './model-route.mjs';
+
 /**
  * Studio's reasoning-effort declaration, shared by the client model bridge,
  * the portable import bridge and the local Harness request path.
@@ -126,6 +128,17 @@ const PROVIDER_DISPLAY_NAMES = Object.freeze({
 export function providerDisplayName(profile = {}) {
   const provider = String(profile.provider || 'custom').trim() || 'custom';
   return String(profile.connectionName || '').trim() || PROVIDER_DISPLAY_NAMES[provider] || provider;
+}
+
+/** Display identity comes from the configured upstream, never the Agent runtime. */
+export function modelPresentationProvider(profile) {
+  if (!profile) return undefined;
+  const hostname = URL.canParse(profile.baseUrl) ? new URL(profile.baseUrl).hostname : '';
+  if (hostname === 'kspmas.ksyun.com') return { id: 'starflow', name: '星流' };
+  if (hostname === 'api.deepseek.com') return { id: 'deepseek-official', name: 'DeepSeek 官方' };
+  return profile.baseUrl || profile.connectionId
+    ? { id: dshModelRoute(profile), name: providerDisplayName(profile) }
+    : undefined;
 }
 
 /**

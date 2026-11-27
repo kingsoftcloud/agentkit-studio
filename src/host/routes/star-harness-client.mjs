@@ -1,12 +1,11 @@
 import { readFile } from 'node:fs/promises';
-import { STAR_HARNESS_INTRODUCTION_PATH } from '../../star-harness-detail.mjs';
+import { ROUTEMIND_INTRODUCTION_PATH, STAR_HARNESS_INTRODUCTION_PATH } from '../../star-harness-detail.mjs';
 
-const introductionFile = new URL('../../../assets/star-harness-introduction.jpg', import.meta.url);
-
-export function registerStarHarnessIntroductionRoute(ctx) {
+function registerIntroductionImage(ctx, path, file) {
+  const introductionFile = new URL('../../../assets/' + file, import.meta.url);
   let image;
   ctx.connection.fetch.register({
-    path: STAR_HARNESS_INTRODUCTION_PATH, methods: ['GET', 'HEAD'], requestBody: 'buffered',
+    path, methods: ['GET', 'HEAD'], requestBody: 'buffered',
     async fetch(request) {
       image ??= await readFile(introductionFile);
       return new Response(request.method === 'HEAD' ? null : image, { headers: {
@@ -15,6 +14,14 @@ export function registerStarHarnessIntroductionRoute(ctx) {
       } });
     },
   });
+}
+
+export function registerStarHarnessIntroductionRoute(ctx) {
+  registerIntroductionImage(ctx, STAR_HARNESS_INTRODUCTION_PATH, 'star-harness-introduction.jpg');
+}
+
+export function registerRouteMindIntroductionRoute(ctx) {
+  registerIntroductionImage(ctx, ROUTEMIND_INTRODUCTION_PATH, 'routemind-introduction.jpg');
 }
 
 export const STAR_HARNESS_CLIENT_PATH = '/api/agentkit.star-harness.client.mjs';
