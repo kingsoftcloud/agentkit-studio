@@ -204,7 +204,8 @@ export function createStarHarnessManager({ root, env, externalRoutes, profile, s
       const bindings = activeBindings().filter(binding => binding.model === model);
       const origins = bindings.map(binding => configuredProfile(binding.profileId));
       const origin = origins[0];
-      const presentationProvider = origin && origins.every(profile => profile && dshModelRoute(profile) === dshModelRoute(origin))
+      const presentationProvider = (origin?.baseUrl || origin?.connectionId)
+        && origins.every(profile => (profile?.baseUrl || profile?.connectionId) && dshModelRoute(profile) === dshModelRoute(origin))
         ? { id: dshModelRoute(origin), name: providerDisplayName(origin) } : null;
       const declared = presentationProvider && studioReasoning(origin);
       const reasoning = declared && origins.every(profile => JSON.stringify(studioReasoning(profile)) === JSON.stringify(declared))

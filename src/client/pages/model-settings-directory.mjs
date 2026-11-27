@@ -1,10 +1,35 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
+import { dshModelRoute } from '../../model-route.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
 import { renderModelScoreBars } from './model-card-view.mjs';
 import { priceText } from '../../model-cards.mjs';
 import { profileKey } from './model-settings-profiles.mjs';
 import { catalogItems, createModelCatalogPicker, matchingModels } from './model-settings-catalog-picker.mjs';
+
+export function useModelSettingsCards({ useState, useEffect, hostRemote, window }) {
+  const [routeMindCards, setRouteMindCards] = useState(null);
+  useEffect(() => {
+    if (typeof hostRemote.modelCards !== 'function') return;
+    let revision = 0;
+    const refresh = () => {
+      const current = ++revision;
+      void hostRemote.modelCards().then(value => {
+        if (current === revision) setRouteMindCards(value?.enabled ? value : null);
+      }).catch(() => { if (current === revision) setRouteMindCards(null); });
+    };
+    refresh();
+    window.addEventListener('agentkit-studio:routemind-changed', refresh);
+    window.addEventListener('agentkit-studio:model-credential-changed', refresh);
+    return () => {
+      revision++;
+      window.removeEventListener('agentkit-studio:routemind-changed', refresh);
+      window.removeEventListener('agentkit-studio:model-credential-changed', refresh);
+    };
+  }, []);
+  return profile => routeMindCards?.cardsByProvider?.[dshModelRoute(profile)]?.[profile.modelName]
+    ?? (routeMindCards?.sharedScores?.[profile.modelName] ? { scores: routeMindCards.sharedScores[profile.modelName] } : null);
+}
 
 function connectionAddressLabel({ address }) {
   if (!address) return '未填写 API 地址';

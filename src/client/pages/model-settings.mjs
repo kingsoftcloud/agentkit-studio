@@ -6,15 +6,14 @@ import { lookupModelCapabilities, setModelCapabilityCatalog } from '../../model-
 import { renderCapabilitySummary, applicableProbeLevels, createApplyProbeLevels, renderRemoveButton, saveFailureMessage, applyProfilesWithRollback, createProbeAllJobs, applyAllProbeResults, createProbeAll, renderCloudField } from './model-settings-capability.mjs';
 import { profileKey, headerRowId, headerRows, headerRecord, headerRowProblem, stableString, clearModelEffortRange,
   normalizedConnectionAddress, connectionIdentity, modelConnections, connectionSource, BUDGET_KEYS, budgetDraft, modelProfilePayload } from './model-settings-profiles.mjs';
-import { createModelSettingsDirectory } from './model-settings-directory.mjs';
+import { createModelSettingsDirectory, useModelSettingsCards } from './model-settings-directory.mjs';
 import { createUseEffortProbe, REASONING_LABELS, renderModelEffortSettings } from './model-settings-effort-probe.mjs';
 import { bindProviders, checkImportedWires, clearProviderDrafts, importedProfiles, keepDefaultModel, providerDraftCount,
   providerMetadata, rememberProviders, restoreProviders, updateProvider } from './model-provider-drafts.mjs';
 import { modelReasoningConfig, reasoningProfileFor, studioReasoning } from '../../model-reasoning.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import modelSettingsStyles from '../styles/model-settings.css.mjs';
-import { dshModelRoute } from '../../model-route.mjs';
-import { renderRadar } from './model-card-view.mjs';
+import { renderProfileScores } from './model-card-view.mjs';
 import modelCardStyles from '../styles/model-card.css.mjs';
 
 /** The settings sheet is a document-level asset shared by every mount. */
@@ -673,27 +672,7 @@ export function createModelSettingsSection({
       await stageProviderChanges(form.providers.filter(provider => provider.id !== group.id), remaining);
       return true;
     };
-    const [routeMindCards, setRouteMindCards] = useState(null);
-    useEffect(() => {
-      if (typeof hostRemote.modelCards !== 'function') return;
-      let revision = 0;
-      const refresh = () => {
-        const current = ++revision;
-        void hostRemote.modelCards().then(value => {
-          if (current === revision) setRouteMindCards(value?.enabled ? value : null);
-        }).catch(() => { if (current === revision) setRouteMindCards(null); });
-      };
-      refresh();
-      window.addEventListener('agentkit-studio:routemind-changed', refresh);
-      window.addEventListener('agentkit-studio:model-credential-changed', refresh);
-      return () => {
-        revision++;
-        window.removeEventListener('agentkit-studio:routemind-changed', refresh);
-        window.removeEventListener('agentkit-studio:model-credential-changed', refresh);
-      };
-    }, []);
-    const cardForProfile = profile => routeMindCards?.cardsByProvider?.[dshModelRoute(profile)]?.[profile.modelName]
-      ?? (routeMindCards?.sharedScores?.[profile.modelName] ? { scores: routeMindCards.sharedScores[profile.modelName] } : null);
+    const cardForProfile = useModelSettingsCards({ useState, useEffect, hostRemote, window });
     const modelDirectory = useModelSettingsDirectory({
       cardForProfile,
       status, saving, connections, profileCount: profiles.length, drafts, stageModels, stageProvider, saveProvider, removeProvider,
@@ -808,7 +787,6 @@ export function createModelSettingsSection({
 
     const credentialUsage = profiles.filter(profile => profile.credentialName === selected.credentialName).length;
     const separateCredential = () => ({ credentialName: modelCredentialName({ id: newProfileId() }), apiKey: '' });
-    const selectedCard = cardForProfile(selected);
     const detail = h('article', {
       className: 'ms-detail',
       'data-model-profile-card': selected.id || selectedIndex,
@@ -836,9 +814,7 @@ export function createModelSettingsSection({
         simple ? null : reasoningField),
       simple ? null : capacitySummary,
       simple ? null : capability,
-      selectedCard?.scores ? h('section', { className: 'ms-card-scores', 'aria-label': '模型维度评分' },
-        renderRadar(h, selectedCard.scores.values),
-        h('p', { className: 'ms-card-note' }, selectedCard.scores.source)) : null,
+      renderProfileScores(h, cardForProfile(selected)),
       mode !== 'cloud' ? h('details', { className: 'ms-advanced', 'data-model-connection': true },
         h('summary', null, '连接'),
       h('div', { className: 'ms-editor-section-head' },

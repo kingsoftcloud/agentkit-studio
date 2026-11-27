@@ -74,6 +74,13 @@ export function renderRadar(h, values) {
     }));
 }
 
+export function renderProfileScores(h, card) {
+  if (!card?.scores) return null;
+  return h('section', { className: 'ms-card-scores', 'aria-label': '模型维度评分' },
+    renderRadar(h, card.scores.values),
+    h('p', { className: 'ms-card-note' }, card.scores.source));
+}
+
 function section(h, title, ...children) {
   return h('section', { className: 'ms-card-section' }, h('h4', { className: 'ms-card-heading' }, title), ...children);
 }
