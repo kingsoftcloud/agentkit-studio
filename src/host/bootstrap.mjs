@@ -402,31 +402,40 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     nativeEngineRuntime,
     hostWebSearch: async (agent, { provider, model }, workspaceModelProfile) => {
       const settings = await models.settings();
-      let endpoint;
-      try { endpoint = webSearchEndpoint(settings.webSearchBaseUrl); } catch { /* A stale profile value must not prevent a turn. */ }
-      if (endpoint) return async (query, maxResults, signal) => {
-        const result = await webSearch({ fetch: hostFetch, providerConfig: { provider: 'http', baseUrl: endpoint },
-          query, maxResults, signal });
-        if (!result.ok) throw Object.assign(new Error('搜索 API 调用失败'), { code: result.error_type });
-        return { sources: result.results };
-      };
-      const web = agent.ctx?.get?.('web') ?? ctx.get('web');
-      const ready = await Promise.resolve().then(() => web?.searchReady(provider)).catch(() => false);
-      if (ready) {
-        const owners = agent.ctx?.get?.('agents') ?? ctx.get('agents');
-        return (query, maxResults, signal) => {
-          const search = () => web.search({ query, maxResults }, signal);
-          return owners ? owners.withInitiator(agent, search) : search();
-        };
-      }
-      const profile = workspaceModelProfile ?? await (async () => {
+      const profile = workspaceModelProfile ?? await Promise.resolve().then(() => {
         const selected = provider === HARNESS_SERVICE_MODEL_PROVIDER
           ? starHarness?.summaryProfile(agent.session?.header?.cwd, model)
           : (settings.modelProfiles || []).find(item => item.enabled !== false
             && item.modelName === model && dshModelRoute(item) === provider);
         return selected && models.profile(selected.id);
-      })().catch(() => null);
-      return starflowWebSearch(profile);
+      }).catch(() => null);
+      const nativeSearch = starflowWebSearch(profile);
+      let endpoint;
+      try { endpoint = webSearchEndpoint(settings.webSearchBaseUrl); } catch { /* A stale profile value must not prevent a turn. */ }
+      const web = agent.ctx?.get?.('web') ?? ctx.get('web');
+      let configuredSearch;
+      if (endpoint) {
+        configuredSearch = async (query, maxResults, signal) => {
+          const result = await webSearch({ fetch: hostFetch, providerConfig: { provider: 'http', baseUrl: endpoint },
+            query, maxResults, signal });
+          if (!result.ok) throw Object.assign(new Error('搜索 API 调用失败'), { code: result.error_type });
+          return { sources: result.results };
+        };
+      } else if (await Promise.resolve().then(() => web?.searchReady(provider)).catch(() => false)) {
+        configuredSearch = (query, maxResults, signal) => {
+          const owners = agent.ctx?.get?.('agents') ?? ctx.get('agents');
+          const search = () => web.search({ query, maxResults }, signal);
+          return owners ? owners.withInitiator(agent, search) : search();
+        };
+      }
+      if (!nativeSearch || !configuredSearch) return nativeSearch ?? configuredSearch;
+      return async (query, maxResults, signal) => {
+        try { return await nativeSearch(query, maxResults, signal); }
+        catch (error) {
+          if (signal?.aborted || !['starflow_search_rejected', 'starflow_search_not_performed'].includes(error?.code)) throw error;
+          return configuredSearch(query, maxResults, signal);
+        }
+      };
     },
     // The permission picker (local, Studio cloud and Hosted UI) converges on the
     // Session preset; read it here so Codex's own sandbox follows the picker.
