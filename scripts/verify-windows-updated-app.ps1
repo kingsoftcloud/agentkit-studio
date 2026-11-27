@@ -82,6 +82,18 @@ do {
 if(-not $skill -or $skill.Current.IsOffscreen) {throw 'Updated Skill tab is unavailable'}
 $bounds=$skill.Current.BoundingRectangle
 [UpdatedStudioWindow]::Click($app.MainWindowHandle,$bounds.X+$bounds.Width/2,$bounds.Y+$bounds.Height/2)
+# Skill opens its catalog first. The source filter belongs to the installed view.
+$resourceDeadline=(Get-Date).AddSeconds(60)
+$installedCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'已安装 / 已连接')
+do {
+ $installed=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$installedCondition)
+ if($installed -and -not $installed.Current.IsOffscreen) {break}
+ Start-Sleep -Milliseconds 500
+} while((Get-Date) -lt $resourceDeadline)
+if(-not $installed -or $installed.Current.IsOffscreen) {throw 'Updated installed resources view is unavailable'}
+$bounds=$installed.Current.BoundingRectangle
+[UpdatedStudioWindow]::Click($app.MainWindowHandle,$bounds.X+$bounds.Width/2,$bounds.Y+$bounds.Height/2)
+$resourceDeadline=(Get-Date).AddSeconds(60)
 $sourceCondition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'Skill 来源')
 do {
  $source=$element.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$sourceCondition)
