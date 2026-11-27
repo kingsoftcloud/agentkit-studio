@@ -302,7 +302,7 @@ try {
     await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible({ timeout: pluginControlTimeout });
     await expect(panel.getByText(/执行多步任务|AgentKit 里的多步任务/).first()).toBeVisible({ timeout: pluginControlTimeout });
   }
-  await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible({ timeout: pluginControlTimeout });
+  await expect(panel.getByRole('heading', { name: /^(包含的组件|Components)$/ })).toBeVisible({ timeout: pluginControlTimeout });
   await page.screenshot({ path: join(output, 'plugin-overview.png'), timeout: 60000 });
   await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
   proof.firstPluginControlsMs = Math.round(performance.now() - opened);
