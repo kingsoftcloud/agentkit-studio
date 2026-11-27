@@ -32,6 +32,9 @@ export async function verifyStudioOnboarding(page, screenshotPath) {
     await guide.getByRole('button',{name:'开始设置',exact:true}).click();
     const model=guide.locator('[data-onboarding-mode=model]');
     await expect(model).toBeVisible();
+    // 每张模型卡片把「连接」折叠成 details；提供商、API 地址、API Key 和
+    // 「读取模型」都在里面，不展开就找不到。
+    await model.locator('summary',{hasText:'连接'}).first().click();
     const save=model.getByRole('button',{name:'保存并继续',exact:true});
     await expect(save).toBeEnabled({timeout:90000});
 
