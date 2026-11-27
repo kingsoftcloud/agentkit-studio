@@ -14,7 +14,8 @@ async function loadPi(hostAnchor) {
 
 export function createKsxcDesktopModelAdapter({ LlmAdapter, modelAccess, hostAnchor }) {
   let pi;
-  const describe = model => ({ ...model, inputModalities: ['text'] });
+  const describe = ({ contextWindow, ...model }) => ({ ...model, inputModalities: ['text'],
+    ...(contextWindow ? { context: { contextWindow } } : {}) });
   return new class extends LlmAdapter {
     providerInfo() { return { id: 'ksxc', name: 'KSXC' }; }
     async listModels() { return (await modelAccess.list()).map(describe); }
@@ -26,7 +27,7 @@ export function createKsxcDesktopModelAdapter({ LlmAdapter, modelAccess, hostAnc
       ]);
       const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
       const descriptor = { id: options.model, provider: 'ksxc', name: profile.label, api: profile.protocol, baseUrl: profile.baseUrl, input: ['text'],
-        reasoning: false, contextWindow: 128_000, maxTokens: 8192, cost };
+        reasoning: false, contextWindow: profile.contextWindow ?? 128_000, maxTokens: 8192, cost };
       const piProvider = { ...openAIResponsesApi(), id: 'ksxc', name: 'KSXC', baseUrl: profile.baseUrl,
         getModels: () => [descriptor],
         auth: { apiKey: { name: 'KSXC',

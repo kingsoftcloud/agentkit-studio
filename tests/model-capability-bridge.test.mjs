@@ -63,3 +63,26 @@ test('an Anthropic route carries the version segment DSH appends /messages to', 
   // A gateway that already names its own version keeps it untouched.
   assert.equal(await routeBaseUrl('https://gateway.invalid/v1'), 'https://gateway.invalid/v1');
 });
+
+
+test('DSH preserves validated connection headers and rejects conflicting headers on one route', async () => {
+  const namespaces = [{ ns: DSH_MODEL_SETTINGS_NS, value: { providers: {} } }, { ns: DSH_DEFAULT_MODEL_SETTINGS_NS, value: {} }];
+  const writes = [];
+  const bridge = createModelBridge({ hostRemote: { modelCatalog: async () => ({ items: [] }) } }).createDshModelBridge({
+    remote: { settings: {
+      describe: async () => ({ ok: true, value: { namespaces } }),
+      mutate: async (ns, operations) => { writes.push({ ns, operations }); return { ok: true }; },
+    } },
+  });
+  const first = { ...profile, connectionId: 'fixture', headers: { 'X-Client-Type': ' fixture ' } };
+  const second = { ...profile, id: 'second', modelName: 'second', connectionId: first.connectionId,
+    headers: { 'x-client-type': 'fixture' } };
+  await bridge.applyProfiles({ profiles: [first, second] });
+  const provider = writes.find(write => write.ns === DSH_MODEL_SETTINGS_NS).operations[0].value;
+  assert.deepEqual(provider.headers, { 'X-Client-Type': 'fixture' });
+  assert.equal(provider.models.length, 2);
+  writes.length = 0;
+  await assert.rejects(bridge.applyProfiles({ profiles: [first, { ...second, headers: { 'x-client-type': 'other' } }] }),
+    /同一模型连接的请求头必须一致/);
+  assert.deepEqual(writes, []);
+});
