@@ -1,0 +1,76 @@
+name: Refresh model capability catalog
+
+# models.dev publishes continuously, so a freshness comparison belongs on a
+# timer, not in the pull-request gate: the gate flipped red on its own schedule
+# and failed pull requests that never touched the catalog. This job regenerates
+# the bundled catalog daily and opens the update as its own reviewable pull
+# request, which keeps `main` current without blocking anyone.
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# A manual run while the scheduled one is in flight would race on the branch.
+concurrency:
+  group: model-catalog-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      # The generator only imports Node built-ins and the repository's own
+      # compaction module, so no dependency install is required.
+      # `--if-stale` writes only when the compacted data changed, so an
+      # unchanged upstream leaves the tree clean and opens no pull request.
+      - name: Regenerate the bundled catalog
+        run: node scripts/build-model-catalog.mjs --if-stale
+      - name: Open or update the refresh pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          catalog=src/model-catalog-data/catalog.mjs
+          if git diff --quiet -- "$catalog"; then
+            echo "::notice::model capability catalog is already current"
+            exit 0
+          fi
+          branch=chore/model-catalog-refresh
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$branch"
+          git add "$catalog"
+          git commit -m "chore(studio): refresh the bundled model capability catalog from models.dev"
+          # The branch is owned by this job alone, so a force push keeps one open
+          # pull request instead of accumulating stale refresh branches.
+          git push --force origin "$branch"
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "::notice::updated the open model catalog refresh pull request"
+            exit 0
+          fi
+          gh pr create --base main --head "$branch" \
+            --title "chore(studio): refresh the bundled model capability catalog from models.dev" \
+            --body "$(cat <<'BODY'
+          Automated refresh of `src/model-catalog-data/catalog.mjs` from models.dev.
+
+          The bundled catalog is generated data: the public gate no longer compares
+          it against a live fetch, because models.dev publishes continuously and the
+          comparison failed pull requests that never touched the catalog. This pull
+          request is the reviewable record of each refresh.
+
+          Validation: `node scripts/build-model-catalog.mjs --check` passes against
+          the fetch this commit was generated from.
+          BODY
+          )"
