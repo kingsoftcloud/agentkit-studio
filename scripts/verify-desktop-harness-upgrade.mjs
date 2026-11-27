@@ -298,11 +298,16 @@ try {
     const image = panel.getByRole('img', { name: /金山云自研 Agent 运行框架/ });
     await expect(image).toBeVisible({ timeout: pluginControlTimeout });
     await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+    // The detail page belongs to the Host's plugin manager, so its section
+    // headings come from that UI's i18n (`partsLabel` is 包含的组件 in Chinese
+    // and Components in English). Assert the section's stable data attribute
+    // instead, so a runner that boots an English UI is not a false regression.
+    await expect(panel.locator('[data-plugin-rows]')).toBeVisible({ timeout: pluginControlTimeout });
   } else {
     await expect(panel.getByRole('heading', { name: '关于 Star Harness' })).toBeVisible({ timeout: pluginControlTimeout });
     await expect(panel.getByText(/执行多步任务|AgentKit 里的多步任务/).first()).toBeVisible({ timeout: pluginControlTimeout });
+    await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible({ timeout: pluginControlTimeout });
   }
-  await expect(panel.getByRole('heading', { name: '包含的组件' })).toBeVisible({ timeout: pluginControlTimeout });
   await page.screenshot({ path: join(output, 'plugin-overview.png'), timeout: 60000 });
   await expect(panel.getByRole('button', { name: /^(检查更新|重新检查|Check again)$/ })).toBeEnabled({ timeout: pluginControlTimeout });
   proof.firstPluginControlsMs = Math.round(performance.now() - opened);
@@ -370,6 +375,18 @@ try {
   proof.error = error.message;
   await save();
   await page?.screenshot({ path: join(output, 'failure.png') }).catch(() => {});
+  // Keep the failure diagnosable from the job log alone. The evidence bundle
+  // is part of a ~500 MB artifact, so nobody should have to download it just
+  // to read one screenshot or one locator.
+  try {
+    const region = page?.getByRole('region', { name: /Star Harness/ });
+    console.error(JSON.stringify({
+      failedAt: String(error.message).split('\n')[0],
+      pluginDetail: await region?.getAttribute('data-plugin-detail').catch(() => null),
+      pluginRows: await region?.locator('[data-plugin-rows]').count().catch(() => -1),
+      pluginText: (await region?.innerText({ timeout: 5000 }).catch(() => '')).slice(0, 600),
+    }, null, 2));
+  } catch { /* diagnostics must never mask the original failure */ }
   throw error;
 } finally {
   releaseRollback();
