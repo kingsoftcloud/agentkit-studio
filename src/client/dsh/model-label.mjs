@@ -1,11 +1,13 @@
 /** Display-only annotations inside DSH's native model-selection controls. */
 import { modelCard, modelDisplayName, modelScores } from '../../model-cards.mjs';
-import { HARNESS_SERVICE_MODEL_PROVIDER } from '../../model-route.mjs';
+import { HARNESS_SERVICE_MODEL_PROVIDER, ROUTEMIND_MODEL, ROUTEMIND_PROVIDER } from '../../model-route.mjs';
+import { routeMindAutoPreview } from '../../routemind-preview.mjs';
 import { renderModelPreview } from '../pages/model-card-view.mjs';
 import modelCardStyles from '../styles/model-card.css.mjs';
 
 export function createModelCardIndex(load) {
   let cards = {}, cardsByProvider = {}, sharedScores = {}, enabled = false, checked = false, pending = null, version = 0;
+  let routeMindAutoScores = null;
   const listeners = new Set();
   let menuListeners = 0;
   const emit = () => {
@@ -20,6 +22,7 @@ export function createModelCardIndex(load) {
       cards = value?.cards ?? {};
       cardsByProvider = value?.cardsByProvider ?? {};
       sharedScores = value?.sharedScores ?? {};
+      routeMindAutoScores = value?.routeMindAutoScores ?? null;
       checked = true;
       emit();
     }).catch(() => {}).finally(() => {
@@ -32,6 +35,7 @@ export function createModelCardIndex(load) {
     cards = {};
     cardsByProvider = {};
     sharedScores = {};
+    routeMindAutoScores = null;
     enabled = false;
     checked = false;
     pending = null;
@@ -57,6 +61,7 @@ export function createModelCardIndex(load) {
     },
     card(provider, id, { allowCached = false, presentationProvider, metadata } = {}) {
       if (!enabled || !id || (!checked && !allowCached)) return null;
+      if (provider === ROUTEMIND_PROVIDER && id === ROUTEMIND_MODEL) return routeMindAutoPreview(routeMindAutoScores);
       const catalog = provider === HARNESS_SERVICE_MODEL_PROVIDER
         ? cards
         : Object.hasOwn(cardsByProvider, provider) ? cardsByProvider[provider] : {};

@@ -3,11 +3,29 @@ import assert from 'node:assert/strict';
 import { createElement, useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { modelCard, modelDisplayName, modelPricing, modelScores, priceText, priceMultiplier, SCORE_SNAPSHOT } from '../src/model-cards.mjs';
-import { HARNESS_SERVICE_MODEL_PROVIDER } from '../src/model-route.mjs';
+import { HARNESS_SERVICE_MODEL_PROVIDER, ROUTEMIND_PROVIDER } from '../src/model-route.mjs';
 import { createProductClient } from '../src/remote/control-client.mjs';
 import { createModelRoutes } from '../src/host/routes/models.mjs';
 import { createModelCatalogPicker, referenceCard } from '../src/client/pages/model-settings-catalog-picker.mjs';
 import { renderModelCardDetails, renderModelPreview, renderRadar } from '../src/client/pages/model-card-view.mjs';
+
+test('Auto gets a RouteMind-only hover preview and identifies the offline reference', async () => {
+  const { createModelCardIndex } = await import('../src/client/dsh/model-label.mjs');
+  let routeMindAutoScores = { dimensions: [['toolUse', '工具执行'], ['toolAssistedReasoning', '带工具推理'],
+    ['workflowAutomation', '自动化'], ['repositoryCoding', '代码工程']], source: '星流模型评测目录参考',
+    values: { toolUse: 70, toolAssistedReasoning: 65, workflowAutomation: null, repositoryCoding: 80 } };
+  const index = createModelCardIndex(async () => ({ enabled: true, routeMindAutoScores }));
+  await index.refresh();
+  const render = () => renderToStaticMarkup(renderModelPreview(createElement, 'span', index.card(ROUTEMIND_PROVIDER, 'auto')));
+  assert.match(render(), /aria-label="工具执行 70，带工具推理 65，自动化 暂无数据，代码工程 80"/);
+  assert.match(render(), /星流模型评测目录参考/);
+  assert.equal(index.card('another-provider', 'auto'), null);
+  routeMindAutoScores = null;
+  index.invalidate();
+  await index.refresh();
+  assert.match(render(), /内置星流评测参考/);
+  assert.match(render(), /aria-label="工具执行 69，带工具推理 57，自动化 42，代码工程 61"/);
+});
 
 // Entries in the shape Xingliu's /v1/models returns them.
 const flash = { id: 'deepseek-v4.1-flash', context_length: '1024k', max_completion_tokens: '384k',

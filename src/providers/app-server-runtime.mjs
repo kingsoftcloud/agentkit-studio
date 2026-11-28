@@ -142,7 +142,7 @@ export function createAppServerRuntime(options, { id, label, ErrorClass, command
   // deployment-tunable instead of inheriting Codex's 5-minute default.
   const streamIdleTimeoutMs = Math.max(1_000, Number(options.streamIdleTimeoutMs ?? baseEnv[`${envPrefix}_STREAM_IDLE_TIMEOUT_MS`]) || 900_000);
   async function* operation({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [],
-    toolHandler, model: requestedModel, modelProvider, reasoningEffort, cwd: requestedCwd, sandbox: requestedSandbox,
+    toolHandler, model: requestedModel, modelProvider, hostedWebSearch, reasoningEffort, cwd: requestedCwd, sandbox: requestedSandbox,
     approvalPolicy: requestedApprovalPolicy, requestApproval, requestUserInput } = {}, catalog = false) {
     const cwd = String(requestedCwd ?? options.cwd ?? tmpdir());
     if (!isAbsolute(cwd)) throw failure('WORKSPACE_INVALID', `${label} 工作目录必须是绝对路径`);
@@ -162,10 +162,10 @@ export function createAppServerRuntime(options, { id, label, ErrorClass, command
     // Use Codex's public custom-provider contract. Credentials belong only
     // to this child environment, never argv, thread RPC, or user config.
     const providerId = modelProvider ? 'agentkit_gateway' : verifyModel ? id : undefined;
+    // Studio web tools execute in the Host without forwarding model credentials.
+    const searchArgs = !catalog && (hostedWebSearch === false || modelProvider?.hostedWebSearch === false
+      || modelProvider?.api === 'chat-completions') ? ['-c', 'web_search="disabled"'] : [];
     const providerArgs = modelProvider ? Object.entries({
-      // Hosted Responses tools have no Chat Completions equivalent. Bound
-      // MCP search tools remain available through Codex's dynamic tools.
-      ...((modelProvider.api === 'chat-completions' || modelProvider.hostedWebSearch === false) ? { web_search: 'disabled' } : {}),
       model_provider: providerId,
       [`model_providers.${providerId}.name`]: 'Studio configured model',
       [`model_providers.${providerId}.base_url`]: modelProvider.baseUrl,
@@ -183,7 +183,7 @@ export function createAppServerRuntime(options, { id, label, ErrorClass, command
 
     let child;
     try {
-      child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs, ...reasoningArgs, ...(options.configArgs || [])], {
+      child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...searchArgs, ...providerArgs, ...reasoningArgs, ...(options.configArgs || [])], {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

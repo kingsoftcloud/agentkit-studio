@@ -279,8 +279,6 @@ export async function inspectStarHarness(connection, { version, signal, required
 export async function startStarHarness({ packageDirectory, version, workspaceRoot, stateDir, profile, agentId = 'studio-local-harness', env = process.env, signal }) {
   signal?.throwIfAborted();
   const token = randomBytes(32).toString('base64url');
-  const search = Object.fromEntries(Object.entries(env).filter(([name]) =>
-    /^(?:(?:AGENTKIT_ENGINE|KSADK|OPENCLAW)_WEB_SEARCH_(?:PROVIDER|BASE_URL|API_KEY|SCOPE)|KSADK_MCP_KEY|KSC_AIPRO_API_KEY|KSC_AIPRO_APIKEY|AIPRO_API_KEY)$/.test(name)));
   const desktopNode = process.versions.electron && process.resourcesPath && join(process.resourcesPath,
     'runtime', 'primary-runtime', 'dependencies', 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node');
   const useDesktopNode = desktopNode && existsSync(desktopNode);
@@ -292,7 +290,7 @@ export async function startStarHarness({ packageDirectory, version, workspaceRoo
   const child = fork(workerEntry, [packageDirectory, '--workspace', workspaceRoot, '--state-dir', stateDir,
     '--agent', agentId], {
     execPath, execArgv, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-    env: { ...childEnvironment(env), ...search,
+    env: { ...childEnvironment(env),
       ...(process.platform === 'darwin' ? { AGENTKIT_ENGINE_DESKTOP_WORKSPACE_SANDBOX: '1' } : {}),
       ...(process.versions.electron && !useDesktopNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_MODEL_BASE_URL: harnessModelEndpoint(profile.baseUrl, profile.protocol),

@@ -38,7 +38,7 @@ function abortable(promise, signal, onLate) {
 }
 
 /** The real DSH registry owns permission/presentation hooks. No Native identity is invented. */
-export function createDshNodeWebTools({ agentId, fetchImpl, searchFetch = fetchImpl,
+export function createDshNodeWebTools({ agentId, fetchImpl, searchFetch = fetchImpl, publicWebSearch,
   providerConfig = {}, ssrfPolicy = {}, persistOutput, isClosed = () => false, signal: hostSignal } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim(), 'dsh_node_web_agent_id_missing');
   invariant(typeof fetchImpl === 'function' && typeof searchFetch === 'function', 'dsh_node_web_fetch_missing');
@@ -106,7 +106,10 @@ export function createDshNodeWebTools({ agentId, fetchImpl, searchFetch = fetchI
           ? webFetch({ fetch: guardedFetch(fetchImpl), url: input.url, maxChars: input.max_chars, offset: input.offset_chars,
             find: input.find, timeout: input.timeout, ssrfPolicy: config.ssrfPolicy, signal, persistOutput: persist,
             request: bound, checkCurrent: assertCurrent })
-          : webSearch({ fetch: guardedFetch(searchFetch), providerConfig: config.providerConfig, query: input.query,
+          : publicWebSearch ? publicWebSearch(input.query, input.max_results, signal).then(
+            result => ({ ok: true, query: input.query, results: result.sources, provider: 'studio' }),
+            error => ({ ok: false, error_type: error?.code ?? 'WebToolError', error_message: 'web search failed' }),
+          ) : webSearch({ fetch: guardedFetch(searchFetch), providerConfig: config.providerConfig, query: input.query,
             maxResults: input.max_results, recencyDays: input.recency_days, signal });
         const content = await abortable(operation, signal).catch(() => {
           assertCurrent();
@@ -129,15 +132,15 @@ export function createDshNodeWebTools({ agentId, fetchImpl, searchFetch = fetchI
   };
 }
 
-export function mountDshNodeWebTools({ agentId, stateDir, isClosed, signal, env = process.env, fetchImpl = hostFetch, persistOutput }) {
+export function mountDshNodeWebTools({ agentId, stateDir, isClosed, signal, env = process.env, fetchImpl = hostFetch, persistOutput, publicWebSearch }) {
   invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_node_output_store_invalid');
   const output = persistOutput === undefined ? createDshNodeToolOutputStore({ directory: stateDir, agentId, isClosed, signal,
     toolDefinitions: studioWebToolDefinitions().filter(tool => tool.name === 'web_fetch') }) : null;
   const policy = resolveWebSsrfPolicy(env);
   const allowPrivate = policy.allowPrivate === true || policy.allow_private === true;
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });
-  const port = createDshNodeWebTools({ agentId, isClosed, signal, fetchImpl: pinned.fetch, searchFetch: fetchImpl,
-    providerConfig: resolveWebSearchConfig(env), ssrfPolicy: { allowPrivate }, persistOutput: persistOutput ?? output?.persistOutput });
+  const port = createDshNodeWebTools({ agentId, isClosed, signal, fetchImpl: pinned.fetch, searchFetch: fetchImpl, publicWebSearch,
+    providerConfig: publicWebSearch ? {} : resolveWebSearchConfig(env), ssrfPolicy: { allowPrivate }, persistOutput: persistOutput ?? output?.persistOutput });
   let closing;
   return { ...port, get definitions() { return port.definitions; }, close() {
     port.close();

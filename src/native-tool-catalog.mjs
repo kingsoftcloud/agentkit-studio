@@ -5,7 +5,6 @@ import { isAbsolute } from 'node:path';
 import { chromium } from 'playwright-core';
 import toolDefaults from './contracts/harness-tool-defaults.json' with { type: 'json' };
 import { nativeCommandBackend } from './providers/native-command-backend.mjs';
-import { resolveWebSearchConfig } from './providers/native-web-configuration.mjs';
 import { nativeDefaultToolsFromCatalog } from './native-capability-defaults.mjs';
 import { NATIVE_CHILD_WORKSPACE_TOOLS } from './native-child-tools.mjs';
 import { paginateResources } from './resource-catalog.mjs';
@@ -39,14 +38,12 @@ function contractForDefinition(definition) {
 }
 
 export function nativeLocalToolResources({ env = process.env, catalog = toolDefaults } = {}) {
-  const search = resolveWebSearchConfig(env);
   const browserAvailable = hostHasBrowser(env);
   const childWorkspaceTools = new Set(catalog.childWorkspaceTools ?? NATIVE_CHILD_WORKSPACE_TOOLS);
   return definitions({ env, catalog }).map(tool => {
     const contract = contractForDefinition(tool), { parameters, ...metadata } = contract;
-    const unavailableReason = tool.availability === 'search' && !search.provider
-      ? '尚未配置网页搜索服务；公开网页读取仍可用。'
-      : tool.availability === 'browser' && !browserAvailable ? '未找到可用的本地浏览器，无法交互验证网页。' : null;
+    const unavailableReason = tool.availability === 'browser' && !browserAvailable
+      ? '未找到可用的本地浏览器，无法交互验证网页。' : null;
     return { resourceId: contract.resourceId, name: contract.name,
       displayName: tool.name === 'apply_workspace_patch' ? '结构化文件补丁 · Native' : `${tool.name} · Native`, description: contract.description,
       kind: 'tool', source: 'studio-native', status: unavailableReason ? 'not-configured' : 'available',

@@ -292,9 +292,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // The Native engine as its own process. Lazy like Codex: hosts without an
   // engine executable still load and report NATIVE_ENGINE_UNAVAILABLE on use.
   const { createNativeEngineRuntime, createHarnessServiceModelAdapter, routeHarnessCompaction, HARNESS_SERVICE_MODEL_PROVIDER } = await import('../providers/native-engine-runtime.mjs');
-  const { webSearchEndpoint } = await import('../web-search-endpoint.mjs');
-  const { webSearch } = await import('../providers/studio-web-transport.mjs');
-  const { isStarflowSearchEndpoint, resolveStarflowWebSearch } = await import('../providers/starflow-web-search.mjs');
+  const { createStudioPublicFetch, createStudioPublicSearch } = await import('../providers/studio-public-web.mjs');
   const { engineServiceWorkspaces, canonicalEngineWorkspace } = await import('../providers/engine-service-workspaces.mjs');
   const externalRoutes = engineServiceWorkspaces(runtimeEnv);
   const credentials = credentialsService;
@@ -329,27 +327,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       modelProfiles: (await models.settings()).modelProfiles,
       workspaceRegistry: () => ctx.get('workspaceRegistry'),
     })) : undefined;
-  const searchStarflow = (selection, profile, agent) => resolveStarflowWebSearch(models, selection, {
-    profile, harnessProfile: model => starHarness?.summaryProfile(agent?.session?.header?.cwd, model),
-    dshProfile: async ({ provider, model }) => {
-      const namespace = ctx.get('settings')?.describe({ redactSecrets: true }).find(item => item.ns === 'llm-pi-ai');
-      const providers = namespace?.value?.providers || {};
-      const route = Object.hasOwn(providers, provider) && providers[provider];
-      if (!isStarflowSearchEndpoint(route?.baseURL)
-        || route.models?.length && !route.models.some(item => item.id === model)) return;
-      return { baseUrl: route.baseURL, modelName: model, headers: route.headers,
-        apiKey: route.apiKeyEnv ? (await credentials.resolve(route.apiKeyEnv))?.value : '' };
-    },
-  });
+  const publicWebSearch = createStudioPublicSearch({ endpoint: async () => (await models.settings()).webSearchBaseUrl });
+  const publicWebFetch = createStudioPublicFetch();
+  ctx.effect(() => publicWebFetch.close, 'agentkit-studio: public web transport');
   ctx.inject(['web'], webCtx => {
-    if (typeof webCtx.web.registerModelSearch !== 'function') return;
-    webCtx.effect(() => webCtx.web.registerModelSearch(async selection => {
-      const search = await searchStarflow(selection);
-      if (search) return async ({ query, maxResults }, signal) => {
-        const { sources, content } = await search(query, maxResults ?? 5, signal);
-        return { sources, content, truncated: false };
-      };
-    }), 'agentkit-studio: 星流 model-backed search');
+    webCtx.effect(() => webCtx.web.registerSearchOverride(({ query, maxResults }, signal) =>
+      publicWebSearch(query, maxResults, signal)), 'agentkit-studio: anonymous web search');
   });
   const { registerRouteMindIntroductionRoute, registerStarHarnessClientRoute, registerStarHarnessIntroductionRoute } = await import('./routes/star-harness-client.mjs');
   registerStarHarnessIntroductionRoute(ctx);
@@ -428,38 +411,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ksxcDesktopUser: KSXC_DESKTOP_USER,
     ksxcModelAccess: ksxc?.modelAccess,
     nativeEngineRuntime,
-    resolveStarflowSearch: searchStarflow,
-    hostWebSearch: async (agent, selection, workspaceModelProfile) => {
-      const settings = await models.settings();
-      const nativeSearch = await searchStarflow(selection, workspaceModelProfile, agent);
-      const { provider } = selection;
-      let endpoint;
-      try { endpoint = webSearchEndpoint(settings.webSearchBaseUrl); } catch { /* A stale profile value must not prevent a turn. */ }
-      const web = agent.ctx?.get?.('web') ?? ctx.get('web');
-      let configuredSearch;
-      if (endpoint) {
-        configuredSearch = async (query, maxResults, signal) => {
-          const result = await webSearch({ fetch: hostFetch, providerConfig: { provider: 'http', baseUrl: endpoint },
-            query, maxResults, signal });
-          if (!result.ok) throw Object.assign(new Error('搜索 API 调用失败'), { code: result.error_type });
-          return { sources: result.results };
-        };
-      } else if (await Promise.resolve().then(() => web?.searchReady(provider)).catch(() => false)) {
-        configuredSearch = (query, maxResults, signal) => {
-          const owners = agent.ctx?.get?.('agents') ?? ctx.get('agents');
-          const search = () => web.search({ query, maxResults }, signal);
-          return owners ? owners.withInitiator(agent, search) : search();
-        };
-      }
-      if (!nativeSearch || !configuredSearch) return nativeSearch ?? configuredSearch;
-      return async (query, maxResults, signal) => {
-        try { return await nativeSearch(query, maxResults, signal); }
-        catch (error) {
-          if (signal?.aborted || !['starflow_search_rejected', 'starflow_search_not_performed'].includes(error?.code)) throw error;
-          return configuredSearch(query, maxResults, signal);
-        }
-      };
-    },
+    publicWebSearch,
+    publicWebFetch: publicWebFetch.fetch,
     // The permission picker (local, Studio cloud and Hosted UI) converges on the
     // Session preset; read it here so Codex's own sandbox follows the picker.
     permissionModeForSession: session => {
@@ -579,7 +532,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ctx.effect(() => bridge.setBuiltinToolsFactory(async ({ ctx: toolsCtx, config, isClosed, signal }) => {
       const options = root => ({
         ctx: toolsCtx, workspaceRoot: root, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
-        isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
+        isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch, publicWebSearch,
         a2aSessionEvents: a2aSessionSink.forPreset(config),
         browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
         applicationPreviewOrigin: config.runtime === 'native-engine' ? nativeEngineRuntime.applicationPreview(root)?.origin : undefined,

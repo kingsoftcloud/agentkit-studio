@@ -21,7 +21,7 @@ export function registerStarHarnessIntroductionRoute(ctx) {
 }
 
 export function registerRouteMindIntroductionRoute(ctx) {
-  registerIntroductionImage(ctx, ROUTEMIND_INTRODUCTION_PATH, 'routemind-introduction.jpg');
+  registerIntroductionImage(ctx, ROUTEMIND_INTRODUCTION_PATH, 'routemind-auto-preview.jpg');
 }
 
 export const STAR_HARNESS_CLIENT_PATH = '/api/agentkit.star-harness.client.mjs';

@@ -42,10 +42,10 @@ export function renderModelCardSummary(h, Tag, card, multiplier) {
 }
 
 /** Missing axes stay unplotted so the chart distinguishes missing from zero. */
-export function renderRadar(h, values) {
+export function renderRadar(h, values, dimensions = SCORE_DIMENSIONS) {
   const width = 320, height = 230, cx = 160, cy = 118, r = 72;
-  const axes = SCORE_DIMENSIONS.map(([key, label], index) => {
-    const angle = -Math.PI / 2 + index * (2 * Math.PI / SCORE_DIMENSIONS.length);
+  const axes = dimensions.map(([key, label], index) => {
+    const angle = -Math.PI / 2 + index * (2 * Math.PI / dimensions.length);
     const score = values?.[key];
     return { key, label, angle, value: Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : null };
   });
@@ -91,6 +91,12 @@ function row(h, label, value) {
 
 /** Compact, read-only model metadata for the conversation picker. */
 export function renderModelPreview(h, Tag, card) {
+  if (card.routeMindAuto) return h('div', { className: 'ms-card-body' },
+    h('p', { className: 'ms-card-note' }, card.intro),
+    h('section', { 'aria-label': 'Auto 能力参考' },
+      h('h4', { className: 'ms-card-heading' }, '能力参考'),
+      renderRadar(h, card.scores.values, card.scores.dimensions),
+      h('p', { className: 'ms-card-note' }, card.scores.source)));
   const price = priceText(card);
   return h('div', { className: 'ms-card-body' },
     card.abilities?.length ? h('div', { className: 'ms-card-summary' },

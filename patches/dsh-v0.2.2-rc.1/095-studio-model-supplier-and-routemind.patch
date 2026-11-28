@@ -1,0 +1,110 @@
+diff --git a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+index d34e81b2c2adf440547d48baa65b228a28be4857..c3b05333c42fc3765ae5d28f792854596082c00c 100644
+--- a/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
++++ b/packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx
+@@ -803,6 +803,14 @@ function PackageDetail({
+   const newer = versionUpdate(versions)
+   const status = packageStatus(pkg)
+   const subject: PluginsSubject = { kind: 'bundle', pkg: packageRef(pkg) }
++  const rows = isBuiltInRouteMind(pkg) ? pkg.rows.map(row => row.moduleName !== 'routemind-studio' ? row : {
++    ...row,
++    meta: {
++      ...row.meta,
++      title: { zh: 'RouteMind Studio 集成', en: 'RouteMind Studio integration' },
++      description: { zh: '提供 Auto 入口，并在模型菜单展示已有评分和价格。', en: 'Adds Auto and displays available model scores and prices.' },
++    },
++  }) : pkg.rows
+   return (
+     <div className={css.detail} data-plugin-detail={pkg.name}>
+       <DetailTop
+@@ -870,7 +878,7 @@ function PackageDetail({
+           )
+           : null}
+         {pkg.availability === 'missing' ? null : (<RowsSection
+-          rows={pkg.rows}
++          rows={rows}
+           t={t}
+           resolveText={resolveText}
+           toggle={pkg.enabled ? { busy: row => busy || rowBusy(row), onSetEnabled: onSetRowEnabled } : undefined}
+diff --git a/packages/client/ui-plugin-manager/src/client/presentation.ts b/packages/client/ui-plugin-manager/src/client/presentation.ts
+index 355d8c749038b3fb178358888a17f2a9eb5d2092..c4535cb2fe8c1147a1d979ad72870034a8526c4c 100644
+--- a/packages/client/ui-plugin-manager/src/client/presentation.ts
++++ b/packages/client/ui-plugin-manager/src/client/presentation.ts
+@@ -127,8 +127,8 @@ export function packageText(
+   if (isBuiltInRouteMind(pkg)) return {
+     title: resolveText({ zh: 'RouteMind 智能路由', en: 'RouteMind' }),
+     description: resolveText({
+-      zh: '通过 RouteMind 网关自动选择模型，在对话选模菜单中查看模型评分和价格。',
+-      en: 'Route requests through the RouteMind gateway and see model scores and prices in the conversation model picker.',
++      zh: '面向 Studio 和 AgentKit 的智能路由，按任务自动选择合适的星流模型。',
++      en: 'Task-aware routing for Studio and AgentKit, with automatic StarFlow model selection.',
+     }),
+     beta: false,
+   }
+diff --git a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
+index ea305088c3cf04d6f7419be4f24d8700099c54c7..571bccc2bfd83145f678cd19bec4b2f5943ad792 100644
+--- a/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
++++ b/packages/client/ui-plugin-manager/tests/components.client.spec.tsx
+@@ -230,7 +230,8 @@ function renderTab(
+ describe('PluginManagerPage', () => {
+   it.each([[false, false], [true, true], [true, false]])('renders bundled RouteMind once in built-ins (market install: %s, enabled: %s)', (installed, enabled) => {
+     const name = 'routemind-studio'
+-    const { actions } = renderTab({ packages: [pkg({ name, availability: 'installation', version: '0.1.2', installed, enabled, removable: false })] })
++    const { actions } = renderTab({ packages: [pkg({ name, availability: 'installation', version: '0.1.2', installed, enabled, removable: false,
++      rows: [row({ moduleName: name, meta: { description: 'Legacy gateway description' } })] })] })
+     const selector = '[data-plugin-package="routemind-studio"]'
+     expect(document.querySelectorAll(selector)).toHaveLength(1)
+     const basic = document.querySelector('[data-plugin-group="basic"]') as HTMLElement
+@@ -242,6 +243,10 @@ describe('PluginManagerPage', () => {
+     expect(actions.setEnabled).toHaveBeenCalledExactlyOnceWith(name, !enabled)
+     fireEvent.click(within(basic).getByRole('button', { name: 'View RouteMind' }))
+     expect(screen.getByRole('heading', { name: 'RouteMind' })).toBeTruthy()
++    expect(screen.getByText('Task-aware routing for Studio and AgentKit, with automatic StarFlow model selection.')).toBeTruthy()
++    expect(screen.getByText('RouteMind Studio integration')).toBeTruthy()
++    expect(screen.getByText('Adds Auto and displays available model scores and prices.')).toBeTruthy()
++    expect(screen.queryByText('Legacy gateway description')).toBeNull()
+     expect(document.querySelector('[data-plugin-detail="routemind-studio"] [data-studio-plugin-artwork="routemind"]')).toBeTruthy()
+     expect(within(document.querySelector('[data-plugin-source]') as HTMLElement).getByText(en.sourceBuiltIn)).toBeTruthy()
+     expect(screen.queryByRole('button', { name: 'Uninstall RouteMind' })).toBeNull()
+diff --git a/packages/llm/llm/src/index.ts b/packages/llm/llm/src/index.ts
+index 14be9c87f84925959cc3bda9004a35bc7604007f..0bacb78655ae0cce06b361cc912a1d65d3b7bce1 100644
+--- a/packages/llm/llm/src/index.ts
++++ b/packages/llm/llm/src/index.ts
+@@ -740,6 +740,7 @@ export class LlmRuntime extends TypertRemoteService {
+         id: model.id,
+         name: model.name,
+         ...model.description === undefined ? {} : { description: model.description },
++        ...model.presentationProvider === undefined ? {} : { presentationProvider: { ...model.presentationProvider } },
+         ...inputModalities === undefined ? {} : { inputModalities },
+         ...badge === undefined ? {} : {
+           badge: { text: typeof badge.text === 'string' ? badge.text : { ...badge.text }, tone: badge.tone },
+diff --git a/packages/llm/llm/tests/service.spec.ts b/packages/llm/llm/tests/service.spec.ts
+index a5d8be44138a48eea3ce6df28dd2dd2af3bb1472..bd8fb63e22b92ae119f1a14472197eae56bcee2a 100644
+--- a/packages/llm/llm/tests/service.spec.ts
++++ b/packages/llm/llm/tests/service.spec.ts
+@@ -676,6 +676,7 @@ describe('LlmRuntime', () => {
+       id: 'fast',
+       name: 'Fast',
+       description: 'Low latency',
++      presentationProvider: { id: 'starflow', name: '星流' },
+       inputModalities: ['text'] as const,
+     }
+     ctx.llm.registerAdapter(['catalog'], new CatalogAdapter(provider, [model]))
+@@ -685,14 +686,17 @@ describe('LlmRuntime', () => {
+     expect(providers).toEqual([provider])
+     expect(models).toEqual([model])
+     expect(models[0]!.inputModalities).not.toBe(model.inputModalities)
++    expect(models[0]!.presentationProvider).not.toBe(model.presentationProvider)
+ 
+     providers[0]!.name = 'mutated'
+     models[0]!.name = 'mutated'
++    models[0]!.presentationProvider!.name = 'mutated'
+     provider.name = 'source mutated'
+     model.name = 'source mutated'
+     expect(ctx.llm.listProviders()).toEqual([{ id: 'catalog', name: 'Catalog Provider' }])
+     await expect(ctx.llm.listModels('catalog')).resolves.toEqual([{
+       provider: 'catalog', id: 'fast', name: 'source mutated', description: 'Low latency', inputModalities: ['text'],
++      presentationProvider: { id: 'starflow', name: '星流' },
+     }])
+   })
+ 
