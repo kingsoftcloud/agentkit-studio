@@ -3123,12 +3123,93 @@
       },
       "sequence": 63,
       "sha256": "eb1976244c1ab32641566105601217cc5a644c73ea5830a9906121e02126ec21"
+    },
+    {
+      "id": "095",
+      "file": "095-studio-model-supplier-and-routemind.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "low",
+      "maintainerRole": "Studio model directory maintainers",
+      "removeWhen": "The host forwards model supplier metadata and supports Studio-owned plugin descriptions.",
+      "contracts": [
+        "Preserve adapter-provided model supplier metadata through catalog discovery.",
+        "Describe RouteMind as task-level model selection for Harness."
+      ],
+      "affectedPackages": [
+        "packages/client/ui-plugin-manager",
+        "packages/llm/llm"
+      ],
+      "affectedFiles": [
+        "packages/client/ui-plugin-manager/src/client/PluginManagerPage.tsx",
+        "packages/client/ui-plugin-manager/src/client/presentation.ts",
+        "packages/client/ui-plugin-manager/tests/components.client.spec.tsx",
+        "packages/llm/llm/src/index.ts",
+        "packages/llm/llm/tests/service.spec.ts"
+      ],
+      "dependsOn": [
+        "092",
+        "094"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio supplier presentation and RouteMind product copy."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-plugin-manager/tests/components.client.spec.tsx",
+          "packages/llm/llm/tests/service.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "product-profiles"
+        ]
+      },
+      "sequence": 64,
+      "sha256": "293f1c05e5af1cea1583af6f6b35cee964696691acf727281b31f7cc055426b5"
+    },
+    {
+      "id": "096",
+      "file": "096-studio-anonymous-web-search.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "risk": "low",
+      "maintainerRole": "Studio web tools maintainers",
+      "removeWhen": "The host can provide anonymous search for every model route.",
+      "contracts": [
+        "Give Studio anonymous search precedence over model and configured search providers."
+      ],
+      "affectedPackages": [
+        "packages/web/web"
+      ],
+      "affectedFiles": [
+        "packages/web/web/src/index.ts",
+        "packages/web/web/tests/web.spec.ts"
+      ],
+      "dependsOn": [
+        "094"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Studio search must be independent of model credentials."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/web/web/tests/web.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "product-profiles"
+        ]
+      },
+      "sequence": 65,
+      "sha256": "608a7226063b7f913c68fb4493412ee3e302dc2128548d2c286dacd9cef14989"
     }
   ],
-  "patchedTree": "545e4bf7c3c7eae518d8da26a193321275cc1ce8",
-  "patchedSourceSha256": "11e2a107a1f9ddd35a0bc09ed6abe1f11317a677588c2050f6538b07e3a79c22",
+  "patchedTree": "0549df4989d97bc6b6684fe532f4fd03f96786fc",
+  "patchedSourceSha256": "1fe1966813394d80949fd5b9cc61c9846178b7e231bde2876234b8ca7a9749ca",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "cda5ad1f317ad176387f61869a0c2db8aa8ae14d907c1ee2eebe177ec76057d8"
+    "sha256": "7c4bea65ee407da33be4305a68c1274c7d0b5db63d6bdeec0e970e2558f83639"
   }
 }

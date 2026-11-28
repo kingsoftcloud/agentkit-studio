@@ -31,9 +31,9 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | --- | --- | --- |
 | `AGENT_NOT_FOUND` | `src/host/routes/agents.mjs:13` | Check whether the Agent was deleted; recreate it in this workspace |
 | `INVALID_AGENT_ID` | `src/host/routes/agents.mjs:52` | Check that `agentId` is non-empty and well formed |
-| `MODEL_CREDENTIAL_MISSING` | `src/model-service.mjs:75` | Add the API Key for that model profile in settings |
-| `MODEL_NOT_FOUND` | `src/model-service.mjs:63` | Refresh the model catalog; for a custom endpoint check `OPENAI_BASE_URL` |
-| `MODEL_URL_INVALID` | `src/model-service.mjs:39` | The endpoint must be an absolute `http(s)://` URL |
+| `MODEL_CREDENTIAL_MISSING` | `src/model-service.mjs:76` | Add the API Key for that model profile in settings |
+| `MODEL_NOT_FOUND` | `src/model-service.mjs:64` | Refresh the model catalog; for a custom endpoint check `OPENAI_BASE_URL` |
+| `MODEL_URL_INVALID` | `src/model-service.mjs:40` | The endpoint must be an absolute `http(s)://` URL |
 | `CLOUD_CONFIGURATION_REQUIRED` | `src/remote/control-client.mjs:447` | Configure cloud credentials and the control plane endpoint first |
 | `CLOUD_EXECUTION_MODE_DENIED` | `src/host/routes/agents.mjs:119` | The policy denied this execution mode; request a lower tier |
 | `MCP_NOT_FOUND` | `src/mcp-probes.mjs:21` | Confirm the MCP server still exists in the resource list |

@@ -6,6 +6,7 @@ import { catalogReasoningMetadata } from './model-catalog-reasoning.mjs';
 import { modelCard } from './model-cards.mjs';
 import { isRouteMindModel, ROUTEMIND_PROVIDER } from './host/services/routemind-models.mjs';
 import { dshModelRoute, HARNESS_SERVICE_MODEL_PROVIDER } from './model-route.mjs';
+import { autoScoresFromBenchmarkCatalog, autoScoresFromModelDirectory } from './routemind-preview.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from './model-capabilities.mjs';
 import { hasConfiguredAuthentication, providerWireApi, requestHeaders } from './model-profile-contract.mjs';
@@ -150,11 +151,20 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       throw Object.assign(new Error('请配置可用的 RouteMind 网关和凭据'), { code: 'ROUTEMIND_GATEWAY_UNAVAILABLE' });
     return { id: provider + ':' + modelName, provider, modelName, ...gateway, protocol: 'openai-completions' };
   }
-  async function routeMindLiveCatalog() {
-    const gateway = await routeMindGateway();
+  const routeMindHeaders = gateway => gateway.apiKey ? { Authorization: 'Bearer ' + gateway.apiKey } : {};
+  async function routeMindLiveCatalog(gateway) {
     if (!gateway) return new Map();
-    const headers = gateway.apiKey ? { Authorization: 'Bearer ' + gateway.apiKey } : {};
-    return routeMindCards(gateway.baseUrl, headers, [{ owned_by: 'routemind' }]);
+    return routeMindCards(gateway.baseUrl, routeMindHeaders(gateway), [{ owned_by: 'routemind' }]);
+  }
+  async function routeMindBenchmarkScores(gateway) {
+    if (!gateway) return null;
+    try {
+      const response = await fetchImpl(`${gateway.baseUrl}/catalog`, {
+        headers: routeMindHeaders(gateway), signal: AbortSignal.timeout(5000), redirect: 'error',
+      });
+      if (!response.ok) { await response.body?.cancel(); return null; }
+      return autoScoresFromBenchmarkCatalog(await response.json());
+    } catch { return null; }
   }
   function displayModels(selected, snapshot, shared = new Map()) {
     if (!displayCatalogs.has(snapshot)) displayCatalogs.set(snapshot, routeMindCards(selected.baseUrl, snapshot.headers, snapshot.raw));
@@ -167,7 +177,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
   async function catalogForDisplay(selected) {
     const snapshot = await gatewayCatalog(selected, true);
     if (!await routeMindActive()) return snapshot.items;
-    const items = await displayModels(selected, snapshot, await routeMindLiveCatalog());
+    const items = await displayModels(selected, snapshot, await routeMindLiveCatalog(await routeMindGateway()));
     return await routeMindActive() ? items : snapshot.items;
   }
   /**
@@ -192,7 +202,12 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       seen.add(route.provider);
       return route;
     });
-    const shared = await routeMindLiveCatalog();
+    const configured = await routeMindGateway();
+    const gateway = configured && (configured.apiKey || configured.local) ? configured : null;
+    const shared = await routeMindLiveCatalog(gateway);
+    if (!await routeMindActive()) return inactive;
+    const autoScores = autoScoresFromModelDirectory(shared);
+    const pendingAuto = autoScores ? Promise.resolve(autoScores) : routeMindBenchmarkScores(gateway);
     // Existing DSH routes can outlive a conflicting edit. Avoid attaching any
     // gateway's price to that route, even if only one catalog can be read.
     const lists = await Promise.all(routes.filter(route => !ambiguous.has(route.provider)).map(async ({ id, provider }) => {
@@ -206,6 +221,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
         return items.length ? { provider, items } : null;
       }
     }));
+    const routeMindAutoScores = await pendingAuto;
     if (!await routeMindActive()) return inactive;
     const byModel = new Map(), byProvider = new Map();
     for (const list of lists.filter(Boolean)) {
@@ -216,6 +232,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       }
     }
     return { enabled: true, cards: ambiguous.size ? {} : Object.fromEntries([...byModel].filter(([, card]) => card)),
+      ...(routeMindAutoScores ? { routeMindAutoScores } : {}),
       cardsByProvider: Object.fromEntries(byProvider),
       sharedScores: Object.fromEntries([...shared].map(([id, card]) => [id, modelCard({ id }, { live: scoreOnly(card) }).scores]).filter(([, scores]) => scores)) };
   }

@@ -410,3 +410,41 @@ test('disabling RouteMind during card loading returns the same plain catalog wit
   assert.equal(result.items[0].card, undefined);
   assert.deepEqual(reads, ['https://gateway.test/v1/models', 'https://gateway.test/routemind/models']);
 });
+
+test('Auto prefers its own scores, then scored directory models or the RouteMind benchmark catalog', async () => {
+  let enabled = true;
+  let models = [{ name: 'auto', scores: { speed: 92 } }, { name: 'glm-5.3', scores: { speed: 66 } }];
+  const calls = [];
+  const price = { inputMicrosPerMillion: 2000000, outputMicrosPerMillion: 8000000 };
+  const dimensions = Object.fromEntries(['toolUse', 'toolAssistedReasoning', 'workflowAutomation', 'repositoryCoding']
+    .map(key => [key, { benchmark: key }]));
+  const service = createModelService({
+    configuration: configuration({}), credentials: { resolve: async () => null },
+    routeMindActive: () => enabled, routeMindGateway: () => ({ baseUrl: 'https://route.test/prefix/v1', apiKey: 'fixture' }),
+    fetchImpl: async (url, options) => {
+      calls.push(url);
+      assert.equal(options.headers.Authorization, 'Bearer fixture');
+      assert.equal(options.redirect, 'error');
+      return Response.json(url.endsWith('/routemind/models') ? { models } : {
+        version: 'starflow-test', dimensions, models: [
+          { id: 'a', price, scores: { toolUse: 70, repositoryCoding: 80 } },
+          { id: 'b', price, scores: { toolUse: 90, toolAssistedReasoning: 68 } },
+          { id: 'reference-only', scores: { toolUse: 100, workflowAutomation: 99 } },
+        ],
+      });
+    },
+  });
+  assert.equal((await service.cards()).routeMindAutoScores.values.speed, 92);
+  models = [{ name: 'first', scores: { speed: 60 } }, { name: 'second', scores: { speed: 80 } },
+    { name: 'auto-balance', scores: { speed: 100 } }];
+  const directory = (await service.cards()).routeMindAutoScores;
+  assert.equal(directory.values.speed, 70);
+  assert.match(directory.source, /2 个模型/);
+  assert.ok(calls.every(url => url.endsWith('/routemind/models')));
+  models = [{ name: 'glm-5.3' }];
+  const benchmark = (await service.cards()).routeMindAutoScores;
+  assert.equal(calls.at(-1), 'https://route.test/prefix/v1/catalog');
+  assert.deepEqual(benchmark.values, { toolUse: 80, toolAssistedReasoning: 68, workflowAutomation: null, repositoryCoding: 80 });
+  enabled = false;
+  assert.equal((await service.cards()).routeMindAutoScores, undefined);
+});

@@ -4,15 +4,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createAgentStore } from '../src/agent-store.mjs';
-import { defaultNativeToolBindings, nativeLocalToolResources } from '../src/native-tool-catalog.mjs';
+import { defaultNativeToolBindings } from '../src/native-tool-catalog.mjs';
 import { nativeDefaultToolsFromCatalog } from '../src/native-capability-defaults.mjs';
 
-test('default authoring admits available built-ins, never external namesakes or unconfigured search', () => {
+test('default authoring admits available built-ins, including anonymous search, and excludes external namesakes', () => {
  const refs=defaultNativeToolBindings({env:{KSADK_SANDBOX_BACKEND:'local_process'}}).map(ref=>ref.resourceId);
- for(const name of ['read_workspace_file','write_workspace_file','edit_workspace_file','apply_workspace_patch','web_fetch','run_command']) assert.ok(refs.includes(name));
- assert.equal(refs.includes('web_search'),false);
- const catalog=nativeLocalToolResources({env:{KSADK_SANDBOX_BACKEND:'local_process',KSADK_WEB_SEARCH_PROVIDER:'http',KSADK_WEB_SEARCH_BASE_URL:'https://example.com/search'}});
- assert.ok(nativeDefaultToolsFromCatalog(catalog).includes('web_search'));
+ for(const name of ['read_workspace_file','write_workspace_file','edit_workspace_file','apply_workspace_patch','web_fetch','web_search','run_command']) assert.ok(refs.includes(name));
  assert.deepEqual(nativeDefaultToolsFromCatalog([{resourceId:'run_command',source:'external',status:'available'}]),[]);
 });
 

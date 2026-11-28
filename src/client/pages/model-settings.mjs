@@ -672,9 +672,9 @@ export function createModelSettingsSection({
       await stageProviderChanges(form.providers.filter(provider => provider.id !== group.id), remaining);
       return true;
     };
-    const cardForProfile = useModelSettingsCards({ useState, useEffect, hostRemote, window });
+    const { cardForProfile, autoCard } = useModelSettingsCards({ useState, useEffect, hostRemote, window });
     const modelDirectory = useModelSettingsDirectory({
-      cardForProfile,
+      cardForProfile, autoCard,
       status, saving, connections, profileCount: profiles.length, drafts, stageModels, stageProvider, saveProvider, removeProvider,
       fetchCatalog: fetchProviderCatalog,
       probeEfforts: typeof hostRemote.probeModelEfforts === 'function' ? probeEfforts : undefined,

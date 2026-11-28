@@ -32,6 +32,23 @@ test('shared formal schemas are independent of every public copy', async t => {
   assert.equal(f.port.supports('web_fetch'), true); assert.equal(f.port.supports('run_command'), false);
 });
 
+test('Studio search runs through the public Host tool even if legacy credentials exist', async t => {
+  const source = { url: 'https://www.iana.org/domains/reserved', title: 'IANA' };
+  const args = { query: 'reserved example domains', max_results: 2 };
+  const f = fixture(t, {
+    providerConfig: { provider: 'ksyun', apiKey: 'legacy-fixture-key' },
+    searchFetch: () => assert.fail('Studio must not invoke the authenticated transport'),
+    publicWebSearch: async (query, limit, signal) => {
+      assert.equal(query, args.query);
+      assert.equal(limit, args.max_results);
+      assert.equal(signal.aborted, false);
+      return { sources: [source] };
+    },
+  });
+  assert.deepEqual(await f.port.execute('web_search', args, { ...f.exec, name: 'web_search', arguments: args }),
+    { status: 'ok', content: { ok: true, query: args.query, results: [source], provider: 'studio' } });
+});
+
 test('default SSRF policy admits a public literal and denies private addresses before dispatch', async t => {
   const f = fixture(t);
   assert.equal((await f.run()).status, 'ok');

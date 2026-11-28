@@ -1,4 +1,6 @@
 export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
+export const ROUTEMIND_PROVIDER = 'routemind-auto';
+export const ROUTEMIND_MODEL = 'auto';
 
 /**
  * The DSH route a model belongs to.

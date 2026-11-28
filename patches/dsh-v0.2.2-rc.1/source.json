@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "02b6e9e4129ba9b93025c68d56cadfe725c4779a",
+  "headCommit": "125f32606e187c71a738ae542ec981760708bf79",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "545e4bf7c3c7eae518d8da26a193321275cc1ce8",
-  "sourceSha256": "11e2a107a1f9ddd35a0bc09ed6abe1f11317a677588c2050f6538b07e3a79c22",
+  "tree": "0549df4989d97bc6b6684fe532f4fd03f96786fc",
+  "sourceSha256": "1fe1966813394d80949fd5b9cc61c9846178b7e231bde2876234b8ca7a9749ca",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "27b5950d27f37b0c940cb91710d8f0b1055a50a76eeb960159383c1759725b47"
+    "sha256": "2fee9970dcc70183e2f71d5414b37242b5273cca54e2e1aa4752e4d18914c9f6"
   },
   "commits": [
     {
@@ -388,6 +388,18 @@
       "file": "094-studio-model-catalog-and-search.patch",
       "commit": "02b6e9e4129ba9b93025c68d56cadfe725c4779a",
       "sha256": "eb1976244c1ab32641566105601217cc5a644c73ea5830a9906121e02126ec21"
+    },
+    {
+      "id": "095",
+      "file": "095-studio-model-supplier-and-routemind.patch",
+      "commit": "01139014ce9b0b3ac71ad490dc5249ff7e64534f",
+      "sha256": "293f1c05e5af1cea1583af6f6b35cee964696691acf727281b31f7cc055426b5"
+    },
+    {
+      "id": "096",
+      "file": "096-studio-anonymous-web-search.patch",
+      "commit": "125f32606e187c71a738ae542ec981760708bf79",
+      "sha256": "608a7226063b7f913c68fb4493412ee3e302dc2128548d2c286dacd9cef14989"
     }
   ]
 }

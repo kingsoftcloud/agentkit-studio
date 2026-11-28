@@ -1,7 +1,7 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 
-export const ROUTEMIND_PROVIDER = 'routemind-auto';
-export const ROUTEMIND_MODEL = 'auto';
+import { ROUTEMIND_PROVIDER, ROUTEMIND_MODEL } from '../../model-route.mjs';
+export { ROUTEMIND_PROVIDER, ROUTEMIND_MODEL } from '../../model-route.mjs';
 const savedAliases = ['auto-cost', 'auto-balance', 'auto-quality'];
 const models = [ROUTEMIND_MODEL, ...savedAliases];
 export function isRouteMindModel(id) { return models.includes(id); }

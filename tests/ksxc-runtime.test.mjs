@@ -6,12 +6,13 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createStudioWebTools } from '../src/providers/studio-public-web.mjs';
 import { createKsxcRuntime } from '../src/providers/ksxc-runtime.mjs';
 import { createKsxcAccounts } from '../src/host/services/ksxc-accounts.mjs';
 import { ksxcAgentPreference } from '../src/host/services/ksxc.mjs';
 import { createManagedKsxcConnectionClient } from '../src/host/services/ksxc-connection-client.mjs';
 
-async function fixture(t, { returnedModel, returnedProvider = 'ksxc', onTurn, beforeExit } = {}) {
+async function fixture(t, { returnedModel, returnedProvider = 'ksxc', onTurn, beforeExit, onSpawn } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-ksxc-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const companyConfigPath = join(root, 'company.json');
@@ -28,6 +29,7 @@ async function fixture(t, { returnedModel, returnedProvider = 'ksxc', onTurn, be
     env: { PATH: '/usr/bin', KSXC_AUTH_TOKEN: 'ambient-key', OTHER_SECRET: 'ambient-key' },
     spawnImpl(executable, args, options) {
       assert.equal(executable, '/fixture/ksxc');
+      onSpawn?.(args);
       assert.ok(args.includes('shell_environment_policy.inherit="none"'));
       if (process.platform !== 'win32') assert.ok(args.includes('shell_environment_policy.set.PATH="/usr/bin:/bin:/usr/sbin:/sbin"'));
       assert.equal(options.env.OTHER_SECRET, undefined);
@@ -101,6 +103,29 @@ test('KSXC attests its verified binary and effective model before sending the us
   } }));
   assert.deepEqual(identities, [{ runtime: 'ksxc', provider: 'ksxc', model: 'a', binarySha256: 'a'.repeat(64), version: '1.8.0' }]);
   assert.match(events.find(event => event.method === 'thread/start').params.developerInstructions, /实际工具结果/);
+});
+
+test('KSXC uses Studio public web tools with hosted model search disabled', async t => {
+  const { runtime, events } = await fixture(t, {
+    onSpawn(args) { assert.ok(args.includes('web_search="disabled"')); },
+    onTurn(emit) {
+      emit({ id: 91, method: 'item/tool/call', params: { threadId: 'thread', turnId: 'turn',
+        callId: 'search', tool: 'studio_web_search', arguments: { query: 'IANA reserved domains' } } });
+    },
+  });
+  const tools = createStudioWebTools(async query => {
+    assert.equal(query, 'IANA reserved domains');
+    return { sources: [{ url: 'https://www.iana.org/domains/reserved' }] };
+  });
+  const stream = runtime.stream({ userId: 'a', model: 'a', input: 'Find the official source',
+    hostedWebSearch: false, dynamicTools: tools.specs, toolHandler: tools.handler });
+  try {
+    assert.equal((await stream.next()).value.phase, 'started');
+    const completion = (await stream.next()).value;
+    assert.equal(completion.phase, 'completed');
+    assert.match(JSON.stringify(completion), /iana\.org/);
+    assert.deepEqual(events.find(event => event.method === 'thread/start').params.dynamicTools, tools.specs);
+  } finally { await stream.return(); }
 });
 
 test('KSXC keeps its isolated home until the app server has exited', async t => {

@@ -1,0 +1,73 @@
+diff --git a/packages/web/web/src/index.ts b/packages/web/web/src/index.ts
+index 26cec2242b929fe7f2c5976151f1bc9e53e288e2..3254bc8e4f2cf241acb5193d10b0cdc9f9303ca8 100644
+--- a/packages/web/web/src/index.ts
++++ b/packages/web/web/src/index.ts
+@@ -96,6 +96,7 @@ export class WebRuntime extends Service {
+   })
+ 
+   private readonly modelSearch = new Set<ResolveModelSearch>()
++  private readonly searchOverride = new Set<{ search: ModelSearch }>()
+   private searchProviders = new Map<string, WebSearchProvider>()
+   private fetchProviders = new Map<string, WebFetchProvider>()
+   private readonly searchProviderEnv: string | undefined
+@@ -127,6 +128,14 @@ export class WebRuntime extends Service {
+     return () => { this.modelSearch.delete(resolve) }
+   }
+ 
++  /** Install a Host-owned search path for every conversation and provider. */
++  registerSearchOverride(search: ModelSearch): () => void {
++    if (this.searchOverride.size !== 0) throw new WebError('a search override is already registered', 'WEB_DUPLICATE_PROVIDER')
++    const registration = { search }
++    this.searchOverride.add(registration)
++    return () => { this.searchOverride.delete(registration) }
++  }
++
+   /**
+    * Register a fetch provider. Throws {@link WebError} `WEB_DUPLICATE_PROVIDER`
+    * if its id is already registered for fetch. Returns a disposer; disposed
+@@ -161,7 +170,8 @@ export class WebRuntime extends Service {
+    * @returns the provider's results, capped to `request.maxResults`.
+    */
+   async search(request: WebSearchRequest, signal?: AbortSignal, model?: WebSearchModel): Promise<WebSearchResult> {
+-    const search = model === undefined ? undefined : await this.modelSearch.values().next().value?.(model)
++    const search = this.searchOverride.values().next().value?.search
++      ?? (model === undefined ? undefined : await this.modelSearch.values().next().value?.(model))
+     signal?.throwIfAborted()
+     const result = search === undefined
+       ? await this.selectSearchProvider().search(request, signal)
+@@ -178,6 +188,7 @@ export class WebRuntime extends Service {
+    * @returns false only when the selected provider reports that it cannot authenticate.
+    */
+   async searchReady(llmProvider?: string, model?: string): Promise<boolean> {
++    if (this.searchOverride.size !== 0) return true
+     if (llmProvider !== undefined && model !== undefined
+       && await this.modelSearch.values().next().value?.({ provider: llmProvider, model }) !== undefined) return true
+     return await selectedProviderReady(() => this.selectSearchProvider(), llmProvider)
+diff --git a/packages/web/web/tests/web.spec.ts b/packages/web/web/tests/web.spec.ts
+index a994c714b7d0c46a58bba09bad82c1dd5461bc6b..6c22635404b418e4d17ec2dd3fbd53a4f0360aca 100644
+--- a/packages/web/web/tests/web.spec.ts
++++ b/packages/web/web/tests/web.spec.ts
+@@ -76,6 +76,23 @@ describe('WebRuntime registration', () => {
+ })
+ 
+ describe('WebRuntime execution resolution', () => {
++  it('uses the host search for all models, even before a request context exists', async () => {
++    const { web } = await mountWeb()
++    web.registerSearchProvider({
++      ...makeSearchProvider('configured', available, () => Promise.resolve(searchResult('configured'))),
++      ready: () => Promise.resolve(false),
++    })
++    await expect(web.searchReady('external', 'model')).resolves.toBe(false)
++    const dispose = web.registerSearchOverride(async ({ query }) => searchResult(query))
++    await expect(web.searchReady()).resolves.toBe(true)
++    await expect(web.search({ query: 'anonymous' })).resolves.toMatchObject({ content: 'anonymous' })
++    await expect(web.search({ query: 'external' }, undefined, { provider: 'external', model: 'model' }))
++      .resolves.toMatchObject({ content: 'external' })
++    dispose()
++    await expect(web.searchReady('external', 'model')).resolves.toBe(false)
++    await expect(web.search({ query: 'fallback' })).resolves.toMatchObject({ content: 'configured' })
++  })
++
+   it('adopts model search for the exact model in the new session and keeps the configured provider for other models', async () => {
+     const { web } = await mountWeb()
+     web.registerSearchProvider({

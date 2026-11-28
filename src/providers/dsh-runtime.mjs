@@ -20,7 +20,7 @@ import { gatewayHistory, isDshUserInput, isDshAgentNotice, textOf } from './dsh-
 import { nativeSessionRunOptions } from './dsh-native-run.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
-import { createStarflowSearchTool } from './starflow-web-search.mjs';
+import { createStudioWebTools } from './studio-public-web.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 const ROUTE = 'agentkit-studio';
@@ -537,7 +537,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, ksxcModelAccess, nativeEngineRuntime, hostWebSearch, resolveStarflowSearch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, ksxcRuntime, ksxcDesktopUser, ksxcModelAccess, nativeEngineRuntime, publicWebSearch, publicWebFetch, resolveHarnessModel, resolveCodexModel, resolveModelMetadata, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, requestNativeApproval, AdapterBase, bridge } = {}) {
   const processAdapters = new Map([['codex', codexRuntime], ['ksxc', ksxcRuntime], ['native-engine', nativeEngineRuntime]]);
   const adapter = {
     managedHarnessModel(cwd) { return nativeEngineRuntime?.managedModelSelection?.(cwd); },
@@ -701,15 +701,12 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               }),
             })
             : undefined;
-          const starflowSearch = runtime === 'codex'
-            ? await resolveStarflowSearch?.(selection, selected.modelProvider
-              && { ...selected.modelProvider, modelName: selection.model }, toolAgent)
-            : undefined;
-          const searchTool = createStarflowSearchTool(starflowSearch);
+          const webTools = runtime === 'codex' || runtime === 'ksxc'
+            ? createStudioWebTools(publicWebSearch, publicWebFetch) : undefined;
           const dynamicTools = [...(resources.dynamicTools || []),
-            ...(userQuestionTool ? [userQuestionTool.spec] : []), ...(searchTool ? [searchTool.spec] : [])];
-          const toolHandler = userQuestionTool || searchTool
-            ? async call => (await userQuestionTool?.handler(call)) ?? (await searchTool?.handler(call))
+            ...(userQuestionTool ? [userQuestionTool.spec] : []), ...(webTools?.specs ?? [])];
+          const toolHandler = userQuestionTool || webTools
+            ? async call => (await userQuestionTool?.handler(call)) ?? (await webTools?.handler(call))
               ?? resources.toolHandler?.(call)
             : resources.toolHandler;
           try {
@@ -724,8 +721,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               ...(typeof permissionModeForSession === 'function' && toolAgent?.session
                 ? { sandbox: permissionModeForSession(toolAgent.session) } : {}),
               ...selected,
-              ...(searchTool && selected.modelProvider
-                ? { modelProvider: { ...selected.modelProvider, hostedWebSearch: false } } : {}),
+              ...(webTools ? { hostedWebSearch: false } : {}),
               ...(serviceOwnsModel && selection.provider === HARNESS_SERVICE_MODEL_PROVIDER ? { expectedServiceModel: selection.model } : {}),
               ...(workspaceModelProfile ? { workspaceModelProfile } : {}),
               ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]
@@ -743,8 +739,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               systemPrompt: resources.systemPrompt || '',
               dynamicTools,
               toolHandler,
-              ...(runtime === 'native-engine' && toolAgent && hostWebSearch
-                ? { hostWebSearch: await hostWebSearch(toolAgent, selection, workspaceModelProfile) } : {}),
+              ...(runtime === 'native-engine' && publicWebSearch ? { hostWebSearch: publicWebSearch } : {}),
               ...(runtime === 'native-engine' && resources.nativeHostToolHandler
                 ? { nativeHostToolHandler: resources.nativeHostToolHandler } : {}),
               ...(runtime === 'native-engine' && resources.nativeHostReceiptHandler

@@ -64,7 +64,7 @@ export function mountStudio(ctx, app) {
   }, props => h(StarHarnessItem, { ...props, view: 'page' })));
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
     name: 'plugins.bundle.config', key: 'routemind-studio',
-  }, () => routeMindOverview(h, BRAND, window.document)));
+  }, () => routeMindOverview(h, window.document)));
   ctx.effect(() => {
     const open = () => ctx.layout?.selectPanel?.('plugins');
     window.addEventListener('agentkit-studio:open-plugin-center', open);

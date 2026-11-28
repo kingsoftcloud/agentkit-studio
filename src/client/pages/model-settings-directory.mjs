@@ -1,8 +1,9 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { lookupModelCapabilities } from '../../model-capability-catalog.mjs';
 import { dshModelRoute } from '../../model-route.mjs';
+import { routeMindAutoPreview } from '../../routemind-preview.mjs';
 import { resolveModelBudgets } from '../../model-capabilities.mjs';
-import { renderModelScoreBars } from './model-card-view.mjs';
+import { renderModelPreview, renderModelScoreBars } from './model-card-view.mjs';
 import { priceText } from '../../model-cards.mjs';
 import { profileKey } from './model-settings-profiles.mjs';
 import { catalogItems, createModelCatalogPicker, matchingModels } from './model-settings-catalog-picker.mjs';
@@ -27,8 +28,11 @@ export function useModelSettingsCards({ useState, useEffect, hostRemote, window 
       window.removeEventListener('agentkit-studio:model-credential-changed', refresh);
     };
   }, []);
-  return profile => routeMindCards?.cardsByProvider?.[dshModelRoute(profile)]?.[profile.modelName]
-    ?? (routeMindCards?.sharedScores?.[profile.modelName] ? { scores: routeMindCards.sharedScores[profile.modelName] } : null);
+  return {
+    cardForProfile: profile => routeMindCards?.cardsByProvider?.[dshModelRoute(profile)]?.[profile.modelName]
+      ?? (routeMindCards?.sharedScores?.[profile.modelName] ? { scores: routeMindCards.sharedScores[profile.modelName] } : null),
+    autoCard: routeMindCards ? routeMindAutoPreview(routeMindCards.routeMindAutoScores) : null,
+  };
 }
 
 function connectionAddressLabel({ address }) {
@@ -57,7 +61,7 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
   const modelRows = createModelCatalogPicker({ h, useState, DisclosureRow, Tag, InfoIcon });
 
   function useModelSettingsDirectory({
-    status, saving, connections, profileCount, drafts, openModel, credentialConfigured, cardForProfile,
+    status, saving, connections, profileCount, drafts, openModel, credentialConfigured, cardForProfile, autoCard,
     fetchCatalog, checkProvider, probeEfforts, probeAll, stageModels, stageProvider, saveProvider, removeProvider,
   }) {
     const [query, setQuery] = useState('');
@@ -404,7 +408,9 @@ export function createModelSettingsDirectory({ h, useState, useEffect, useRef, u
                     button('移除提供商', () => { setExpandedProviderId(group.id); setConfirmRemove(true); }, 'danger', { 'data-size': 'sm' }),
                     button('添加模型', () => openImport(group), 'primary', { 'data-size': 'sm' }))),
                 expanded ? renderProviderBody(group) : null);
-            }))) : status === 'loading' ? note('正在读取模型配置…') : null);
+            }))) : status === 'loading' ? note('正在读取模型配置…') : null,
+        autoCard ? h('details', { className: 'ms-advanced', style: { marginBlockStart: 'var(--ms-space-3)' } },
+          h('summary', null, 'RouteMind Auto'), renderModelPreview(h, Tag, autoCard)) : null);
     };
     const renderDirectory = () => providerForm ? renderProviderForm() : renderOverview();
     const selectedCount = providerForm?.picks.size || 0;
