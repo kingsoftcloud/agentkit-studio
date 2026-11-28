@@ -1,0 +1,142 @@
+diff --git a/packages/boot/plugin-manager/src/operations.ts b/packages/boot/plugin-manager/src/operations.ts
+index 641627cb1afd57a794fab0ff745bcaeea5d323f1..afb5d28046238c83d4a2d52916a9128b1eff64c5 100644
+--- a/packages/boot/plugin-manager/src/operations.ts
++++ b/packages/boot/plugin-manager/src/operations.ts
+@@ -287,7 +287,9 @@ async function reinstallLockedProfile(dir: string, options: PnpmRunOptions, env:
+   const child = execa(options.command ?? 'pnpm', [
+     ...options.args ?? [], 'install', '--frozen-lockfile', '--ignore-scripts', '--prefer-offline',
+     '--config.ignore-pnpmfile=true', '--config.recursive-install=false', '--config.fetch-retries=0',
+-    '--config.modules-dir=node_modules', '--config.virtual-store-dir=node_modules/.pnpm',
++    '--config.modules-dir=node_modules',
++    // pnpm records this path in .modules.yaml; a relative value resolves under node_modules next install.
++    `--config.virtual-store-dir=${resolve(dir, 'node_modules', '.pnpm')}`,
+     '--config.lockfile-dir=.', '--config.enable-global-virtual-store=false',
+   ], {
+     cwd: dir, env: { ...env, CI: 'true' }, extendEnv: false, stdin: 'ignore', reject: false,
+diff --git a/packages/boot/plugin-manager/src/profile-package-recovery.ts b/packages/boot/plugin-manager/src/profile-package-recovery.ts
+index 638087f0f0a126189f58a825b91e506e124826b6..ee85691e32af962976733bced3ec5d6ff71d14c6 100644
+--- a/packages/boot/plugin-manager/src/profile-package-recovery.ts
++++ b/packages/boot/plugin-manager/src/profile-package-recovery.ts
+@@ -1,6 +1,6 @@
+ /** Validate Desktop's local package tree and retain the previous tree during a locked rebuild. */
+ import { randomUUID } from 'node:crypto'
+-import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs'
++import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+ import { mkdir, mkdtemp, rename } from 'node:fs/promises'
+ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+ import { readProfileManifest, type ProfileManifest } from '@deepseek-ai/dsh-app-boot'
+@@ -29,6 +29,12 @@ function localDirectory(path: string): boolean {
+   return true
+ }
+ 
++/** Resolve a path the way pnpm records it. The caller may name the same location through a short or
++ * differently cased path, so a recorded path can differ in spelling from the profile path this process holds. */
++function canonicalPath(path: string): string {
++  try { return realpathSync.native(path) } catch { /* An absent path keeps its resolved spelling. */ return path }
++}
++
+ function record(value: unknown): Record<string, unknown> | undefined {
+   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+ }
+@@ -68,6 +74,8 @@ export function hasProfilePackages(dir: string): boolean {
+ }
+ 
+ /** Check the pnpm layout and the packages whose absence can break boot.
++ * A recorded virtual-store path that resolves away from `node_modules/.pnpm` is rejected by pnpm
++ * on the next install, so it reports the same rebuild issue as a mismatched layout.
+  * @param dir Initialized Desktop profile directory.
+  * @param expected Identity of its bundled pnpm.
+  * @returns A safe diagnostic for a broken tree, or undefined when usable.
+@@ -84,6 +92,11 @@ export function profilePackageIssue(dir: string, expected: ProfilePnpmIdentity):
+   if (semver.major(installed) !== semver.major(expected.version)) return `pnpm ${installed} → ${expected.version}`
+   if (typeof metadata?.storeDir !== 'string' || !isAbsolute(metadata.storeDir)
+     || relative(expected.storeDir, metadata.storeDir) !== '') return 'the installed pnpm store differs from the configured store'
++  const virtualStoreDir = typeof metadata?.virtualStoreDir === 'string'
++    ? resolve(modules, metadata.virtualStoreDir) : join(modules, '.pnpm')
++  if (relative(canonicalPath(join(modules, '.pnpm')), canonicalPath(virtualStoreDir)) !== '') {
++    return 'the installed pnpm virtual store path is not node_modules/.pnpm'
++  }
+ 
+   const scope = join(modules, '@deepseek-ai')
+   const coreNames = new Set(localCoreNames(scope).map(name => `@deepseek-ai/${name}`))
+diff --git a/packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts b/packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts
+index be956409a3052e53cb25093fe55c17022b59c381..173abd79e01578af21bcbc7a550f6bb584c86441 100644
+--- a/packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts
++++ b/packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts
+@@ -2,19 +2,20 @@
+ import { execFile } from 'node:child_process'
+ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+-import { join } from 'node:path'
++import { isAbsolute, join, resolve } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import { promisify } from 'node:util'
+ import { expect, it, onTestFinished } from 'vitest'
+ import { initProfile, readProfileManifest } from '@deepseek-ai/dsh-app-boot'
+ import { prepareDesktopProfilePackages, runPluginCommand, type PackageOperationOptions } from '../src/operations.ts'
++import { profilePackageIssue } from '../src/profile-package-recovery.ts'
+ 
+ const execute = promisify(execFile)
+ const pnpm = fileURLToPath(new URL('../../../../apps/desktop/node_modules/pnpm/bin/pnpm.mjs', import.meta.url))
+ const core = '@deepseek-ai/dsh-llm'
+ 
+-function readModules(path: string): { packageManager: string; storeDir: string } {
+-  return JSON.parse(readFileSync(path, 'utf8')) as { packageManager: string; storeDir: string }
++function readModules(path: string): { packageManager: string; storeDir: string; virtualStoreDir?: string } {
++  return JSON.parse(readFileSync(path, 'utf8')) as { packageManager: string; storeDir: string; virtualStoreDir?: string }
+ }
+ 
+ async function profile() {
+@@ -171,3 +172,52 @@ it('reinstalls a missing core entry even when the pnpm major and store match', a
+   expect(readFileSync(p.coreEntry, 'utf8')).toBe('module.exports = {}\n')
+   expect(existsSync(shadow)).toBe(false)
+ }, 20_000)
++
++it('rebuilds a managed profile with an absolute virtual store path', async () => {
++  const p = await profile()
++  p.mismatch()
++  const record = join(p.dir, 'pnpm-runs.jsonl')
++  const runner = join(p.dir, 'pnpm-recording.mjs')
++  writeFileSync(runner, `
++    import { spawnSync } from 'node:child_process'
++    import { appendFileSync } from 'node:fs'
++    const args = process.argv.slice(2)
++    appendFileSync(${JSON.stringify(record)}, JSON.stringify(args) + '\\n')
++    const result = spawnSync(process.execPath, [${JSON.stringify(pnpm)}, ...args], { stdio: 'inherit' })
++    process.exitCode = result.status ?? 1
++  `)
++
++  await p.mutate(['add', 'file:./addon', '--offline', '--ignore-scripts'], { args: [runner] })
++  const runs = readFileSync(record, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[])
++  const repair = runs.find(args => args.includes('--frozen-lockfile'))
++  const flag = repair?.find(argument => argument.startsWith('--config.virtual-store-dir='))
++  expect(flag, JSON.stringify(runs)).toBeDefined()
++  const value = flag?.slice('--config.virtual-store-dir='.length) ?? ''
++  expect(isAbsolute(value), value).toBe(true)
++  expect(resolve(value)).toBe(join(p.modules, '.pnpm'))
++}, 20_000)
++
++it('reports a recorded virtual store path that does not resolve to node_modules/.pnpm', async () => {
++  const p = await profile()
++  const expected = { version: p.metadata.packageManager.slice('pnpm@'.length), storeDir: p.metadata.storeDir }
++  const record = (virtualStoreDir: string) =>
++    writeFileSync(p.metadataPath, JSON.stringify({ ...readModules(p.metadataPath), virtualStoreDir }))
++
++  expect(profilePackageIssue(p.dir, expected)).toBeUndefined()
++  record('.pnpm')
++  expect(profilePackageIssue(p.dir, expected)).toBeUndefined()
++  record(join(p.modules, '.pnpm'))
++  expect(profilePackageIssue(p.dir, expected)).toBeUndefined()
++  record('node_modules/.pnpm')
++  expect(profilePackageIssue(p.dir, expected)).toBe('the installed pnpm virtual store path is not node_modules/.pnpm')
++}, 20_000)
++
++it('starts a repair for a recorded virtual store outside node_modules/.pnpm', async () => {
++  const p = await profile()
++  writeFileSync(p.metadataPath, JSON.stringify({ ...readModules(p.metadataPath), virtualStoreDir: 'node_modules/.pnpm' }))
++
++  await prepareDesktopProfilePackages(p.dir, p.packageManager)
++
++  const receipt = readFileSync(join(p.dir, '.plugin-manager', 'profile-recovery.log'), 'utf8')
++  expect(receipt).toContain('rebuilding the profile package tree: the installed pnpm virtual store path is not node_modules/.pnpm')
++}, 20_000)
