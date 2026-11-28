@@ -185,6 +185,52 @@ test('models on one connection share a single route', async () => {
   assert.equal(routes.length, 1, JSON.stringify(routes));
   const route = providers[routes[0]];
   assert.deepEqual(route.models.map(model => model.id).sort(), ['deepseek-v4.1-flash-1017', 'other-model', 'plain-model']);
+  // A route default would apply to every model, including `plain-model`,
+  // which never declared that level — switching back to it would fail with
+  // `UNSUPPORTED_REASONING_EFFORT`. Keep the default on each model instead.
+  assert.equal(route.reasoning, undefined);
+  assert.deepEqual(route.models.map(model => [model.id, model.defaultReasoningEffort]).sort(),
+    [['deepseek-v4.1-flash-1017', 'high'], ['other-model', 'low'], ['plain-model', undefined]]);
+});
+
+test('a stock host gets no route default on a shared route', async () => {
+  const other = { ...reasoner, id: 'other', modelName: 'other-model', defaultReasoningEffort: 'low' };
+  const plain = { ...reasoner, id: 'plain', modelName: 'plain-model', reasoningEfforts: false };
+  const { bridge, providers } = bridgeContext([{ id: reasoner.modelName }, { id: plain.modelName }]);
+  await bridge.applyProfiles({ profiles: [reasoner, other, plain] });
+
+  const route = Object.values(providers)[0];
+  // Without per-model defaults, a shared route must fall back to the gateway
+  // default instead of imposing one model's level on its siblings.
+  assert.equal(route.reasoning, undefined);
+  assert.deepEqual(route.models.map(model => [model.id, Object.hasOwn(model, 'defaultReasoningEffort')]).sort(),
+    [['deepseek-v4.1-flash-1017', false], ['other-model', false], ['plain-model', false]]);
+});
+
+test('a single-model route carries its default at both levels on a host with model defaults', async () => {
+  const { bridge, providers } = bridgeContext([{ id: reasoner.modelName }], { modelDefaults: true });
+  await bridge.applyProfiles({ profiles: [reasoner] });
+
+  const route = Object.values(providers)[0];
+  assert.equal(route.reasoning, 'high');
+  assert.equal(route.models[0].defaultReasoningEffort, 'high');
+});
+
+test('a shared route keeps the route default when every model declares the level', async () => {
+  // Both models support `high`; the second merely prefers `low`.
+  const other = { ...reasoner, id: 'other', modelName: 'other-model', defaultReasoningEffort: 'low' };
+  const bundled = bridgeContext([{ id: reasoner.modelName }, { id: other.modelName }], { modelDefaults: true });
+  await bundled.bridge.applyProfiles({ profiles: [reasoner, other] });
+  // The route default is valid for every model, and each model's own default wins over it.
+  assert.equal(Object.values(bundled.providers)[0].reasoning, 'high');
+  assert.deepEqual(Object.values(bundled.providers)[0].models.map(model => [model.id, model.defaultReasoningEffort]).sort(),
+    [['deepseek-v4.1-flash-1017', 'high'], ['other-model', 'low']]);
+
+  // A stock Host has only the route default, which must survive here.
+  const stock = bridgeContext([{ id: reasoner.modelName }, { id: other.modelName }]);
+  await stock.bridge.applyProfiles({ profiles: [reasoner, other] });
+  assert.equal(Object.values(stock.providers)[0].reasoning, 'high');
+  assert.equal(Object.values(stock.providers)[0].models.some(model => Object.hasOwn(model, 'defaultReasoningEffort')), false);
 });
 
 test('a Responses route never sets the chat-only store compat', async () => {

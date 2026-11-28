@@ -1,7 +1,7 @@
 import { isCredentialRefName } from '../../credential-ref.mjs';
 import { harnessModelEndpoint, normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '../../model-capabilities.mjs';
-import { studioReasoning, providerDisplayName, modelPresentationProvider } from '../../model-reasoning.mjs';
+import { hostSupportsModelDefaults, modelPresentationProvider, providerDisplayName, routeReasoningDefault, studioReasoning } from '../../model-reasoning.mjs';
 import { dshConnectionHeaders, providerWireApi } from '../../model-profile-contract.mjs';
 import { dshModelRoute } from '../../model-route.mjs';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
@@ -47,10 +47,9 @@ export function createModelBridge({ hostRemote }) {
     const applyProfiles = async ({ profiles, keys = {} }) => {
       const document = await describe();
       const namespace = (document.namespaces || []).find(item => item.ns === DSH_MODEL_SETTINGS_NS);
-      // Studio's bundled Host exposes model-specific defaults. A stock Host
-      // can still take a route default when the route serves a single model.
-      const supportsModelDefaults = Object.values(namespace?.schema?.refs || {})
-        .some(schema => Object.hasOwn(schema?.dict || {}, 'defaultReasoningEffort'));
+      // Studio's bundled Host takes each model's own default; a stock Host
+      // has only the route-level one.
+      const supportsModelDefaults = hostSupportsModelDefaults(namespace);
       const valid = profiles.filter(profile => profile?.enabled !== false && String(profile?.modelName || '').trim())
         .sort((left, right) => Number(right.default === true) - Number(left.default === true));
       if (!valid.length) throw new Error('至少保留一个模型配置');
@@ -92,11 +91,13 @@ export function createModelBridge({ hostRemote }) {
           const capability = admitModelCapabilities({ ...member, input: member.input }, configuredModel || fallback);
           return { id: memberName, name: memberName, contextWindow: capability.contextWindow,
             maxTokens: capability.maxOutputTokens, input: capability.input,
-            ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}) };
+            ...(reasoningEfforts !== undefined ? { reasoningEfforts } : {}),
+            // Each model keeps its own default where the Host takes one; a
+            // route-level default would also reach siblings that never
+            // declared it.
+            ...(reasoning && supportsModelDefaults ? { defaultReasoningEffort: reasoning.defaultEffort } : {}) };
         });
-        // Route-level default thinking comes from the default model of the route.
-        const defaultMember = members.find(({ profile: member }) => member.default === true) || members[0];
-        const reasoning = studioReasoning(defaultMember.profile);
+        const reasoning = routeReasoningDefault(members.map(({ profile: member }) => member));
         return { route, modelName, provider, baseUrl, credentialName, operation: { op: 'set', path: ['providers', route], value: {
           displayName: modelPresentationProvider(profile)?.name ?? providerDisplayName(profile), api: wire, apiKeyEnv: credentialName,
           baseURL: routedBaseUrl,
@@ -120,7 +121,7 @@ export function createModelBridge({ hostRemote }) {
           ...(wire !== 'anthropic-messages' ? {
             compat: { supportsDeveloperRole: false, ...(wire === 'openai-completions' ? { supportsStore: false } : {}) },
           } : {}),
-          ...(reasoning ? { reasoning: reasoning.defaultEffort } : {}),
+          ...(reasoning ? { reasoning } : {}),
           models,
         } } };
       });
