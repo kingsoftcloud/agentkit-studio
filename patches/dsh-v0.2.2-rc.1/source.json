@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "125f32606e187c71a738ae542ec981760708bf79",
+  "headCommit": "0a90a268890fd9c401c62952e550f54a7717b7f2",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "0549df4989d97bc6b6684fe532f4fd03f96786fc",
-  "sourceSha256": "1fe1966813394d80949fd5b9cc61c9846178b7e231bde2876234b8ca7a9749ca",
+  "tree": "ef427131dc0579d5fd1509f865dd6fd609cb3dd4",
+  "sourceSha256": "dfca8b32fe7c86a7f6f8d8d9486dc0f1e604944dc4baf174d8dd2650ce3fe6df",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "2fee9970dcc70183e2f71d5414b37242b5273cca54e2e1aa4752e4d18914c9f6"
+    "sha256": "c16be232b7c04957c35709ac91b9b4f73f10b127dd7b9debc4bd3321dc35cfb6"
   },
   "commits": [
     {
@@ -400,6 +400,12 @@
       "file": "096-studio-anonymous-web-search.patch",
       "commit": "125f32606e187c71a738ae542ec981760708bf79",
       "sha256": "608a7226063b7f913c68fb4493412ee3e302dc2128548d2c286dacd9cef14989"
+    },
+    {
+      "id": "097",
+      "file": "097-desktop-profile-virtual-store.patch",
+      "commit": "0a90a268890fd9c401c62952e550f54a7717b7f2",
+      "sha256": "b38fd6e6bf7c5f5129bfbdf590f9195b3d1271112ea8870d5ef5f92087f4100b"
     }
   ]
 }

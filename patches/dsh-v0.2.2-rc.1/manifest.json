@@ -3204,12 +3204,51 @@
       },
       "sequence": 65,
       "sha256": "608a7226063b7f913c68fb4493412ee3e302dc2128548d2c286dacd9cef14989"
+    },
+    {
+      "id": "097",
+      "file": "097-desktop-profile-virtual-store.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "dependsOn": [
+        "082"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-plugin-manager"
+      ],
+      "contracts": [
+        "A locked profile rebuild passes the absolute node_modules/.pnpm path to pnpm, so the virtual store recorded in .modules.yaml stays reachable from the modules directory on Windows as well as POSIX.",
+        "A profile whose recorded virtual store path resolves away from node_modules/.pnpm is treated as a repair issue, so a tree recorded by the previous build is rebuilt before the next package mutation instead of failing it with ERR_PNPM_UNEXPECTED_VIRTUAL_STORE."
+      ],
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Source regression tests cover the absolute rebuild argument, the recorded-path check and the startup repair attempt; no upstream submission or merge receipt."
+      },
+      "removeWhen": "The pinned Desktop Host records the canonical virtual store path and repairs a profile that recorded another one.",
+      "verification": {
+        "hostTests": [
+          "packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "windows"
+        ]
+      },
+      "affectedFiles": [
+        "packages/boot/plugin-manager/src/operations.ts",
+        "packages/boot/plugin-manager/src/profile-package-recovery.ts",
+        "packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts"
+      ],
+      "sequence": 66,
+      "sha256": "b38fd6e6bf7c5f5129bfbdf590f9195b3d1271112ea8870d5ef5f92087f4100b"
     }
   ],
-  "patchedTree": "0549df4989d97bc6b6684fe532f4fd03f96786fc",
-  "patchedSourceSha256": "1fe1966813394d80949fd5b9cc61c9846178b7e231bde2876234b8ca7a9749ca",
+  "patchedTree": "ef427131dc0579d5fd1509f865dd6fd609cb3dd4",
+  "patchedSourceSha256": "dfca8b32fe7c86a7f6f8d8d9486dc0f1e604944dc4baf174d8dd2650ce3fe6df",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "7c4bea65ee407da33be4305a68c1274c7d0b5db63d6bdeec0e970e2558f83639"
+    "sha256": "064c33a9b1cc8be42a0a57f52288d1ab1bb743f06a0975ab38cb6152cb4a4353"
   }
 }

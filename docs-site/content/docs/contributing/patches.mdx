@@ -18,13 +18,13 @@ DSH 是官方宿主，我们不改它的源码树。但产品需要的一些行�
 | 固定基线版本 | `0.2.2-rc.1` | `dsh-pin.json` 的 `version` |
 | 基线 commit | `66491b05…`（完整 SHA） | `dsh-pin.json` 的 `commit` / `baseCommit` |
 | 上游 ref | `dsh-v0.2.2-rc.1` | `dsh-pin.json` 的 `ref` |
-| 当前补丁序列 | 61 个 | `patches/dsh-v0.2.2-rc.1/manifest.json` |
+| 当前补丁序列 | 66 个 | `patches/dsh-v0.2.2-rc.1/manifest.json` |
 | 已退役补丁 | 7 个 | 同上 `retired` |
 | 补丁目录 | `patches/dsh-v0.2.2-rc.1/` | `dsh-pin.json` 的 `patchDirectory` |
 
 <Callout type="warn" title="版本号不要凭记忆写">
   仓库里同时存在 `patches/dsh-v0.2.0-rc.2/`、`patches/dsh-v0.2.1-rc.2/`、
-  `patches/dsh-v0.2.2-rc.1/` 三个历史目录，补丁数分别是 34、64、61。
+  `patches/dsh-v0.2.2-rc.1/` 三个目录：前两个历史目录分别有 34、64 个补丁，当前序列的补丁数见上表。
   只有 `dsh-pin.json` 指向的那个才是当前序列；写文档时以它为准。
 </Callout>
 
@@ -35,7 +35,7 @@ dsh-pin.json                       固定基线：version / commit / ref / patch
 patches/dsh-v0.2.2-rc.1/
 ├─ 004-sidebar-panel-lifecycle.patch   编号 + 名称 + .patch
 ├─ 080-native-owned-turn-recovery-and-dispatch.patch
-├─ …                                   共 61 个，按编号升序应用
+├─ …                                   共 66 个，按编号升序应用
 ├─ manifest.json                       评审元数据：类别、风险、依赖、验证矩阵、退出条件
 └─ source.json                         导出物描述符：commit 序列、tree、bundle 摘要
 host-source/dsh-v0.2.2-rc.1/
